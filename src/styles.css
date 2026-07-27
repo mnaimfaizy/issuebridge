@@ -1,0 +1,46 @@
+:root {
+  font-family: "Segoe UI", "IBM Plex Sans", sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #1c2430;
+  background:
+    radial-gradient(ellipse at top left, #dce8f5 0%, transparent 55%),
+    linear-gradient(160deg, #f3f6fa 0%, #e7eef6 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.shell {
+  max-width: 36rem;
+  margin: 0 auto;
+  padding: 18vh 1.5rem 2rem;
+}
+
+h1 {
+  margin: 0 0 0.5rem;
+  font-size: 2.25rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.lede {
+  margin: 0 0 1.5rem;
+  color: #4a5565;
+}
+
+#auth-state {
+  font-weight: 600;
+}
+
+.status {
+  margin-top: 1rem;
+  color: #8a2f2f;
+}

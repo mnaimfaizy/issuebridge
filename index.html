@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Issuebridge</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <main class="shell">
+      <h1>Issuebridge</h1>
+      <p class="lede">
+        Capture GitHub issues while testing. Use the tray to show or hide this
+        window.
+      </p>
+      <p>
+        Auth:
+        <span id="auth-state">loading…</span>
+      </p>
+      <p id="status" class="status" hidden></p>
+    </main>
+  </body>
+</html>
