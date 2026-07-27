@@ -6,4 +6,15 @@ use serde::Serialize;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CaptureError {
     NotSignedIn,
+    /// Signed-in Capture Save is owned by a later slice.
+    NotAvailableYet,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AuthError {
+    EmptyToken,
+    InvalidCredentials,
+    StorageUnavailable,
+    ProviderUnavailable,
 }

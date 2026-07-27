@@ -35,15 +35,35 @@ pub struct Draft {
 }
 
 /// Credentials held only by TokenStore adapters — never returned through core IPC results.
+/// Also the shape returned by a successful OAuth code exchange.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredCredentials {
     pub access_token: String,
+    pub refresh_token: Option<String>,
 }
 
-pub trait GitHub: Send + Sync {}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitHubError {
+    InvalidCredentials,
+    Unavailable,
+}
+
+pub trait GitHub: Send + Sync {
+    /// Validate a personal access token (e.g. GET /user). Does not persist it.
+    fn validate_pat(&self, pat: &str) -> Result<(), GitHubError>;
+
+    /// Exchange an authorization code + PKCE verifier for tokens.
+    fn exchange_oauth_code(
+        &self,
+        code: &str,
+        code_verifier: &str,
+    ) -> Result<StoredCredentials, GitHubError>;
+}
 
 pub trait TokenStore: Send + Sync {
     fn load(&self) -> Result<Option<StoredCredentials>, TokenStoreError>;
+    fn store(&mut self, credentials: StoredCredentials) -> Result<(), TokenStoreError>;
+    fn clear(&mut self) -> Result<(), TokenStoreError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

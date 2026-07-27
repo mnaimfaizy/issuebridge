@@ -21,7 +21,7 @@ body {
 .shell {
   max-width: 36rem;
   margin: 0 auto;
-  padding: 18vh 1.5rem 2rem;
+  padding: 12vh 1.5rem 2rem;
 }
 
 h1 {
@@ -36,8 +36,96 @@ h1 {
   color: #4a5565;
 }
 
+.section-title {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.auth,
+.gated {
+  margin-bottom: 1.75rem;
+}
+
 #auth-state {
   font-weight: 600;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid #9aa8b8;
+  background: #f8fafc;
+  color: #1c2430;
+  border-radius: 0.35rem;
+  padding: 0.45rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  background: #eef3f8;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn.primary {
+  border-color: #2f5f8a;
+  background: #2f5f8a;
+  color: #fff;
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: #274f73;
+}
+
+.pat-details {
+  width: 100%;
+}
+
+.pat-details summary {
+  cursor: pointer;
+  color: #3a4a5c;
+}
+
+.pat-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.pat-form label {
+  font-size: 0.9rem;
+  color: #4a5565;
+}
+
+.pat-form input {
+  font: inherit;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid #9aa8b8;
+  border-radius: 0.35rem;
+  background: #fff;
+}
+
+.gate-note {
+  margin: 0;
+  color: #4a5565;
+}
+
+.gated.unavailable {
+  opacity: 0.55;
 }
 
 .status {

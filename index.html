@@ -15,10 +15,50 @@
         Capture GitHub issues while testing. Use the tray to show or hide this
         window.
       </p>
-      <p>
-        Auth:
-        <span id="auth-state">loading…</span>
-      </p>
+
+      <section class="auth" aria-labelledby="auth-heading">
+        <h2 id="auth-heading" class="section-title">Account</h2>
+        <p>
+          Auth:
+          <span id="auth-state">loading…</span>
+        </p>
+
+        <div id="signed-out-actions" class="actions" hidden>
+          <button type="button" id="sign-in-github" class="btn primary">
+            Sign in with GitHub
+          </button>
+          <details class="pat-details">
+            <summary>Use a personal access token</summary>
+            <form id="pat-form" class="pat-form">
+              <label for="pat-input">Personal access token</label>
+              <input
+                id="pat-input"
+                name="token"
+                type="password"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="ghp_…"
+              />
+              <button type="submit" class="btn">Sign in with PAT</button>
+            </form>
+          </details>
+        </div>
+
+        <div id="signed-in-actions" class="actions" hidden>
+          <button type="button" id="sign-out" class="btn">Sign out</button>
+        </div>
+      </section>
+
+      <section id="capture-section" class="gated" aria-labelledby="capture-heading">
+        <h2 id="capture-heading" class="section-title">Capture</h2>
+        <p id="capture-gate" class="gate-note">Sign in to use Capture.</p>
+      </section>
+
+      <section id="inbox-section" class="gated" aria-labelledby="inbox-heading">
+        <h2 id="inbox-heading" class="section-title">Inbox</h2>
+        <p id="inbox-gate" class="gate-note">Sign in to use the Inbox.</p>
+      </section>
+
       <p id="status" class="status" hidden></p>
     </main>
   </body>

@@ -4,11 +4,11 @@
 
 **Blocked by:** 01 — Tauri shell + application core seam
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Primary “Sign in with GitHub” completes OAuth against `http://127.0.0.1:17863/oauth/callback` with PKCE S256.
-- [ ] Secondary “Use a personal access token” sign-in works for advanced/fork/dev use.
-- [ ] Access/refresh (or PAT) credentials are stored via Rust `keyring` in the OS vault; command results never return raw token strings to the webview.
-- [ ] Sign-out clears keyring entries and returns the app to signed-out state.
-- [ ] Signed-out users cannot use Capture or the Inbox draft flows (gated on signed-in).
-- [ ] Core-level tests cover sign-in state transitions with faked GitHub + TokenStore (no live OAuth required in CI).
+- [x] Primary “Sign in with GitHub” completes OAuth against `http://127.0.0.1:17863/oauth/callback` with PKCE S256.
+- [x] Secondary “Use a personal access token” sign-in works for advanced/fork/dev use.
+- [x] Access/refresh (or PAT) credentials are stored via Rust `keyring` in the OS vault; command results never return raw token strings to the webview.
+- [x] Sign-out clears keyring entries and returns the app to signed-out state.
+- [x] Signed-out users cannot use Capture or the Inbox draft flows (gated on signed-in).
+- [x] Core-level tests cover sign-in state transitions with faked GitHub + TokenStore (no live OAuth required in CI).
