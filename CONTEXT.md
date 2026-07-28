@@ -39,3 +39,27 @@ _Avoid_: Watch list, favorites, pinned repos
 **Inbox**:
 The main-window list of Drafts the user reviews, edits, labels, and Publishes from.
 _Avoid_: Board, backlog, issue list (when meaning local drafts)
+
+**Release**:
+A published version of Issuebridge that users can install, identified by a SemVer and accompanied by release notes. The first Release line is `0.x.x`; the first stable Release is `0.1.0`. Patch / Minor / Major mean fix-only, additive capability, and user-breaking change respectively — including on `0.x`.
+_Avoid_: Release branch, build, tag (unqualified)
+
+**Pre-release**:
+A Release whose SemVer has an `-alpha.N`, `-beta.N`, or `-rc.N` suffix. Progression is alpha → beta → rc → stable for one target version; stage counters reset per stage.
+_Avoid_: Unstable build, preview (unqualified)
+
+**Alpha**:
+A Pre-release that may be incomplete or break users; intended only for the maintainer and tightly trusted testers. May ship as tag and installer only, without polished Release notes.
+_Avoid_: Early access (unqualified)
+
+**Beta**:
+A Pre-release that is feature-complete for its target version intent, with expected bugs; for wider testers, not recommended daily use. Published like a Release (notes + GitHub pre-release).
+_Avoid_: Preview, early access (when meaning Beta)
+
+**Release candidate (RC)**:
+A Pre-release that should match the upcoming stable Release unless a blocker appears; no further feature commits on that target version. Published like a Release (notes + GitHub pre-release).
+_Avoid_: Final beta, near-stable (unqualified)
+
+**Release notes**:
+The user-facing summary of what changed in a Release, kept in the repo changelog and used as the published Release description. Not a raw commit list. For a stable Release, notes cover changes since the previous stable Release; bump suggestions use the latest tag (any), except promoting an RC with no new work to the same target version.
+_Avoid_: Changelog dump, commit log (when meaning Release notes)
