@@ -2,8 +2,10 @@ pub mod adapters;
 pub mod core;
 
 use adapters::{
-    auth_state, build_app_core, save_capture, setup_tray, sign_in_with_github, sign_in_with_pat,
-    sign_out, AppState,
+    add_testing_set_repo, all_repositories_warning, app_visible_repos, auth_state, build_app_core,
+    complete_testing_set, continue_install, first_run_step, open_app_install,
+    remove_testing_set_repo, save_capture, setup_tray, sign_in_with_github, sign_in_with_pat,
+    sign_out, testing_set, AppState,
 };
 use std::sync::Mutex;
 use tauri::Manager;
@@ -17,9 +19,18 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             auth_state,
+            first_run_step,
             sign_in_with_github,
             sign_in_with_pat,
             sign_out,
+            open_app_install,
+            continue_install,
+            app_visible_repos,
+            all_repositories_warning,
+            testing_set,
+            add_testing_set_repo,
+            remove_testing_set_repo,
+            complete_testing_set,
             save_capture
         ])
         .setup(|app| {

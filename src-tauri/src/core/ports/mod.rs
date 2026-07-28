@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 pub mod fakes;
 
 /// Target repository (`owner/name`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RepoId {
     pub owner: String,
     pub name: String,
@@ -42,6 +42,27 @@ pub struct StoredCredentials {
     pub refresh_token: Option<String>,
 }
 
+/// Snapshot of GitHub App installations visible to the signed-in user.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppInstallSnapshot {
+    /// True when the user has at least one installation of the maintainer App.
+    pub has_install: bool,
+    /// Repositories accessible through those installations.
+    pub repos: Vec<RepoId>,
+    /// True when any installation uses "All repositories" selection.
+    pub all_repositories: bool,
+}
+
+/// Persisted first-run / Testing-set preferences (not credentials).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct AppSettings {
+    pub install_completed: bool,
+    pub testing_set_completed: bool,
+    pub testing_set: Vec<RepoId>,
+    pub app_visible_repos: Vec<RepoId>,
+    pub all_repositories_warning: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GitHubError {
     InvalidCredentials,
@@ -58,6 +79,12 @@ pub trait GitHub: Send + Sync {
         code: &str,
         code_verifier: &str,
     ) -> Result<StoredCredentials, GitHubError>;
+
+    /// List App installations + accessible repos for the given user token.
+    fn list_app_install_snapshot(
+        &self,
+        token: &str,
+    ) -> Result<AppInstallSnapshot, GitHubError>;
 }
 
 pub trait TokenStore: Send + Sync {
@@ -77,6 +104,16 @@ pub trait DraftStore: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DraftStoreError {
+    Unavailable,
+}
+
+pub trait SettingsStore: Send + Sync {
+    fn load(&self) -> Result<AppSettings, SettingsStoreError>;
+    fn save(&mut self, settings: AppSettings) -> Result<(), SettingsStoreError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingsStoreError {
     Unavailable,
 }
 

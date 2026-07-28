@@ -16,8 +16,16 @@
         window.
       </p>
 
-      <section class="auth" aria-labelledby="auth-heading">
-        <h2 id="auth-heading" class="section-title">Account</h2>
+      <section
+        id="sign-in-step"
+        class="auth"
+        aria-labelledby="auth-heading"
+        hidden
+      >
+        <h2 id="auth-heading" class="section-title">Sign in</h2>
+        <p class="step-copy">
+          Sign in so Issuebridge can create and update issues as you.
+        </p>
         <p>
           Auth:
           <span id="auth-state">loading…</span>
@@ -43,20 +51,104 @@
             </form>
           </details>
         </div>
+      </section>
 
-        <div id="signed-in-actions" class="actions" hidden>
-          <button type="button" id="sign-out" class="btn">Sign out</button>
+      <section
+        id="install-step"
+        class="step"
+        aria-labelledby="install-heading"
+        hidden
+      >
+        <h2 id="install-heading" class="section-title">Install App</h2>
+        <p class="step-copy">
+          Install the Issuebridge GitHub App on
+          <strong>selected repositories</strong> you plan to capture against —
+          not every repo in the org.
+        </p>
+        <div class="actions">
+          <button type="button" id="open-install" class="btn primary">
+            Install on GitHub
+          </button>
+          <button type="button" id="continue-install" class="btn">
+            Continue
+          </button>
+        </div>
+        <p id="install-hint" class="gate-note" hidden></p>
+        <div class="actions secondary">
+          <button type="button" id="sign-out-install" class="btn">
+            Sign out
+          </button>
         </div>
       </section>
 
-      <section id="capture-section" class="gated" aria-labelledby="capture-heading">
-        <h2 id="capture-heading" class="section-title">Capture</h2>
-        <p id="capture-gate" class="gate-note">Sign in to use Capture.</p>
+      <section
+        id="testing-set-step"
+        class="step"
+        aria-labelledby="testing-set-heading"
+        hidden
+      >
+        <h2 id="testing-set-heading" class="section-title">Testing set</h2>
+        <p class="step-copy">
+          Pick 1–3 App-visible repos. These become fast chips when you capture.
+        </p>
+        <p id="testing-warning" class="soft-warning" hidden></p>
+        <label class="filter-label" for="repo-filter">Search repositories</label>
+        <input
+          id="repo-filter"
+          type="search"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="owner/name"
+        />
+        <ul id="repo-results" class="repo-list" aria-label="App-visible repositories"></ul>
+        <div id="testing-chips" class="chips" aria-label="Testing set"></div>
+        <div class="actions">
+          <button type="button" id="complete-testing-set" class="btn primary">
+            Continue
+          </button>
+        </div>
+        <div class="actions secondary">
+          <button type="button" id="sign-out-testing" class="btn">
+            Sign out
+          </button>
+        </div>
       </section>
 
-      <section id="inbox-section" class="gated" aria-labelledby="inbox-heading">
-        <h2 id="inbox-heading" class="section-title">Inbox</h2>
-        <p id="inbox-gate" class="gate-note">Sign in to use the Inbox.</p>
+      <section
+        id="ready-home"
+        class="ready"
+        aria-labelledby="ready-heading"
+        hidden
+      >
+        <div class="ready-header">
+          <p>
+            Auth:
+            <span id="auth-state-ready">Signed in</span>
+          </p>
+          <button type="button" id="sign-out" class="btn">Sign out</button>
+        </div>
+
+        <section
+          id="capture-section"
+          class="gated"
+          aria-labelledby="capture-heading"
+        >
+          <h2 id="capture-heading" class="section-title">Capture</h2>
+          <p id="capture-gate" class="gate-note">
+            Capture is ready once Drafts land.
+          </p>
+        </section>
+
+        <section
+          id="inbox-section"
+          class="gated"
+          aria-labelledby="inbox-heading"
+        >
+          <h2 id="inbox-heading" class="section-title">Inbox</h2>
+          <p id="inbox-gate" class="gate-note">
+            Inbox is ready once Drafts land.
+          </p>
+        </section>
       </section>
 
       <p id="status" class="status" hidden></p>

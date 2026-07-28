@@ -120,8 +120,109 @@ h1 {
 }
 
 .gate-note {
-  margin: 0;
+  margin: 0.75rem 0 0;
   color: #4a5565;
+}
+
+.step-copy {
+  margin: 0 0 0.85rem;
+  color: #4a5565;
+}
+
+.step .actions.secondary {
+  margin-top: 1.25rem;
+}
+
+.soft-warning {
+  margin: 0.75rem 0 0;
+  color: #7a5a12;
+}
+
+.filter-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.9rem;
+  color: #4a5565;
+}
+
+#repo-filter {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid #9aa8b8;
+  border-radius: 0.35rem;
+  background: #fff;
+}
+
+.repo-list {
+  list-style: none;
+  margin: 0.65rem 0 0;
+  padding: 0;
+  max-height: 12rem;
+  overflow: auto;
+}
+
+.repo-list li {
+  margin: 0;
+}
+
+.repo-pick {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-bottom: 1px solid #d5dde7;
+  background: transparent;
+  color: #1c2430;
+  padding: 0.45rem 0.15rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.repo-pick:hover {
+  background: #eef3f8;
+}
+
+.empty-hint {
+  color: #4a5565;
+  padding: 0.45rem 0.15rem;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0.85rem 0 0.25rem;
+  min-height: 1.75rem;
+}
+
+.chip {
+  appearance: none;
+  border: 1px solid #9aa8b8;
+  background: #f8fafc;
+  color: #1c2430;
+  border-radius: 0.35rem;
+  padding: 0.25rem 0.55rem;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.chip:hover {
+  background: #eef3f8;
+}
+
+.ready-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.ready-header p {
+  margin: 0;
 }
 
 .gated.unavailable {

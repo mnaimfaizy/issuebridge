@@ -18,3 +18,22 @@ pub enum AuthError {
     StorageUnavailable,
     ProviderUnavailable,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InstallError {
+    NotSignedIn,
+    ProviderUnavailable,
+    StorageUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TestingSetError {
+    NotSignedIn,
+    InstallIncomplete,
+    LimitReached,
+    NotAppVisible,
+    Empty,
+    StorageUnavailable,
+}

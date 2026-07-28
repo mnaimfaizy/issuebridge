@@ -1,10 +1,12 @@
 //! In-memory fakes for core-level tests.
 
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use super::{
-    Clock, Draft, DraftStore, DraftStoreError, GitHub, GitHubError, StoredCredentials, TokenStore,
-    TokenStoreError, VoiceTranscriber,
+    AppInstallSnapshot, AppSettings, Clock, Draft, DraftStore, DraftStoreError, GitHub, GitHubError,
+    SettingsStore, SettingsStoreError, StoredCredentials, TokenStore, TokenStoreError,
+    VoiceTranscriber,
 };
 
 #[derive(Debug)]
@@ -13,6 +15,8 @@ pub struct FakeGitHub {
     pub reject_pat: bool,
     /// Result returned by `exchange_oauth_code`.
     pub oauth_result: Result<StoredCredentials, GitHubError>,
+    /// Result returned by `list_app_install_snapshot`.
+    pub install_snapshot: Result<AppInstallSnapshot, GitHubError>,
 }
 
 impl Default for FakeGitHub {
@@ -20,6 +24,11 @@ impl Default for FakeGitHub {
         Self {
             reject_pat: false,
             oauth_result: Err(GitHubError::Unavailable),
+            install_snapshot: Ok(AppInstallSnapshot {
+                has_install: false,
+                repos: Vec::new(),
+                all_repositories: false,
+            }),
         }
     }
 }
@@ -38,6 +47,13 @@ impl GitHub for FakeGitHub {
         _code_verifier: &str,
     ) -> Result<StoredCredentials, GitHubError> {
         self.oauth_result.clone()
+    }
+
+    fn list_app_install_snapshot(
+        &self,
+        _token: &str,
+    ) -> Result<AppInstallSnapshot, GitHubError> {
+        self.install_snapshot.clone()
     }
 }
 
@@ -70,6 +86,45 @@ pub struct FakeDraftStore {
 impl DraftStore for FakeDraftStore {
     fn save(&mut self, draft: Draft) -> Result<(), DraftStoreError> {
         self.drafts.push(draft);
+        Ok(())
+    }
+}
+
+/// Shared in-memory settings so a reconstructed core can resume first-run progress.
+#[derive(Debug, Clone, Default)]
+pub struct FakeSettingsStore {
+    inner: Arc<Mutex<AppSettings>>,
+}
+
+impl FakeSettingsStore {
+    pub fn with_settings(settings: AppSettings) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(settings)),
+        }
+    }
+
+    pub fn snapshot(&self) -> AppSettings {
+        self.inner
+            .lock()
+            .expect("FakeSettingsStore lock")
+            .clone()
+    }
+}
+
+impl SettingsStore for FakeSettingsStore {
+    fn load(&self) -> Result<AppSettings, SettingsStoreError> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| SettingsStoreError::Unavailable)?
+            .clone())
+    }
+
+    fn save(&mut self, settings: AppSettings) -> Result<(), SettingsStoreError> {
+        *self
+            .inner
+            .lock()
+            .map_err(|_| SettingsStoreError::Unavailable)? = settings;
         Ok(())
     }
 }

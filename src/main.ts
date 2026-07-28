@@ -1,80 +1,202 @@
 import { invoke } from "@tauri-apps/api/core";
 
 type AuthStateDto = "signed_out" | "signed_in";
+type FirstRunStepDto = "sign_in" | "install_app" | "testing_set" | "ready";
+
+type InstallContinueOutcomeDto =
+  | { kind: "no_install" }
+  | { kind: "zero_repos" }
+  | { kind: "ready"; all_repositories_warning: boolean };
+
+type RepoIdDto = { owner: string; name: string };
+
+let visibleRepos: RepoIdDto[] = [];
+let selectedRepos: RepoIdDto[] = [];
 
 window.addEventListener("DOMContentLoaded", () => {
-  const signInGithub = document.querySelector<HTMLButtonElement>("#sign-in-github");
-  const signOut = document.querySelector<HTMLButtonElement>("#sign-out");
-  const patForm = document.querySelector<HTMLFormElement>("#pat-form");
+  document
+    .querySelector("#sign-in-github")
+    ?.addEventListener("click", () => void runSignInWithGithub());
+  document
+    .querySelector("#pat-form")
+    ?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void runSignInWithPat();
+    });
+  for (const id of ["sign-out", "sign-out-install", "sign-out-testing"]) {
+    document
+      .querySelector(`#${id}`)
+      ?.addEventListener("click", () => void runSignOut());
+  }
+  document
+    .querySelector("#open-install")
+    ?.addEventListener("click", () => void runOpenInstall());
+  document
+    .querySelector("#continue-install")
+    ?.addEventListener("click", () => void runContinueInstall());
+  document
+    .querySelector("#complete-testing-set")
+    ?.addEventListener("click", () => void runCompleteTestingSet());
+  document
+    .querySelector("#repo-filter")
+    ?.addEventListener("input", () => renderRepoResults());
 
-  signInGithub?.addEventListener("click", () => {
-    void runSignInWithGithub();
-  });
-  signOut?.addEventListener("click", () => {
-    void runSignOut();
-  });
-  patForm?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void runSignInWithPat();
-  });
-
-  void refreshAuthState();
+  void refreshAppState();
 });
 
-async function refreshAuthState() {
-  const el = document.querySelector("#auth-state");
-  if (!el) return;
-
+async function refreshAppState() {
   try {
-    const state = await invoke<AuthStateDto>("auth_state");
-    applyAuthUi(state);
+    const [auth, step] = await Promise.all([
+      invoke<AuthStateDto>("auth_state"),
+      invoke<FirstRunStepDto>("first_run_step"),
+    ]);
+    applyStepUi(auth, step);
     clearStatus();
   } catch (error) {
-    el.textContent = "unavailable";
+    const el = document.querySelector("#auth-state");
+    if (el) el.textContent = "unavailable";
     showStatus(String(error));
   }
 }
 
-function applyAuthUi(state: AuthStateDto) {
-  const el = document.querySelector("#auth-state");
+async function applyStepUi(auth: AuthStateDto, step: FirstRunStepDto) {
+  const signIn = document.querySelector<HTMLElement>("#sign-in-step");
+  const install = document.querySelector<HTMLElement>("#install-step");
+  const testing = document.querySelector<HTMLElement>("#testing-set-step");
+  const ready = document.querySelector<HTMLElement>("#ready-home");
   const signedOut = document.querySelector<HTMLElement>("#signed-out-actions");
-  const signedIn = document.querySelector<HTMLElement>("#signed-in-actions");
-  const captureGate = document.querySelector("#capture-gate");
-  const inboxGate = document.querySelector("#inbox-gate");
-  const captureSection = document.querySelector("#capture-section");
-  const inboxSection = document.querySelector("#inbox-section");
+  const authEl = document.querySelector("#auth-state");
 
-  const isSignedIn = state === "signed_in";
+  if (signIn) signIn.hidden = step !== "sign_in";
+  if (install) install.hidden = step !== "install_app";
+  if (testing) testing.hidden = step !== "testing_set";
+  if (ready) ready.hidden = step !== "ready";
 
-  if (el) {
-    el.textContent = isSignedIn ? "Signed in" : "Signed out";
+  if (authEl) {
+    authEl.textContent = auth === "signed_in" ? "Signed in" : "Signed out";
   }
-  if (signedOut) signedOut.hidden = isSignedIn;
-  if (signedIn) signedIn.hidden = !isSignedIn;
+  if (signedOut) signedOut.hidden = auth === "signed_in";
 
-  if (captureGate) {
-    captureGate.textContent = isSignedIn
-      ? "Capture is ready once Drafts land."
-      : "Sign in to use Capture.";
+  if (step === "testing_set") {
+    await loadTestingSetData();
   }
-  if (inboxGate) {
-    inboxGate.textContent = isSignedIn
-      ? "Inbox is ready once Drafts land."
-      : "Sign in to use the Inbox.";
+  if (step === "install_app") {
+    clearInstallMessages();
   }
-  captureSection?.classList.toggle("unavailable", !isSignedIn);
-  inboxSection?.classList.toggle("unavailable", !isSignedIn);
+}
+
+async function loadTestingSetData() {
+  try {
+    visibleRepos = await invoke<RepoIdDto[]>("app_visible_repos");
+    selectedRepos = await invoke<RepoIdDto[]>("testing_set");
+    const warn = await invoke<boolean>("all_repositories_warning");
+    const warning = document.querySelector<HTMLElement>("#testing-warning");
+    if (warning) {
+      if (warn) {
+        warning.hidden = false;
+        warning.textContent =
+          "You chose All repositories. That’s allowed — you can narrow this to selected repos on GitHub later.";
+      } else {
+        warning.hidden = true;
+        warning.textContent = "";
+      }
+    }
+    renderRepoResults();
+    renderChips();
+  } catch (error) {
+    showStatus(String(error));
+  }
+}
+
+function renderRepoResults() {
+  const list = document.querySelector("#repo-results");
+  const filter =
+    document.querySelector<HTMLInputElement>("#repo-filter")?.value.trim().toLowerCase() ??
+    "";
+  if (!list) return;
+
+  list.replaceChildren();
+  const selectedKeys = new Set(selectedRepos.map(repoKey));
+
+  for (const repo of visibleRepos) {
+    const label = `${repo.owner}/${repo.name}`;
+    if (filter && !label.toLowerCase().includes(filter)) continue;
+    if (selectedKeys.has(repoKey(repo))) continue;
+
+    const li = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "repo-pick";
+    button.textContent = label;
+    button.addEventListener("click", () => void addRepo(repo));
+    li.appendChild(button);
+    list.appendChild(li);
+  }
+
+  if (!list.childElementCount) {
+    const li = document.createElement("li");
+    li.className = "empty-hint";
+    li.textContent = filter
+      ? "No matching App-visible repositories."
+      : "No more App-visible repositories to add.";
+    list.appendChild(li);
+  }
+}
+
+function renderChips() {
+  const chips = document.querySelector("#testing-chips");
+  if (!chips) return;
+  chips.replaceChildren();
+
+  for (const repo of selectedRepos) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    chip.textContent = `${repo.owner}/${repo.name} ×`;
+    chip.title = "Remove from Testing set";
+    chip.addEventListener("click", () => void removeRepo(repo));
+    chips.appendChild(chip);
+  }
+}
+
+async function addRepo(repo: RepoIdDto) {
+  setBusy(true);
+  try {
+    selectedRepos = await invoke<RepoIdDto[]>("add_testing_set_repo", { repo });
+    clearStatus();
+    renderRepoResults();
+    renderChips();
+  } catch (error) {
+    showStatus(String(error));
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function removeRepo(repo: RepoIdDto) {
+  setBusy(true);
+  try {
+    selectedRepos = await invoke<RepoIdDto[]>("remove_testing_set_repo", {
+      repo,
+    });
+    clearStatus();
+    renderRepoResults();
+    renderChips();
+  } catch (error) {
+    showStatus(String(error));
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function runSignInWithGithub() {
   setBusy(true);
   try {
-    const state = await invoke<AuthStateDto>("sign_in_with_github");
-    applyAuthUi(state);
-    clearStatus();
+    await invoke<AuthStateDto>("sign_in_with_github");
+    await refreshAppState();
   } catch (error) {
     showStatus(String(error));
-    await refreshAuthState();
+    await refreshAppState();
   } finally {
     setBusy(false);
   }
@@ -90,15 +212,14 @@ async function runSignInWithPat() {
 
   setBusy(true);
   try {
-    const state = await invoke<AuthStateDto>("sign_in_with_pat", {
+    await invoke<AuthStateDto>("sign_in_with_pat", {
       input: { token },
     });
     if (input) input.value = "";
-    applyAuthUi(state);
-    clearStatus();
+    await refreshAppState();
   } catch (error) {
     showStatus(String(error));
-    await refreshAuthState();
+    await refreshAppState();
   } finally {
     setBusy(false);
   }
@@ -107,19 +228,100 @@ async function runSignInWithPat() {
 async function runSignOut() {
   setBusy(true);
   try {
-    const state = await invoke<AuthStateDto>("sign_out");
-    applyAuthUi(state);
-    clearStatus();
+    await invoke<AuthStateDto>("sign_out");
+    await refreshAppState();
   } catch (error) {
     showStatus(String(error));
-    await refreshAuthState();
+    await refreshAppState();
   } finally {
     setBusy(false);
   }
 }
 
+async function runOpenInstall() {
+  setBusy(true);
+  try {
+    await invoke("open_app_install");
+    clearStatus();
+  } catch (error) {
+    showStatus(String(error));
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function runContinueInstall() {
+  setBusy(true);
+  try {
+    const outcome = await invoke<InstallContinueOutcomeDto>("continue_install");
+    const hint = document.querySelector<HTMLElement>("#install-hint");
+
+    if (outcome.kind === "no_install") {
+      if (hint) {
+        hint.hidden = false;
+        hint.textContent =
+          "Don’t see an install yet. Install the App on selected repositories, then Continue.";
+      }
+      return;
+    }
+    if (outcome.kind === "zero_repos") {
+      if (hint) {
+        hint.hidden = false;
+        hint.textContent =
+          "Add selected repositories on GitHub, then Continue.";
+      }
+      return;
+    }
+
+    // Soft All-repositories warning is shown on the Testing set step.
+    await refreshAppState();
+  } catch (error) {
+    showStatus(String(error));
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function runCompleteTestingSet() {
+  setBusy(true);
+  try {
+    await invoke<FirstRunStepDto>("complete_testing_set");
+    await refreshAppState();
+  } catch (error) {
+    showStatus(String(error));
+  } finally {
+    setBusy(false);
+  }
+}
+
+function clearInstallMessages() {
+  const hint = document.querySelector<HTMLElement>("#install-hint");
+  const warning = document.querySelector<HTMLElement>("#install-warning");
+  if (hint) {
+    hint.hidden = true;
+    hint.textContent = "";
+  }
+  if (warning) {
+    warning.hidden = true;
+    warning.textContent = "";
+  }
+}
+
+function repoKey(repo: RepoIdDto): string {
+  return `${repo.owner}/${repo.name}`;
+}
+
 function setBusy(busy: boolean) {
-  for (const id of ["sign-in-github", "sign-out"]) {
+  const ids = [
+    "sign-in-github",
+    "sign-out",
+    "sign-out-install",
+    "sign-out-testing",
+    "open-install",
+    "continue-install",
+    "complete-testing-set",
+  ];
+  for (const id of ids) {
     const button = document.querySelector<HTMLButtonElement>(`#${id}`);
     if (button) button.disabled = busy;
   }
