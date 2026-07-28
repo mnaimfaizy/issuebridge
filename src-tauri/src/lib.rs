@@ -2,15 +2,15 @@ pub mod adapters;
 pub mod core;
 
 use adapters::{
-    add_testing_set_repo, all_repositories_warning, app_visible_repos, auth_state, build_app_core,
-    complete_testing_set, continue_install, edit_draft, first_run_step, get_draft, keep_mine,
-    last_used_repo, list_inbox, open_app_install, publish_draft, remove_testing_set_repo,
-    save_capture, setup_tray, show_capture, show_capture_window, sign_in_with_github,
-    sign_in_with_pat, sign_out, skip_try_capture, testing_set, update_linked_draft, use_theirs,
-    AppState,
+    add_testing_set_repo, all_repositories_warning, app_visible_repos, apply_ptt, auth_state,
+    build_app_core, complete_testing_set, continue_install, edit_draft, first_run_step, get_draft,
+    keep_mine, last_used_repo, list_inbox, open_app_install, ptt_hotkey, publish_draft,
+    remove_testing_set_repo, save_capture, setup_tray, show_capture, show_capture_window,
+    sign_in_with_github, sign_in_with_pat, sign_out, skip_try_capture, testing_set,
+    update_linked_draft, use_theirs, AppState,
 };
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -37,6 +37,8 @@ pub fn run() {
             complete_testing_set,
             skip_try_capture,
             save_capture,
+            apply_ptt,
+            ptt_hotkey,
             list_inbox,
             get_draft,
             edit_draft,
@@ -75,6 +77,7 @@ pub fn run() {
             }
 
             register_open_hotkey(app.handle()).map_err(|err| err.to_string())?;
+            register_ptt_hotkey(app.handle()).map_err(|err| err.to_string())?;
 
             Ok(())
         })
@@ -113,4 +116,80 @@ fn open_shortcut_from_setting(setting: &str) -> Shortcut {
         Some(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT),
         Code::KeyI,
     )
+}
+
+fn register_ptt_hotkey(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let configured = {
+        let state = app.state::<AppState>();
+        let core = state.core.lock().map_err(|e| e.to_string())?;
+        core.ptt_hotkey()
+    };
+    let shortcut = ptt_shortcut_from_setting(&configured);
+
+    let handle = app.clone();
+    app.global_shortcut().on_shortcut(shortcut, move |app, _shortcut, event| {
+        let capture_visible = app
+            .get_webview_window("capture")
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false);
+        if !capture_visible {
+            return;
+        }
+        let event_name = match event.state {
+            ShortcutState::Pressed => "ptt-pressed",
+            ShortcutState::Released => "ptt-released",
+        };
+        let _ = handle.emit(event_name, ());
+    })?;
+
+    Ok(())
+}
+
+/// Maps persisted PTT-hotkey setting to a Shortcut.
+/// Recognizes `Ctrl+Alt+Shift+<Letter>`; unknown values fall back to default V.
+fn ptt_shortcut_from_setting(setting: &str) -> Shortcut {
+    let mods = Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT;
+    if let Some(code) = parse_ctrl_alt_shift_letter(setting) {
+        return Shortcut::new(Some(mods), code);
+    }
+    Shortcut::new(Some(mods), Code::KeyV)
+}
+
+fn parse_ctrl_alt_shift_letter(setting: &str) -> Option<Code> {
+    let rest = setting
+        .trim()
+        .strip_prefix("Ctrl+Alt+Shift+")
+        .or_else(|| setting.trim().strip_prefix("ctrl+alt+shift+"))?;
+    if rest.len() != 1 {
+        return None;
+    }
+    match rest.chars().next()?.to_ascii_uppercase() {
+        'A' => Some(Code::KeyA),
+        'B' => Some(Code::KeyB),
+        'C' => Some(Code::KeyC),
+        'D' => Some(Code::KeyD),
+        'E' => Some(Code::KeyE),
+        'F' => Some(Code::KeyF),
+        'G' => Some(Code::KeyG),
+        'H' => Some(Code::KeyH),
+        'I' => Some(Code::KeyI),
+        'J' => Some(Code::KeyJ),
+        'K' => Some(Code::KeyK),
+        'L' => Some(Code::KeyL),
+        'M' => Some(Code::KeyM),
+        'N' => Some(Code::KeyN),
+        'O' => Some(Code::KeyO),
+        'P' => Some(Code::KeyP),
+        'Q' => Some(Code::KeyQ),
+        'R' => Some(Code::KeyR),
+        'S' => Some(Code::KeyS),
+        'T' => Some(Code::KeyT),
+        'U' => Some(Code::KeyU),
+        'V' => Some(Code::KeyV),
+        'W' => Some(Code::KeyW),
+        'X' => Some(Code::KeyX),
+        'Y' => Some(Code::KeyY),
+        'Z' => Some(Code::KeyZ),
+        _ => None,
+    }
 }

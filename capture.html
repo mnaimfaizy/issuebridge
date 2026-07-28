@@ -51,6 +51,14 @@
         placeholder="What happened?"
       ></textarea>
 
+      <div class="capture-ptt-row">
+        <button type="button" id="capture-ptt" class="btn capture-ptt">
+          Hold to talk
+        </button>
+        <span id="capture-ptt-hint" class="capture-ptt-hint"></span>
+      </div>
+      <p id="capture-voice-status" class="voice-status" hidden></p>
+
       <div class="actions capture-actions">
         <button type="button" id="capture-save" class="btn primary">Save Draft</button>
         <button type="button" id="capture-cancel" class="btn">Cancel</button>

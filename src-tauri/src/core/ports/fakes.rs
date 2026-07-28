@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime};
 use super::{
     AppInstallSnapshot, AppSettings, Clock, CreatedIssue, Draft, DraftStore, DraftStoreError,
     GitHub, GitHubError, RepoId, SettingsStore, SettingsStoreError, StoredCredentials, TokenStore,
-    TokenStoreError, VoiceTranscriber,
+    TokenStoreError, VoiceError, VoiceTranscriber,
 };
 
 fn issue_key(repo: &RepoId, number: u64) -> String {
@@ -291,10 +291,36 @@ impl SettingsStore for FakeSettingsStore {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct FakeVoiceTranscriber;
+/// Scriptable voice port — set `next_result` before each PTT call.
+#[derive(Debug, Clone)]
+pub struct FakeVoiceTranscriber {
+    pub next_result: Arc<Mutex<Result<String, VoiceError>>>,
+}
 
-impl VoiceTranscriber for FakeVoiceTranscriber {}
+impl Default for FakeVoiceTranscriber {
+    fn default() -> Self {
+        Self {
+            next_result: Arc::new(Mutex::new(Ok(String::new()))),
+        }
+    }
+}
+
+impl FakeVoiceTranscriber {
+    pub fn with_result(result: Result<String, VoiceError>) -> Self {
+        Self {
+            next_result: Arc::new(Mutex::new(result)),
+        }
+    }
+}
+
+impl VoiceTranscriber for FakeVoiceTranscriber {
+    fn transcribe(&self, _audio_path: &str) -> Result<String, VoiceError> {
+        self.next_result
+            .lock()
+            .expect("FakeVoiceTranscriber lock")
+            .clone()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct FakeClock {

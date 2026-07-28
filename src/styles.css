@@ -447,6 +447,41 @@ h1 {
   min-height: 7rem;
 }
 
+.capture-ptt-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 0 0 0.35rem;
+}
+
+.capture-ptt {
+  min-width: 7.5rem;
+  user-select: none;
+  touch-action: none;
+}
+
+.capture-ptt-active {
+  border-color: #8a3b2f;
+  background: #8a3b2f;
+  color: #fff;
+}
+
+.capture-ptt-hint {
+  color: #5a6573;
+  font-size: 0.85rem;
+}
+
+.voice-status {
+  margin: 0 0 0.75rem;
+  color: #6b3a32;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.voice-status-soft {
+  color: #4a5565;
+}
+
 .capture-actions {
   flex-direction: row;
   align-items: center;

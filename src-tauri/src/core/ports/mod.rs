@@ -139,6 +139,9 @@ pub struct AppSettings {
     pub last_used_repo: Option<RepoId>,
     /// Open Capture hotkey (default `Ctrl+Alt+Shift+I`).
     pub open_hotkey: Option<String>,
+    /// Push-to-talk hotkey (default `Ctrl+Alt+Shift+V`).
+    #[serde(default)]
+    pub ptt_hotkey: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -226,7 +229,23 @@ pub enum SettingsStoreError {
     Unavailable,
 }
 
-pub trait VoiceTranscriber: Send + Sync {}
+/// Failure kinds surfaced to Capture after a PTT attempt (mic or Whisper).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum VoiceError {
+    PermissionDenied,
+    NoDevice,
+    /// Sidecar crash and timeout share one UX intent.
+    SidecarFailed,
+    /// Soft failure — not framed as an error in the UI.
+    EmptyTranscript,
+}
+
+/// Offline speech → text from a WAV path. Mic capture stays in the Capture adapter/UI;
+/// this port is the Whisper/transcription boundary the core orchestrates.
+pub trait VoiceTranscriber: Send + Sync {
+    fn transcribe(&self, audio_path: &str) -> Result<String, VoiceError>;
+}
 
 pub trait Clock: Send + Sync {
     fn now(&self) -> SystemTime;

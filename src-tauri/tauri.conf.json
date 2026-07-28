@@ -33,6 +33,8 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "externalBin": ["binaries/whisper-cli"],
+    "resources": ["resources/models/ggml-base.bin"]
   }
 }

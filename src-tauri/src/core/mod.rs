@@ -11,7 +11,7 @@ pub use ports::{
     AppInstallSnapshot, AppSettings, CaptureInput, Clock, CreatedIssue, Draft, DraftStore,
     DraftStoreError, EditDraftInput, GitHub, GitHubError, InboxItem, LocalLink, RemoteSnapshot,
     RepoId, SettingsStore, SettingsStoreError, StoredCredentials, TokenStore, TokenStoreError,
-    VoiceTranscriber,
+    VoiceError, VoiceTranscriber,
 };
 
 /// Auth state visible to callers (never includes raw tokens).
@@ -47,7 +47,6 @@ pub struct IssuebridgeCore<G, T, D, V, C, S> {
     github: G,
     token_store: T,
     draft_store: D,
-    #[allow(dead_code)] // exercised by PTT transcription use-cases
     voice: V,
     clock: C,
     settings_store: S,
@@ -595,9 +594,44 @@ where
             .and_then(|s| s.open_hotkey)
             .unwrap_or_else(|| DEFAULT_OPEN_HOTKEY.to_string())
     }
+
+    pub fn ptt_hotkey(&self) -> String {
+        self.settings_store
+            .load()
+            .ok()
+            .and_then(|s| s.ptt_hotkey)
+            .unwrap_or_else(|| DEFAULT_PTT_HOTKEY.to_string())
+    }
+
+    /// Transcribe a PTT recording and append the transcript into the Capture body.
+    /// Does not persist a Draft — text Save remains a separate path.
+    pub fn apply_ptt(&self, current_body: &str, audio_path: &str) -> Result<String, VoiceError> {
+        let transcript = self.voice.transcribe(audio_path)?;
+        let transcript = transcript.trim();
+        if transcript.is_empty() {
+            return Err(VoiceError::EmptyTranscript);
+        }
+        Ok(append_transcript_to_body(current_body, transcript))
+    }
 }
 
 const DEFAULT_OPEN_HOTKEY: &str = "Ctrl+Alt+Shift+I";
+const DEFAULT_PTT_HOTKEY: &str = "Ctrl+Alt+Shift+V";
+
+fn append_transcript_to_body(current_body: &str, transcript: &str) -> String {
+    if current_body.is_empty() {
+        return transcript.to_string();
+    }
+    if current_body
+        .chars()
+        .last()
+        .is_some_and(|c| c.is_whitespace())
+    {
+        format!("{current_body}{transcript}")
+    } else {
+        format!("{current_body} {transcript}")
+    }
+}
 
 fn mint_draft_id(now: std::time::SystemTime) -> String {
     use std::time::UNIX_EPOCH;
@@ -684,11 +718,19 @@ mod tests {
     }
 
     fn signed_in_core(github: FakeGitHub, settings: FakeSettingsStore) -> TestCore {
+        signed_in_core_with_voice(github, settings, FakeVoiceTranscriber::default())
+    }
+
+    fn signed_in_core_with_voice(
+        github: FakeGitHub,
+        settings: FakeSettingsStore,
+        voice: FakeVoiceTranscriber,
+    ) -> TestCore {
         let mut core = IssuebridgeCore::new(
             github,
             FakeTokenStore::default(),
             FakeDraftStore::default(),
-            FakeVoiceTranscriber::default(),
+            voice,
             FakeClock::default(),
             settings,
         );
@@ -1535,5 +1577,114 @@ mod tests {
         assert_eq!(snapshot.title, "Theirs title");
         assert_eq!(snapshot.updated_at, "2024-01-20T09:00:00Z");
         assert!(!resolved.is_dirty());
+    }
+
+    #[test]
+    fn apply_ptt_appends_transcript_to_nonempty_body() {
+        let voice = FakeVoiceTranscriber::with_result(Ok("spoken bug details".into()));
+        let core = signed_in_core_with_voice(FakeGitHub::default(), ready_settings(), voice);
+
+        let body = core
+            .apply_ptt("Steps:", "unused.wav")
+            .expect("PTT success");
+
+        assert_eq!(body, "Steps: spoken bug details");
+    }
+
+    #[test]
+    fn apply_ptt_sets_body_when_empty() {
+        let voice = FakeVoiceTranscriber::with_result(Ok("  hello world  ".into()));
+        let core = signed_in_core_with_voice(FakeGitHub::default(), ready_settings(), voice);
+
+        let body = core.apply_ptt("", "unused.wav").expect("PTT success");
+
+        assert_eq!(body, "hello world");
+    }
+
+    #[test]
+    fn apply_ptt_permission_denied_leaves_body_unchanged_path() {
+        let voice =
+            FakeVoiceTranscriber::with_result(Err(VoiceError::PermissionDenied));
+        let core = signed_in_core_with_voice(FakeGitHub::default(), ready_settings(), voice);
+
+        let err = core
+            .apply_ptt("keep me", "unused.wav")
+            .expect_err("permission denied");
+
+        assert_eq!(err, VoiceError::PermissionDenied);
+    }
+
+    #[test]
+    fn apply_ptt_no_device_returns_typed_failure() {
+        let voice = FakeVoiceTranscriber::with_result(Err(VoiceError::NoDevice));
+        let core = signed_in_core_with_voice(FakeGitHub::default(), ready_settings(), voice);
+
+        assert_eq!(
+            core.apply_ptt("", "unused.wav").expect_err("no device"),
+            VoiceError::NoDevice
+        );
+    }
+
+    #[test]
+    fn apply_ptt_sidecar_failed_returns_typed_failure() {
+        let voice = FakeVoiceTranscriber::with_result(Err(VoiceError::SidecarFailed));
+        let core = signed_in_core_with_voice(FakeGitHub::default(), ready_settings(), voice);
+
+        assert_eq!(
+            core.apply_ptt("", "unused.wav").expect_err("sidecar"),
+            VoiceError::SidecarFailed
+        );
+    }
+
+    #[test]
+    fn apply_ptt_empty_transcript_is_soft_failure() {
+        let voice = FakeVoiceTranscriber::with_result(Ok("   ".into()));
+        let core = signed_in_core_with_voice(FakeGitHub::default(), ready_settings(), voice);
+
+        assert_eq!(
+            core.apply_ptt("body", "unused.wav")
+                .expect_err("empty transcript"),
+            VoiceError::EmptyTranscript
+        );
+    }
+
+    #[test]
+    fn text_save_succeeds_after_voice_failure() {
+        let voice =
+            FakeVoiceTranscriber::with_result(Err(VoiceError::SidecarFailed));
+        let mut core =
+            signed_in_core_with_voice(FakeGitHub::default(), ready_settings(), voice);
+
+        assert_eq!(
+            core.apply_ptt("", "unused.wav").expect_err("voice failed"),
+            VoiceError::SidecarFailed
+        );
+
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "Typed instead".into(),
+                body: "Voice failed but text still works.".into(),
+            })
+            .expect("text Save must succeed after voice failure");
+
+        assert_eq!(saved.title, "Typed instead");
+        assert_eq!(saved.body, "Voice failed but text still works.");
+    }
+
+    #[test]
+    fn ptt_hotkey_defaults_to_ctrl_alt_shift_v() {
+        let core = ready_core();
+        assert_eq!(core.ptt_hotkey(), "Ctrl+Alt+Shift+V");
+    }
+
+    #[test]
+    fn ptt_hotkey_uses_configured_setting() {
+        let settings = FakeSettingsStore::with_settings(AppSettings {
+            ptt_hotkey: Some("Ctrl+Alt+Shift+P".into()),
+            ..ready_settings().snapshot()
+        });
+        let core = signed_in_core(FakeGitHub::default(), settings);
+        assert_eq!(core.ptt_hotkey(), "Ctrl+Alt+Shift+P");
     }
 }

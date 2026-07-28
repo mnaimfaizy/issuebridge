@@ -14,9 +14,11 @@ use crate::adapters::oauth_loopback::{
     OAuthLoopbackError,
 };
 use crate::adapters::app_core::AppCore;
+use crate::adapters::whisper_voice::write_temp_wav;
 use crate::core::{
     AuthError, AuthState, CaptureError, CaptureInput, EditDraftInput, FirstRunStep, InboxError,
     InstallContinueOutcome, InstallError, PublishError, RepoId, TestingSetError, UpdateError,
+    VoiceError,
 };
 
 pub struct AppState {
@@ -510,6 +512,83 @@ pub fn last_used_repo(state: State<'_, AppState>) -> Result<Option<RepoIdDto>, S
 #[tauri::command]
 pub fn show_capture(app: tauri::AppHandle) -> Result<(), String> {
     crate::adapters::capture_window::show_capture_window(&app)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyPttInput {
+    pub body: String,
+    /// 16-bit PCM WAV bytes (base64).
+    pub wav_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApplyPttOk {
+    pub body: String,
+}
+
+/// Push-to-talk: transcribe WAV and return the updated Capture body.
+#[tauri::command]
+pub fn apply_ptt(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    input: ApplyPttInput,
+) -> Result<ApplyPttOk, String> {
+    use tauri::Manager;
+
+    let temp_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|_| voice_error_message(VoiceError::SidecarFailed))?
+        .join("ptt");
+
+    let wav_path = decode_and_write_wav(&temp_dir, &input.wav_base64).map_err(voice_error_message)?;
+    let path_str = wav_path.to_string_lossy().to_string();
+
+    let result = {
+        let core = state
+            .core
+            .lock()
+            .map_err(|_| "core lock poisoned".to_string())?;
+        core.apply_ptt(&input.body, &path_str)
+    };
+
+    let _ = std::fs::remove_file(&wav_path);
+
+    match result {
+        Ok(body) => Ok(ApplyPttOk { body }),
+        Err(err) => Err(voice_error_message(err)),
+    }
+}
+
+fn decode_and_write_wav(
+    temp_dir: &std::path::Path,
+    wav_base64: &str,
+) -> Result<std::path::PathBuf, VoiceError> {
+    use base64::Engine;
+    let wav_bytes = base64::engine::general_purpose::STANDARD
+        .decode(wav_base64.as_bytes())
+        .map_err(|_| VoiceError::SidecarFailed)?;
+    write_temp_wav(temp_dir, &wav_bytes)
+}
+
+#[tauri::command]
+pub fn ptt_hotkey(state: State<'_, AppState>) -> Result<String, String> {
+    let core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    Ok(core.ptt_hotkey())
+}
+
+fn voice_error_message(err: VoiceError) -> String {
+    // Stable kind tokens for the Capture UI; friendly copy lives in the webview.
+    match err {
+        VoiceError::PermissionDenied => "permission_denied".into(),
+        VoiceError::NoDevice => "no_device".into(),
+        VoiceError::SidecarFailed => "sidecar_failed".into(),
+        VoiceError::EmptyTranscript => "empty_transcript".into(),
+    }
 }
 
 fn capture_error_message(err: CaptureError) -> String {
