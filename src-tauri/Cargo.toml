@@ -1,6 +1,6 @@
 [package]
 name = "issuebridge"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 description = "Issuebridge — capture-first GitHub issue inbox for Windows"
 authors = ["Issuebridge"]
 edition = "2021"
