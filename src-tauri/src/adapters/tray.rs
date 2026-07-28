@@ -1,4 +1,4 @@
-//! System tray adapter: show / hide main window, quit.
+//! System tray adapter: Capture popup, show / hide main window, quit.
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -6,11 +6,14 @@ use tauri::{
     AppHandle, Manager, Runtime,
 };
 
+use super::capture_window::show_capture_window;
+
 pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    let capture = MenuItem::with_id(app, "capture", "Capture…", true, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Show Issuebridge", true, None::<&str>)?;
     let hide = MenuItem::with_id(app, "hide", "Hide", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
+    let menu = Menu::with_items(app, &[&capture, &show, &hide, &quit])?;
 
     let icon = app
         .default_window_icon()
@@ -22,6 +25,9 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .menu(&menu)
         .tooltip("Issuebridge")
         .on_menu_event(|app, event| match event.id.as_ref() {
+            "capture" => {
+                let _ = show_capture_window(app);
+            }
             "show" => show_main(app),
             "hide" => hide_main(app),
             "quit" => app.exit(0),
@@ -34,7 +40,7 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 ..
             } = event
             {
-                show_main(tray.app_handle());
+                let _ = show_capture_window(tray.app_handle());
             }
         })
         .build(app)?;

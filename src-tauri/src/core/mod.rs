@@ -4,11 +4,11 @@
 mod error;
 mod ports;
 
-pub use error::{AuthError, CaptureError, InstallError, TestingSetError};
+pub use error::{AuthError, CaptureError, InboxError, InstallError, TestingSetError};
 pub use ports::{
     AppInstallSnapshot, AppSettings, CaptureInput, Clock, Draft, DraftStore, DraftStoreError,
-    GitHub, GitHubError, RepoId, SettingsStore, SettingsStoreError, StoredCredentials, TokenStore,
-    TokenStoreError, VoiceTranscriber,
+    GitHub, GitHubError, InboxItem, RepoId, SettingsStore, SettingsStoreError, StoredCredentials,
+    TokenStore, TokenStoreError, VoiceTranscriber,
 };
 
 /// Auth state visible to callers (never includes raw tokens).
@@ -42,11 +42,9 @@ const TESTING_SET_MAX: usize = 3;
 pub struct IssuebridgeCore<G, T, D, V, C, S> {
     github: G,
     token_store: T,
-    #[allow(dead_code)] // exercised when Capture Save persists Drafts
     draft_store: D,
     #[allow(dead_code)] // exercised by PTT transcription use-cases
     voice: V,
-    #[allow(dead_code)] // exercised when assigning Draft timestamps
     clock: C,
     settings_store: S,
 }
@@ -283,13 +281,94 @@ where
             .map_err(|_| TestingSetError::StorageUnavailable)
     }
 
-    /// Save a Capture into a Draft. Refused when signed out.
-    pub fn save_capture(&mut self, _input: CaptureInput) -> Result<Draft, CaptureError> {
+    /// Save a Capture into a Draft. Refused when signed out. Does not Publish.
+    pub fn save_capture(&mut self, input: CaptureInput) -> Result<Draft, CaptureError> {
         if self.auth_state() != AuthState::SignedIn {
             return Err(CaptureError::NotSignedIn);
         }
-        // Draft persistence is a later slice; this ticket only proves the auth gate.
-        Err(CaptureError::NotAvailableYet)
+
+        let now = self.clock.now();
+        let draft = Draft {
+            id: mint_draft_id(now),
+            repo: input.repo.clone(),
+            title: input.title,
+            body: input.body,
+            label_names: Vec::new(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        self.draft_store
+            .save(draft.clone())
+            .map_err(|_| CaptureError::StorageUnavailable)?;
+
+        let mut settings = self
+            .settings_store
+            .load()
+            .map_err(|_| CaptureError::StorageUnavailable)?;
+        settings.last_used_repo = Some(input.repo);
+        self.settings_store
+            .save(settings)
+            .map_err(|_| CaptureError::StorageUnavailable)?;
+
+        Ok(draft)
+    }
+
+    /// Flat Inbox list sorted by local `updated_at` descending.
+    pub fn list_inbox(&self) -> Result<Vec<InboxItem>, InboxError> {
+        if self.auth_state() != AuthState::SignedIn {
+            return Err(InboxError::NotSignedIn);
+        }
+
+        let mut drafts = self
+            .draft_store
+            .list()
+            .map_err(|_| InboxError::StorageUnavailable)?;
+        drafts.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+        Ok(drafts.into_iter().map(inbox_item_from_draft).collect())
+    }
+
+    pub fn last_used_repo(&self) -> Option<RepoId> {
+        self.settings_store
+            .load()
+            .ok()
+            .and_then(|s| s.last_used_repo)
+    }
+
+    pub fn open_hotkey(&self) -> String {
+        self.settings_store
+            .load()
+            .ok()
+            .and_then(|s| s.open_hotkey)
+            .unwrap_or_else(|| DEFAULT_OPEN_HOTKEY.to_string())
+    }
+}
+
+const DEFAULT_OPEN_HOTKEY: &str = "Ctrl+Alt+Shift+I";
+
+fn mint_draft_id(now: std::time::SystemTime) -> String {
+    use std::time::UNIX_EPOCH;
+    let nanos = now
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("d-{nanos}-{:016x}", rand::random::<u64>())
+}
+
+fn inbox_item_from_draft(draft: Draft) -> InboxItem {
+    let display_title = if draft.title.trim().is_empty() {
+        "Untitled".to_string()
+    } else {
+        draft.title
+    };
+    // Linked / Dirty arrive with Publish; new Capture Drafts are unlinked and clean.
+    InboxItem {
+        id: draft.id,
+        display_title,
+        repo: draft.repo,
+        linked: false,
+        dirty: false,
     }
 }
 
@@ -302,6 +381,8 @@ fn map_github_error(err: GitHubError) -> AuthError {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use ports::fakes::{
         FakeClock, FakeDraftStore, FakeGitHub, FakeSettingsStore, FakeTokenStore,
@@ -694,5 +775,107 @@ mod tests {
         assert!(settings.snapshot().install_completed);
         assert!(settings.snapshot().testing_set_completed);
         assert_eq!(settings.snapshot().testing_set, vec![repo("acme", "widgets")]);
+    }
+
+    fn ready_core() -> TestCore {
+        signed_in_core(
+            FakeGitHub::default(),
+            FakeSettingsStore::with_settings(AppSettings {
+                install_completed: true,
+                testing_set_completed: true,
+                testing_set: vec![repo("acme", "widgets")],
+                app_visible_repos: vec![repo("acme", "widgets"), repo("acme", "gadgets")],
+                ..AppSettings::default()
+            }),
+        )
+    }
+
+    #[test]
+    fn signed_in_save_capture_persists_draft_retrievable_from_inbox() {
+        let mut core = ready_core();
+
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "Broken button".into(),
+                body: "Clicking Save does nothing.".into(),
+            })
+            .expect("Capture Save should persist a Draft when signed in");
+
+        assert_eq!(saved.repo, repo("acme", "widgets"));
+        assert_eq!(saved.title, "Broken button");
+        assert_eq!(saved.body, "Clicking Save does nothing.");
+        assert!(saved.label_names.is_empty());
+        assert_eq!(saved.created_at, saved.updated_at);
+
+        let inbox = core.list_inbox().expect("Inbox list");
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].id, saved.id);
+        assert_eq!(inbox[0].display_title, "Broken button");
+        assert_eq!(inbox[0].repo, repo("acme", "widgets"));
+        assert!(!inbox[0].linked);
+        assert!(!inbox[0].dirty);
+    }
+
+    #[test]
+    fn save_capture_with_empty_title_lists_as_untitled() {
+        let mut core = ready_core();
+
+        core.save_capture(CaptureInput {
+            repo: repo("acme", "widgets"),
+            title: "   ".into(),
+            body: "Body without a title yet.".into(),
+        })
+        .expect("empty title is allowed");
+
+        let inbox = core.list_inbox().expect("Inbox list");
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].display_title, "Untitled");
+        assert!(!inbox[0].linked);
+        assert!(!inbox[0].dirty);
+    }
+
+    #[test]
+    fn inbox_lists_drafts_by_local_updated_at_descending() {
+        let clock = FakeClock::default();
+        let drafts = FakeDraftStore::default();
+        let settings = FakeSettingsStore::with_settings(AppSettings {
+            install_completed: true,
+            testing_set_completed: true,
+            testing_set: vec![repo("acme", "widgets")],
+            app_visible_repos: vec![repo("acme", "widgets")],
+            ..AppSettings::default()
+        });
+        let mut core = IssuebridgeCore::new(
+            FakeGitHub::default(),
+            FakeTokenStore::default(),
+            drafts,
+            FakeVoiceTranscriber::default(),
+            clock.clone(),
+            settings,
+        );
+        core.sign_in_with_pat("ghp_test_token_not_a_secret")
+            .expect("PAT sign-in");
+
+        core.save_capture(CaptureInput {
+            repo: repo("acme", "widgets"),
+            title: "Older".into(),
+            body: "first".into(),
+        })
+        .expect("first save");
+
+        clock.advance(Duration::from_secs(60));
+
+        core.save_capture(CaptureInput {
+            repo: repo("acme", "widgets"),
+            title: "Newer".into(),
+            body: "second".into(),
+        })
+        .expect("second save");
+
+        let inbox = core.list_inbox().expect("Inbox list");
+        assert_eq!(inbox.len(), 2);
+        assert_eq!(inbox[0].display_title, "Newer");
+        assert_eq!(inbox[1].display_title, "Older");
     }
 }

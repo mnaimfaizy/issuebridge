@@ -78,15 +78,26 @@ impl TokenStore for FakeTokenStore {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct FakeDraftStore {
-    pub drafts: Vec<Draft>,
+    inner: Arc<Mutex<Vec<Draft>>>,
 }
 
 impl DraftStore for FakeDraftStore {
     fn save(&mut self, draft: Draft) -> Result<(), DraftStoreError> {
-        self.drafts.push(draft);
+        self.inner
+            .lock()
+            .map_err(|_| DraftStoreError::Unavailable)?
+            .push(draft);
         Ok(())
+    }
+
+    fn list(&self) -> Result<Vec<Draft>, DraftStoreError> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| DraftStoreError::Unavailable)?
+            .clone())
     }
 }
 
@@ -134,21 +145,30 @@ pub struct FakeVoiceTranscriber;
 
 impl VoiceTranscriber for FakeVoiceTranscriber {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FakeClock {
-    now: SystemTime,
+    now: Arc<Mutex<SystemTime>>,
 }
 
 impl Default for FakeClock {
     fn default() -> Self {
         Self {
-            now: SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000),
+            now: Arc::new(Mutex::new(
+                SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000),
+            )),
         }
+    }
+}
+
+impl FakeClock {
+    pub fn advance(&self, by: Duration) {
+        let mut now = self.now.lock().expect("FakeClock lock");
+        *now += by;
     }
 }
 
 impl Clock for FakeClock {
     fn now(&self) -> SystemTime {
-        self.now
+        *self.now.lock().expect("FakeClock lock")
     }
 }

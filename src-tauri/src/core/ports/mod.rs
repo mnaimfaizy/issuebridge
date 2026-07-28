@@ -34,6 +34,16 @@ pub struct Draft {
     pub updated_at: SystemTime,
 }
 
+/// One Inbox row — display fields derived from a Draft.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InboxItem {
+    pub id: String,
+    pub display_title: String,
+    pub repo: RepoId,
+    pub linked: bool,
+    pub dirty: bool,
+}
+
 /// Credentials held only by TokenStore adapters — never returned through core IPC results.
 /// Also the shape returned by a successful OAuth code exchange.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +71,10 @@ pub struct AppSettings {
     pub testing_set: Vec<RepoId>,
     pub app_visible_repos: Vec<RepoId>,
     pub all_repositories_warning: bool,
+    /// Last repo chosen in Capture (chips / typeahead).
+    pub last_used_repo: Option<RepoId>,
+    /// Open Capture hotkey (default `Ctrl+Alt+Shift+I`).
+    pub open_hotkey: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +114,7 @@ pub enum TokenStoreError {
 
 pub trait DraftStore: Send + Sync {
     fn save(&mut self, draft: Draft) -> Result<(), DraftStoreError>;
+    fn list(&self) -> Result<Vec<Draft>, DraftStoreError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

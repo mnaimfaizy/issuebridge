@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Emitter, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::adapters::github_http::APP_INSTALL_URL;
@@ -15,8 +15,8 @@ use crate::adapters::oauth_loopback::{
 };
 use crate::adapters::app_core::AppCore;
 use crate::core::{
-    AuthError, AuthState, CaptureError, CaptureInput, FirstRunStep, InstallContinueOutcome,
-    InstallError, RepoId, TestingSetError,
+    AuthError, AuthState, CaptureError, CaptureInput, FirstRunStep, InboxError,
+    InstallContinueOutcome, InstallError, RepoId, TestingSetError,
 };
 
 pub struct AppState {
@@ -111,6 +111,16 @@ pub struct CaptureInputDto {
     pub name: String,
     pub title: String,
     pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InboxItemDto {
+    pub id: String,
+    pub display_title: String,
+    pub owner: String,
+    pub name: String,
+    pub linked: bool,
+    pub dirty: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -281,13 +291,14 @@ pub fn complete_testing_set(state: State<'_, AppState>) -> Result<FirstRunStepDt
 
 #[tauri::command]
 pub fn save_capture(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     input: CaptureInputDto,
-) -> Result<(), CaptureError> {
+) -> Result<(), String> {
     let mut core = state
         .core
         .lock()
-        .map_err(|_| CaptureError::NotSignedIn)?;
+        .map_err(|_| "core lock poisoned".to_string())?;
     core.save_capture(CaptureInput {
         repo: RepoId {
             owner: input.owner,
@@ -295,8 +306,63 @@ pub fn save_capture(
         },
         title: input.title,
         body: input.body,
-    })?;
+    })
+    .map_err(capture_error_message)?;
+    drop(core);
+    let _ = app.emit("inbox-changed", ());
     Ok(())
+}
+
+#[tauri::command]
+pub fn list_inbox(state: State<'_, AppState>) -> Result<Vec<InboxItemDto>, String> {
+    let core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    core.list_inbox()
+        .map(|items| {
+            items
+                .into_iter()
+                .map(|item| InboxItemDto {
+                    id: item.id,
+                    display_title: item.display_title,
+                    owner: item.repo.owner,
+                    name: item.repo.name,
+                    linked: item.linked,
+                    dirty: item.dirty,
+                })
+                .collect()
+        })
+        .map_err(inbox_error_message)
+}
+
+#[tauri::command]
+pub fn last_used_repo(state: State<'_, AppState>) -> Result<Option<RepoIdDto>, String> {
+    let core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    Ok(core.last_used_repo().map(RepoIdDto::from))
+}
+
+/// Show or focus the Capture popup window.
+#[tauri::command]
+pub fn show_capture(app: tauri::AppHandle) -> Result<(), String> {
+    crate::adapters::capture_window::show_capture_window(&app)
+}
+
+fn capture_error_message(err: CaptureError) -> String {
+    match err {
+        CaptureError::NotSignedIn => "Sign in to capture a Draft.".into(),
+        CaptureError::StorageUnavailable => "Could not save Draft.".into(),
+    }
+}
+
+fn inbox_error_message(err: InboxError) -> String {
+    match err {
+        InboxError::NotSignedIn => "Sign in to view the Inbox.".into(),
+        InboxError::StorageUnavailable => "Could not load Drafts.".into(),
+    }
 }
 
 fn auth_error_message(err: AuthError) -> String {

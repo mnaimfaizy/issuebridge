@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Capture</title>
+    <script type="module" src="/src/capture.ts" defer></script>
+  </head>
+
+  <body class="capture-body">
+    <main class="capture-shell">
+      <h1 class="capture-title">Capture</h1>
+      <p class="capture-lede">Save a Draft — publish later from the Inbox.</p>
+
+      <div
+        id="capture-chips"
+        class="chips capture-chips"
+        aria-label="Testing set"
+      ></div>
+
+      <label class="filter-label" for="capture-repo">Repository</label>
+      <input
+        id="capture-repo"
+        type="search"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="owner/name"
+      />
+      <ul
+        id="capture-repo-results"
+        class="repo-list"
+        aria-label="Repository matches"
+        hidden
+      ></ul>
+
+      <label class="filter-label" for="capture-title">Title</label>
+      <input
+        id="capture-title"
+        type="text"
+        autocomplete="off"
+        spellcheck="true"
+        placeholder="Untitled"
+      />
+
+      <label class="filter-label" for="capture-body">Body</label>
+      <textarea
+        id="capture-body"
+        rows="6"
+        spellcheck="true"
+        placeholder="What happened?"
+      ></textarea>
+
+      <div class="actions capture-actions">
+        <button type="button" id="capture-save" class="btn primary">Save Draft</button>
+        <button type="button" id="capture-cancel" class="btn">Cancel</button>
+      </div>
+
+      <p id="capture-status" class="status" hidden></p>
+    </main>
+  </body>
+</html>

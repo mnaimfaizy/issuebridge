@@ -27,4 +27,5 @@ base64 = "0.22"
 rand = "0.8"
 url = "2"
 thiserror = "2"
+tauri-plugin-global-shortcut = "2.3.2"
 

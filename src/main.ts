@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 type AuthStateDto = "signed_out" | "signed_in";
 type FirstRunStepDto = "sign_in" | "install_app" | "testing_set" | "ready";
@@ -9,6 +10,15 @@ type InstallContinueOutcomeDto =
   | { kind: "ready"; all_repositories_warning: boolean };
 
 type RepoIdDto = { owner: string; name: string };
+
+type InboxItemDto = {
+  id: string;
+  display_title: string;
+  owner: string;
+  name: string;
+  linked: boolean;
+  dirty: boolean;
+};
 
 let visibleRepos: RepoIdDto[] = [];
 let selectedRepos: RepoIdDto[] = [];
@@ -40,9 +50,37 @@ window.addEventListener("DOMContentLoaded", () => {
   document
     .querySelector("#repo-filter")
     ?.addEventListener("input", () => renderRepoResults());
+  for (const id of ["open-capture", "empty-capture"]) {
+    document
+      .querySelector(`#${id}`)
+      ?.addEventListener("click", () => void runOpenCapture());
+  }
+
+  window.addEventListener("focus", () => {
+    void refreshInboxIfReady();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      void refreshInboxIfReady();
+    }
+  });
+  void listen("inbox-changed", () => {
+    void refreshInboxIfReady();
+  });
 
   void refreshAppState();
 });
+
+async function refreshInboxIfReady() {
+  try {
+    const step = await invoke<FirstRunStepDto>("first_run_step");
+    if (step === "ready") {
+      await loadInbox();
+    }
+  } catch {
+    // Ignore refresh races while signed out / mid-transition.
+  }
+}
 
 async function refreshAppState() {
   try {
@@ -82,6 +120,64 @@ async function applyStepUi(auth: AuthStateDto, step: FirstRunStepDto) {
   }
   if (step === "install_app") {
     clearInstallMessages();
+  }
+  if (step === "ready") {
+    await loadInbox();
+  }
+}
+
+async function loadInbox() {
+  try {
+    const items = await invoke<InboxItemDto[]>("list_inbox");
+    renderInbox(items);
+  } catch (error) {
+    showStatus(String(error));
+  }
+}
+
+function renderInbox(items: InboxItemDto[]) {
+  const empty = document.querySelector<HTMLElement>("#inbox-empty");
+  const list = document.querySelector("#inbox-list");
+  const openCapture = document.querySelector<HTMLElement>("#open-capture");
+  if (!empty || !list) return;
+
+  list.replaceChildren();
+
+  if (items.length === 0) {
+    empty.hidden = false;
+    if (openCapture) openCapture.hidden = true;
+    return;
+  }
+
+  empty.hidden = true;
+  if (openCapture) openCapture.hidden = false;
+
+  for (const item of items) {
+    const li = document.createElement("li");
+    li.className = "inbox-row";
+
+    const title = document.createElement("div");
+    title.className = "inbox-row-title";
+    title.textContent = item.display_title;
+
+    const meta = document.createElement("div");
+    meta.className = "inbox-row-meta";
+    const linkCue = item.linked ? "linked" : "unlinked";
+    const dirtyCue = item.dirty ? "dirty" : "clean";
+    meta.textContent = `${item.owner}/${item.name} · ${linkCue} · ${dirtyCue}`;
+
+    li.appendChild(title);
+    li.appendChild(meta);
+    list.appendChild(li);
+  }
+}
+
+async function runOpenCapture() {
+  try {
+    await invoke("show_capture");
+    clearStatus();
+  } catch (error) {
+    showStatus(String(error));
   }
 }
 
@@ -320,6 +416,8 @@ function setBusy(busy: boolean) {
     "open-install",
     "continue-install",
     "complete-testing-set",
+    "open-capture",
+    "empty-capture",
   ];
   for (const id of ids) {
     const button = document.querySelector<HTMLButtonElement>(`#${id}`);

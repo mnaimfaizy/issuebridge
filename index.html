@@ -129,25 +129,25 @@
         </div>
 
         <section
-          id="capture-section"
-          class="gated"
-          aria-labelledby="capture-heading"
-        >
-          <h2 id="capture-heading" class="section-title">Capture</h2>
-          <p id="capture-gate" class="gate-note">
-            Capture is ready once Drafts land.
-          </p>
-        </section>
-
-        <section
           id="inbox-section"
-          class="gated"
+          class="inbox"
           aria-labelledby="inbox-heading"
         >
-          <h2 id="inbox-heading" class="section-title">Inbox</h2>
-          <p id="inbox-gate" class="gate-note">
-            Inbox is ready once Drafts land.
-          </p>
+          <div class="inbox-header">
+            <h2 id="inbox-heading" class="section-title">Inbox</h2>
+            <button type="button" id="open-capture" class="btn primary">
+              Capture
+            </button>
+          </div>
+          <div id="inbox-empty" class="inbox-empty" hidden>
+            <p class="step-copy">
+              No drafts yet. Capture with the hotkey or start one here.
+            </p>
+            <button type="button" id="empty-capture" class="btn primary">
+              Capture
+            </button>
+          </div>
+          <ul id="inbox-list" class="inbox-list" aria-label="Drafts"></ul>
         </section>
       </section>
 
