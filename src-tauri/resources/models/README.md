@@ -13,4 +13,6 @@ pwsh ../../scripts/fetch-whisper-assets.ps1
 
 Or set `ISSUEBRIDGE_WHISPER_MODEL` to an absolute path for local dev.
 
-The placeholder `ggml-base.bin` keeps the resource path valid for bundling; replace it with the verified upstream model before release.
+The fetched model is **gitignored** (large). A tiny placeholder may exist for path validity; replace it via the fetch script before PTT or release. Runtime passes an **absolute** model path into `whisper-cli` (cwd is the binaries dir for DLL loading).
+
+Default language hint is English (`-l en`); override with `ISSUEBRIDGE_WHISPER_LANGUAGE`.

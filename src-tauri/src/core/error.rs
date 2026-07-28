@@ -54,6 +54,8 @@ pub enum AuthError {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InstallError {
     NotSignedIn,
+    /// Token cannot list App installations (PATs are rejected; needs GitHub App user token).
+    TokenLacksInstallAccess,
     ProviderUnavailable,
     StorageUnavailable,
 }

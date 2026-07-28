@@ -1,7 +1,7 @@
 //! IPC commands — adapters that call the application core and return safe DTOs.
 //! Command results never include raw access/refresh/PAT strings.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,7 @@ use crate::core::{
 };
 
 pub struct AppState {
-    pub core: Mutex<AppCore>,
+    pub core: Arc<Mutex<AppCore>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -173,17 +173,32 @@ pub fn first_run_step(state: State<'_, AppState>) -> Result<FirstRunStepDto, Str
 }
 
 #[tauri::command]
-pub fn sign_in_with_pat(
+pub async fn sign_in_with_pat(
     state: State<'_, AppState>,
     input: PatSignInDto,
 ) -> Result<AuthStateDto, String> {
-    let mut core = state
-        .core
-        .lock()
-        .map_err(|_| "core lock poisoned".to_string())?;
-    core.sign_in_with_pat(&input.token)
-        .map(AuthStateDto::from)
-        .map_err(auth_error_message)
+    let token_len = input.token.trim().len();
+    eprintln!("[issuebridge] sign_in_with_pat: start (token_len={token_len})");
+    let core = Arc::clone(&state.core);
+    let token = input.token;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        eprintln!("[issuebridge] sign_in_with_pat: validating with GitHub…");
+        let mut core = core
+            .lock()
+            .map_err(|_| "core lock poisoned".to_string())?;
+        let outcome = core
+            .sign_in_with_pat(&token)
+            .map(AuthStateDto::from)
+            .map_err(auth_error_message);
+        match &outcome {
+            Ok(_) => eprintln!("[issuebridge] sign_in_with_pat: success"),
+            Err(err) => eprintln!("[issuebridge] sign_in_with_pat: error: {err}"),
+        }
+        outcome
+    })
+    .await
+    .map_err(|err| format!("sign-in task failed: {err}"))?;
+    result
 }
 
 #[tauri::command]
@@ -509,27 +524,32 @@ pub fn last_used_repo(state: State<'_, AppState>) -> Result<Option<RepoIdDto>, S
 }
 
 /// Show or focus the Capture popup window.
+///
+/// Must be `async` on Windows: building a Webview inside a sync command deadlocks
+/// WebView2 and leaves a blank frozen window.
 #[tauri::command]
-pub fn show_capture(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn show_capture(app: tauri::AppHandle) -> Result<(), String> {
     crate::adapters::capture_window::show_capture_window(&app)
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyPttInput {
-    pub body: String,
+    /// Current contents of the focused Capture field (Title or Body).
+    pub text: String,
     /// 16-bit PCM WAV bytes (base64).
     pub wav_base64: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ApplyPttOk {
-    pub body: String,
+    /// Updated field text after appending the transcript.
+    pub text: String,
 }
 
-/// Push-to-talk: transcribe WAV and return the updated Capture body.
+/// Push-to-talk: transcribe WAV and return the updated Capture field text.
 #[tauri::command]
-pub fn apply_ptt(
+pub async fn apply_ptt(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     input: ApplyPttInput,
@@ -542,23 +562,28 @@ pub fn apply_ptt(
         .map_err(|_| voice_error_message(VoiceError::SidecarFailed))?
         .join("ptt");
 
-    let wav_path = decode_and_write_wav(&temp_dir, &input.wav_base64).map_err(voice_error_message)?;
+    let text = input.text;
+    let wav_path =
+        decode_and_write_wav(&temp_dir, &input.wav_base64).map_err(voice_error_message)?;
     let path_str = wav_path.to_string_lossy().to_string();
+    let core = Arc::clone(&state.core);
 
-    let result = {
-        let core = state
-            .core
-            .lock()
-            .map_err(|_| "core lock poisoned".to_string())?;
-        core.apply_ptt(&input.body, &path_str)
-    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let outcome = {
+            let locked = core
+                .lock()
+                .map_err(|_| "core lock poisoned".to_string())?;
+            locked
+                .apply_ptt(&text, &path_str)
+                .map_err(voice_error_message)
+        };
+        let _ = std::fs::remove_file(&path_str);
+        outcome
+    })
+    .await
+    .map_err(|err| format!("voice task failed: {err}"))?;
 
-    let _ = std::fs::remove_file(&wav_path);
-
-    match result {
-        Ok(body) => Ok(ApplyPttOk { body }),
-        Err(err) => Err(voice_error_message(err)),
-    }
+    result.map(|text| ApplyPttOk { text })
 }
 
 fn decode_and_write_wav(
@@ -660,7 +685,7 @@ fn auth_error_message(err: AuthError) -> String {
         AuthError::InvalidCredentials => "GitHub rejected those credentials.".into(),
         AuthError::StorageUnavailable => "Could not access the OS credential vault.".into(),
         AuthError::ProviderUnavailable => {
-            "GitHub sign-in is unavailable (check network or app client secret).".into()
+            "GitHub App sign-in needs the client secret. Set ISSUEBRIDGE_GITHUB_CLIENT_SECRET in this terminal (from the issuebridge-dev App / 1Password), restart npm run tauri dev, then try Sign in with GitHub again.".into()
         }
     }
 }
@@ -668,8 +693,11 @@ fn auth_error_message(err: AuthError) -> String {
 fn install_error_message(err: InstallError) -> String {
     match err {
         InstallError::NotSignedIn => "Sign in to install the GitHub App.".into(),
+        InstallError::TokenLacksInstallAccess => {
+            "Continue needs a GitHub App sign-in token. Personal access tokens (even classic) cannot list App installations. Sign out, then use Sign in with GitHub. Re-installing the App is not required if it is already installed.".into()
+        }
         InstallError::ProviderUnavailable => {
-            "Could not refresh installations from GitHub. Try again.".into()
+            "Could not refresh installations from GitHub. Check the terminal [issuebridge] logs and try again.".into()
         }
         InstallError::StorageUnavailable => "Could not save first-run progress.".into(),
     }

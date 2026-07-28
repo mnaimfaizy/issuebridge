@@ -51,13 +51,25 @@
         placeholder="What happened?"
       ></textarea>
 
-      <div class="capture-ptt-row">
-        <button type="button" id="capture-ptt" class="btn capture-ptt">
-          Hold to talk
-        </button>
-        <span id="capture-ptt-hint" class="capture-ptt-hint"></span>
-      </div>
-      <p id="capture-voice-status" class="voice-status" hidden></p>
+      <section class="capture-voice" aria-labelledby="capture-voice-heading">
+        <h2 id="capture-voice-heading" class="filter-label">Voice (optional)</h2>
+        <p class="capture-ptt-help">
+          Click Title or Body first — voice goes into the focused field.
+          Hold the button (or hotkey) while you speak, then
+          <strong>release to stop</strong>. Max about 60 seconds per take.
+          Offline Whisper <em>base</em> is approximate; edit the text afterward.
+        </p>
+        <div class="capture-ptt-row">
+          <button type="button" id="capture-ptt" class="btn capture-ptt">
+            Hold to talk
+          </button>
+          <div class="capture-ptt-meta">
+            <span id="capture-ptt-hint" class="capture-ptt-hint"></span>
+            <span id="capture-ptt-timer" class="capture-ptt-timer" hidden></span>
+          </div>
+        </div>
+        <p id="capture-voice-status" class="voice-status" hidden></p>
+      </section>
 
       <div class="actions capture-actions">
         <button type="button" id="capture-save" class="btn primary">Save Draft</button>

@@ -13,3 +13,8 @@
 - [x] Relaunch resumes the next incomplete first-run step (does not restart from sign-in if already signed in).
 - [x] Testing set and first-run progress persist across relaunch.
 - [x] Core-level tests cover Testing-set size limits and first-run step gating with fakes.
+
+### QA notes (local Windows)
+
+- Continue calls `GET /user/installations`. That endpoint rejects PATs (`403` — must use an App-authorized user token). Sign in with GitHub, then Continue; reinstalling the App is unnecessary if it is already installed.
+- If the token lacks install access, the UI should say so explicitly (not a generic “sign in” / signed-out flash).

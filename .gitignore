@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Whisper assets from scripts/fetch-whisper-assets.ps1 (large; fetch locally / in CI)
+src-tauri/binaries/*.dll
+src-tauri/resources/models/ggml-base.bin

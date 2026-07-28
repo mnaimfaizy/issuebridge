@@ -35,7 +35,13 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/whisper-cli"],
-    "resources": ["resources/models/ggml-base.bin"],
+    "resources": [
+      "resources/models/ggml-base.bin",
+      "binaries/ggml.dll",
+      "binaries/ggml-base.dll",
+      "binaries/whisper.dll",
+      "binaries/ggml-cpu-*.dll"
+    ],
     "windows": {
       "nsis": {
         "installMode": "currentUser",

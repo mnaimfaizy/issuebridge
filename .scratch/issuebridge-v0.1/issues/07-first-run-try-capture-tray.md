@@ -13,3 +13,7 @@
 - [x] One-shot first-run-complete flag persists; afterward normal tray-first launch; no “Replay onboarding” in v0.1.
 - [x] Sign-out does not rewind Install/Testing-set completion once done.
 - [x] Core-level (or thin integration) tests cover completion via Save vs Skip and the complete flag gating tray-first vs wizard.
+
+### QA notes (local Windows)
+
+- Opening Capture from a **synchronous** Tauri command or tray/hotkey handler can deadlock WebView2 and show a blank white window. Use an **async** `show_capture` command; spawn a detached thread from tray/hotkey. Quit fully if a frozen Capture already exists, then reopen.

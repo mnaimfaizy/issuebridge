@@ -6,7 +6,7 @@ use tauri::{
     AppHandle, Manager, Runtime,
 };
 
-use super::capture_window::show_capture_window;
+use super::capture_window::show_capture_window_detached;
 
 pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let capture = MenuItem::with_id(app, "capture", "Capture…", true, None::<&str>)?;
@@ -25,9 +25,7 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .menu(&menu)
         .tooltip("Issuebridge")
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "capture" => {
-                let _ = show_capture_window(app);
-            }
+            "capture" => show_capture_window_detached(app),
             "show" => show_main(app),
             "hide" => hide_main(app),
             "quit" => app.exit(0),
@@ -40,7 +38,7 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 ..
             } = event
             {
-                let _ = show_capture_window(tray.app_handle());
+                show_capture_window_detached(tray.app_handle());
             }
         })
         .build(app)?;

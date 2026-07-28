@@ -11,27 +11,65 @@ npm install
 npm run tauri dev
 ```
 
-Core-level tests (application seam with faked ports):
+**Important:** Fully quit the previous Issuebridge process before restarting `tauri dev` (tray icon → Quit, or end the process). A hung sign-in or a frozen Capture window can linger until Quit.
+
+### Sign in with GitHub (required for Install App)
+
+**Sign in with GitHub** (App OAuth + PKCE) is the supported path for first-run. Local `tauri dev` needs the App **client secret** or the browser can succeed while the app still fails the token exchange:
+
+```powershell
+$env:ISSUEBRIDGE_GITHUB_CLIENT_SECRET = "<secret from issuebridge-dev App / 1Password>"
+# optional; default client id is already set for issuebridge-dev
+# $env:ISSUEBRIDGE_GITHUB_CLIENT_ID = "Iv23li6Ao8URyrvbNZOq"
+npm run tauri dev
+```
+
+Terminal should show `OAuth exchange ok`, then Install App → **Continue**.
+
+**PAT is identity-only.** Fine-grained and classic PATs can sign in (`GET /user`) but **cannot** call `GET /user/installations`. Continue will fail until you use App OAuth. Prefer **Sign in with GitHub**; do not reinstall the App if it is already installed — fix sign-in, then Continue.
+
+Credentials use the OS vault (`keyring` with `windows-native`). After a successful sign-in, an in-process session flag keeps the UI signed in even if a vault re-read is slow.
+
+### Voice / Hold to talk (local)
+
+1. Fetch Whisper assets (CLI + Windows DLLs + `ggml-base.bin`) once:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/fetch-whisper-assets.ps1
+```
+
+Fully quit Issuebridge first if Windows reports `ggml-base.bin` is locked.
+
+2. In Capture: click **Title** or **Body** first (transcript goes into the focused field). **Hold** the button or hold `Ctrl+Alt+Shift+V`, speak, then **release** to stop (max ~60s). Button shows **Release to stop**, then **Transcribing…**.
+
+3. Offline Whisper **base** is approximate (English forced via `-l en` by default; override with `ISSUEBRIDGE_WHISPER_LANGUAGE`). Edit the text afterward. Text **Save Draft** always works if voice fails.
+
+Windows needs companion DLLs next to `whisper-cli` (`ggml.dll`, `whisper.dll`, `ggml-cpu-*.dll`, …). The fetch script copies them; spawn sets cwd/`PATH` accordingly and passes **absolute** model/audio paths.
+
+### Capture window (Windows)
+
+Creating the Capture webview from a **sync** Tauri command or tray/hotkey handler can deadlock WebView2 and leave a blank white window. The app opens Capture via an **async** command (and a detached thread from tray/hotkey). If you ever see a frozen white Capture, Quit fully and reopen.
+
+### Debugging
+
+In `npm run tauri dev` (debug builds):
+
+1. **DevTools** open on main and Capture windows.
+2. **Terminal** shows `[issuebridge]` logs: OAuth, keyring, installations, `whisper: …`.
+3. Webview console shows PAT / PTT lines (`target: "title" | "body"`, etc.).
 
 ```bash
 npm run test:core
-```
-
-Packaging contract (NSIS per-user installer + Whisper bundle + release credential rules):
-
-```bash
 npm run test:packaging
 ```
 
 ## Release (Windows NSIS)
 
-v0.1 ships a **per-user NSIS** installer (`*-setup.exe`) only — `installMode: currentUser` (no Admin). **MSI is not a v0.1 deliverable.** The installer bundles the app, `whisper-cli` sidecar, and `ggml-base.bin` so offline PTT works after install without a separate model download.
+v0.1 ships a **per-user NSIS** installer (`*-setup.exe`) only — `installMode: currentUser` (no Admin). **MSI is not a v0.1 deliverable.** The installer bundles the app, `whisper-cli` (+ DLLs), and `ggml-base.bin` so offline PTT works after install without a separate model download.
 
 The build is **unsigned** for v0.1. Browser downloads may show a Windows SmartScreen warning; that is expected until code signing is added. Users can proceed via “More info → Run anyway.”
 
 ### Official release build (inject credentials; never commit secrets)
-
-Set GitHub App credentials in the environment (or as GitHub Actions secrets with the same names), then:
 
 ```powershell
 $env:ISSUEBRIDGE_GITHUB_CLIENT_ID = "<client-id>"
@@ -41,7 +79,7 @@ powershell -ExecutionPolicy Bypass -File scripts/release-build.ps1
 
 `scripts/release-build.ps1` checks the packaging contract, refuses to build without both env vars, fetches Whisper assets (unless `-SkipWhisperFetch`), and runs `npm run tauri -- build`. CI: `.github/workflows/release-windows.yml` (tag `v*` or workflow_dispatch).
 
-Dev/`tauri build` without those env vars still works for local packaging; OAuth secret stays unset (`option_env!`) so forks can use PAT or a BYO App.
+Dev/`tauri build` without those env vars still packages; OAuth secret can also be supplied at **runtime** via `ISSUEBRIDGE_GITHUB_CLIENT_SECRET` for local `tauri dev` (compile-time `option_env!` remains for release injection).
 
 ## Architecture
 

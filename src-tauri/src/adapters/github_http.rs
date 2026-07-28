@@ -17,13 +17,22 @@ const API_VERSION: &str = "2022-11-28";
 /// Public install URL for the maintainer GitHub App (selected repositories).
 pub const APP_INSTALL_URL: &str = "https://github.com/apps/issuebridge-dev/installations/new";
 
-/// Maintainer GitHub App client id (public). Secret injected at build time when present.
-pub fn github_client_id() -> &'static str {
-    option_env!("ISSUEBRIDGE_GITHUB_CLIENT_ID").unwrap_or("Iv23li6Ao8URyrvbNZOq")
+/// Maintainer GitHub App client id (public). Override via env at runtime or build time.
+pub fn github_client_id() -> String {
+    std::env::var("ISSUEBRIDGE_GITHUB_CLIENT_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| option_env!("ISSUEBRIDGE_GITHUB_CLIENT_ID").map(str::to_string))
+        .unwrap_or_else(|| "Iv23li6Ao8URyrvbNZOq".to_string())
 }
 
-pub fn github_client_secret() -> Option<&'static str> {
-    option_env!("ISSUEBRIDGE_GITHUB_CLIENT_SECRET")
+/// GitHub App client secret. Prefer runtime env for local `tauri dev`; release builds
+/// can also inject via `option_env!` at compile time. Never commit the value.
+pub fn github_client_secret() -> Option<String> {
+    std::env::var("ISSUEBRIDGE_GITHUB_CLIENT_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| option_env!("ISSUEBRIDGE_GITHUB_CLIENT_SECRET").map(str::to_string))
 }
 
 pub const OAUTH_REDIRECT_URI: &str = "http://127.0.0.1:17863/oauth/callback";
@@ -37,10 +46,7 @@ pub struct HttpGitHub {
 
 impl Default for HttpGitHub {
     fn default() -> Self {
-        Self::new(
-            github_client_id().to_string(),
-            github_client_secret().map(str::to_string),
-        )
+        Self::new(github_client_id(), github_client_secret())
     }
 }
 
@@ -48,6 +54,8 @@ impl HttpGitHub {
     pub fn new(client_id: String, client_secret: Option<String>) -> Self {
         let client = Client::builder()
             .user_agent(USER_AGENT_VALUE)
+            .timeout(std::time::Duration::from_secs(15))
+            .connect_timeout(std::time::Duration::from_secs(10))
             .build()
             .expect("reqwest client");
         Self {
@@ -63,6 +71,7 @@ struct TokenResponse {
     access_token: Option<String>,
     refresh_token: Option<String>,
     error: Option<String>,
+    error_description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,6 +119,7 @@ struct LabelJson {
 
 impl GitHub for HttpGitHub {
     fn validate_pat(&self, pat: &str) -> Result<(), GitHubError> {
+        eprintln!("[issuebridge] GitHub GET /user …");
         let response = self
             .client
             .get(USER_URL)
@@ -117,9 +127,14 @@ impl GitHub for HttpGitHub {
             .header(ACCEPT, "application/vnd.github+json")
             .header("X-GitHub-Api-Version", API_VERSION)
             .send()
-            .map_err(|_| GitHubError::Unavailable)?;
+            .map_err(|err| {
+                eprintln!("[issuebridge] GitHub /user request failed: {err}");
+                GitHubError::Unavailable
+            })?;
 
-        match response.status().as_u16() {
+        let status = response.status().as_u16();
+        eprintln!("[issuebridge] GitHub /user status={status}");
+        match status {
             200 => Ok(()),
             401 | 403 => Err(GitHubError::InvalidCredentials),
             _ => Err(GitHubError::Unavailable),
@@ -131,11 +146,17 @@ impl GitHub for HttpGitHub {
         code: &str,
         code_verifier: &str,
     ) -> Result<StoredCredentials, GitHubError> {
-        let secret = self
-            .client_secret
-            .as_deref()
-            .ok_or(GitHubError::Unavailable)?;
+        let secret = match self.client_secret.as_deref() {
+            Some(secret) => secret,
+            None => {
+                eprintln!(
+                    "[issuebridge] OAuth exchange blocked: ISSUEBRIDGE_GITHUB_CLIENT_SECRET is not set"
+                );
+                return Err(GitHubError::Unavailable);
+            }
+        };
 
+        eprintln!("[issuebridge] OAuth POST access_token …");
         let response = self
             .client
             .post(TOKEN_URL)
@@ -148,15 +169,33 @@ impl GitHub for HttpGitHub {
                 "code_verifier": code_verifier,
             }))
             .send()
-            .map_err(|_| GitHubError::Unavailable)?;
+            .map_err(|err| {
+                eprintln!("[issuebridge] OAuth token request failed: {err}");
+                GitHubError::Unavailable
+            })?;
 
+        let status = response.status().as_u16();
+        eprintln!("[issuebridge] OAuth token status={status}");
         if !response.status().is_success() {
+            let body = response.text().unwrap_or_default();
+            eprintln!(
+                "[issuebridge] OAuth token error body={}",
+                truncate_for_log(&body)
+            );
             return Err(GitHubError::Unavailable);
         }
 
-        let body: TokenResponse = response.json().map_err(|_| GitHubError::Unavailable)?;
+        let body: TokenResponse = response.json().map_err(|err| {
+            eprintln!("[issuebridge] OAuth token JSON parse failed: {err}");
+            GitHubError::Unavailable
+        })?;
 
-        if body.error.is_some() {
+        if let Some(ref err) = body.error {
+            eprintln!(
+                "[issuebridge] OAuth token error={} desc={}",
+                err,
+                body.error_description.as_deref().unwrap_or("")
+            );
             return Err(GitHubError::InvalidCredentials);
         }
 
@@ -165,6 +204,7 @@ impl GitHub for HttpGitHub {
             return Err(GitHubError::InvalidCredentials);
         }
 
+        eprintln!("[issuebridge] OAuth exchange ok (access_len={})", access_token.len());
         Ok(StoredCredentials {
             access_token,
             refresh_token: body.refresh_token.filter(|t| !t.is_empty()),
@@ -180,6 +220,10 @@ impl GitHub for HttpGitHub {
             .iter()
             .filter(|inst| inst.app_slug.as_deref() == Some("issuebridge-dev"))
             .collect();
+        eprintln!(
+            "[issuebridge] issuebridge-dev installs matched={}",
+            ours.len()
+        );
 
         if ours.is_empty() {
             return Ok(AppInstallSnapshot {
@@ -330,6 +374,7 @@ impl HttpGitHub {
         let mut all = Vec::new();
 
         while let Some(current) = url {
+            eprintln!("[issuebridge] GitHub GET installations …");
             let response = self
                 .client
                 .get(&current)
@@ -337,17 +382,46 @@ impl HttpGitHub {
                 .header(ACCEPT, "application/vnd.github+json")
                 .header("X-GitHub-Api-Version", API_VERSION)
                 .send()
-                .map_err(|_| GitHubError::Unavailable)?;
+                .map_err(|err| {
+                    eprintln!("[issuebridge] installations request failed: {err}");
+                    GitHubError::Unavailable
+                })?;
 
-            match response.status().as_u16() {
+            let status = response.status().as_u16();
+            eprintln!("[issuebridge] installations status={status}");
+            match status {
                 200 => {}
-                401 | 403 => return Err(GitHubError::InvalidCredentials),
-                _ => return Err(GitHubError::Unavailable),
+                401 | 403 => {
+                    let body = response.text().unwrap_or_default();
+                    eprintln!(
+                        "[issuebridge] installations auth error body={}",
+                        body.chars().take(300).collect::<String>()
+                    );
+                    return Err(GitHubError::InvalidCredentials);
+                }
+                other => {
+                    let body = response.text().unwrap_or_default();
+                    eprintln!(
+                        "[issuebridge] installations unexpected status={other} body={}",
+                        body.chars().take(300).collect::<String>()
+                    );
+                    return Err(GitHubError::Unavailable);
+                }
             }
 
             let next = next_link(response.headers().get(LINK).and_then(|v| v.to_str().ok()));
-            let body: InstallationsResponse =
-                response.json().map_err(|_| GitHubError::Unavailable)?;
+            let body: InstallationsResponse = response.json().map_err(|err| {
+                eprintln!("[issuebridge] installations JSON parse failed: {err}");
+                GitHubError::Unavailable
+            })?;
+            eprintln!(
+                "[issuebridge] installations page count={} slugs={:?}",
+                body.installations.len(),
+                body.installations
+                    .iter()
+                    .map(|i| i.app_slug.as_deref().unwrap_or("(none)"))
+                    .collect::<Vec<_>>()
+            );
             all.extend(body.installations);
             url = next;
         }
@@ -416,5 +490,9 @@ fn next_link(header: Option<&str>) -> Option<String> {
         }
     }
     None
+}
+
+fn truncate_for_log(body: &str) -> String {
+    body.chars().take(300).collect()
 }
 

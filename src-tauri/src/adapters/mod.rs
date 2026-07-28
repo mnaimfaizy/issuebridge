@@ -13,7 +13,7 @@ mod tray;
 mod whisper_voice;
 
 pub use app_core::build_app_core;
-pub use capture_window::show_capture_window;
+pub use capture_window::{show_capture_window, show_capture_window_detached};
 pub use commands::{
     add_testing_set_repo, all_repositories_warning, app_visible_repos, apply_ptt, auth_state,
     complete_testing_set, continue_install, edit_draft, first_run_step, get_draft, keep_mine,

@@ -4,12 +4,17 @@ Tauri `bundle.externalBin` expects:
 
 `whisper-cli-x86_64-pc-windows-msvc.exe`
 
-Fetch a real binary (whisper.cpp **v1.9.1**) before release packaging:
+Windows also needs companion DLLs next to that binary (or on `PATH`):
+
+- `ggml.dll`, `ggml-base.dll`, `whisper.dll`
+- `ggml-cpu-*.dll` (CPU backends)
+
+Fetch a real binary + DLLs + model (whisper.cpp **v1.9.1**) before packaging or local PTT:
 
 ```powershell
 pwsh ../scripts/fetch-whisper-assets.ps1
 ```
 
-Or set `ISSUEBRIDGE_WHISPER_CLI` to an absolute path for local dev.
+Or set `ISSUEBRIDGE_WHISPER_CLI` / `ISSUEBRIDGE_WHISPER_MODEL` to absolute paths for local overrides.
 
-The placeholder `.exe` in this folder exists so `tauri build` can resolve `externalBin`; replace it with a real `whisper-cli` for offline PTT.
+**Do not commit** the large fetched `.dll` / model blobs — they are gitignored; CI and `release-build.ps1` run the fetch script. Fully quit Issuebridge before re-fetching if `ggml-base.bin` is locked.

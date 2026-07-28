@@ -50,6 +50,7 @@
               <button type="submit" class="btn">Sign in with PAT</button>
             </form>
           </details>
+          <p id="auth-status" class="status" hidden></p>
         </div>
       </section>
 
@@ -63,7 +64,8 @@
         <p class="step-copy">
           Install the Issuebridge GitHub App on
           <strong>selected repositories</strong> you plan to capture against —
-          not every repo in the org.
+          not every repo in the org. If it is already installed, skip re-install
+          and click Continue.
         </p>
         <div class="actions">
           <button type="button" id="open-install" class="btn primary">

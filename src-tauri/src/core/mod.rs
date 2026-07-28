@@ -50,6 +50,10 @@ pub struct IssuebridgeCore<G, T, D, V, C, S> {
     voice: V,
     clock: C,
     settings_store: S,
+    /// Process-local signed-in flag. Set on successful sign-in; cleared on sign-out.
+    /// Vault remains source of truth across restarts; this avoids flaky post-store re-reads
+    /// leaving the UI stuck on Sign in after a successful PAT/OAuth.
+    session_signed_in: bool,
 }
 
 impl<G, T, D, V, C, S> IssuebridgeCore<G, T, D, V, C, S>
@@ -69,6 +73,7 @@ where
         clock: C,
         settings_store: S,
     ) -> Self {
+        let session_signed_in = matches!(token_store.load(), Ok(Some(_)));
         Self {
             github,
             token_store,
@@ -76,13 +81,18 @@ where
             voice,
             clock,
             settings_store,
+            session_signed_in,
         }
     }
 
     pub fn auth_state(&self) -> AuthState {
+        if self.session_signed_in {
+            return AuthState::SignedIn;
+        }
         match self.token_store.load() {
             Ok(Some(_)) => AuthState::SignedIn,
-            Ok(None) | Err(_) => AuthState::SignedOut,
+            Ok(None) => AuthState::SignedOut,
+            Err(_) => AuthState::SignedOut,
         }
     }
 
@@ -103,6 +113,7 @@ where
             })
             .map_err(|_| AuthError::StorageUnavailable)?;
 
+        self.session_signed_in = true;
         Ok(AuthState::SignedIn)
     }
 
@@ -126,6 +137,7 @@ where
             .store(credentials)
             .map_err(|_| AuthError::StorageUnavailable)?;
 
+        self.session_signed_in = true;
         Ok(AuthState::SignedIn)
     }
 
@@ -134,7 +146,9 @@ where
     pub fn sign_out(&mut self) -> Result<(), AuthError> {
         self.token_store
             .clear()
-            .map_err(|_| AuthError::StorageUnavailable)
+            .map_err(|_| AuthError::StorageUnavailable)?;
+        self.session_signed_in = false;
+        Ok(())
     }
 
     /// Whether the main window should open on launch (wizard still incomplete).
@@ -178,9 +192,8 @@ where
             .github
             .list_app_install_snapshot(&credentials.access_token)
             .map_err(|err| match err {
-                GitHubError::InvalidCredentials | GitHubError::Unavailable => {
-                    InstallError::ProviderUnavailable
-                }
+                GitHubError::InvalidCredentials => InstallError::TokenLacksInstallAccess,
+                GitHubError::Unavailable => InstallError::ProviderUnavailable,
             })?;
 
         if !snapshot.has_install {
@@ -603,33 +616,33 @@ where
             .unwrap_or_else(|| DEFAULT_PTT_HOTKEY.to_string())
     }
 
-    /// Transcribe a PTT recording and append the transcript into the Capture body.
-    /// Does not persist a Draft — text Save remains a separate path.
-    pub fn apply_ptt(&self, current_body: &str, audio_path: &str) -> Result<String, VoiceError> {
+    /// Transcribe a PTT recording and append into the current Capture field text
+    /// (Title or Body — chosen by the UI from focus). Does not persist a Draft.
+    pub fn apply_ptt(&self, current_text: &str, audio_path: &str) -> Result<String, VoiceError> {
         let transcript = self.voice.transcribe(audio_path)?;
         let transcript = transcript.trim();
         if transcript.is_empty() {
             return Err(VoiceError::EmptyTranscript);
         }
-        Ok(append_transcript_to_body(current_body, transcript))
+        Ok(append_transcript(current_text, transcript))
     }
 }
 
 const DEFAULT_OPEN_HOTKEY: &str = "Ctrl+Alt+Shift+I";
 const DEFAULT_PTT_HOTKEY: &str = "Ctrl+Alt+Shift+V";
 
-fn append_transcript_to_body(current_body: &str, transcript: &str) -> String {
-    if current_body.is_empty() {
+fn append_transcript(current_text: &str, transcript: &str) -> String {
+    if current_text.is_empty() {
         return transcript.to_string();
     }
-    if current_body
+    if current_text
         .chars()
         .last()
         .is_some_and(|c| c.is_whitespace())
     {
-        format!("{current_body}{transcript}")
+        format!("{current_text}{transcript}")
     } else {
-        format!("{current_body} {transcript}")
+        format!("{current_text} {transcript}")
     }
 }
 

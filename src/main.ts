@@ -146,16 +146,56 @@ async function refreshInboxIfReady() {
 
 async function refreshAppState() {
   try {
-    const [auth, step] = await Promise.all([
-      invoke<AuthStateDto>("auth_state"),
-      invoke<FirstRunStepDto>("first_run_step"),
-    ]);
-    applyStepUi(auth, step);
+    const auth = await invoke<AuthStateDto>("auth_state");
+    const step = await invoke<FirstRunStepDto>("first_run_step");
+    console.info("[issuebridge] refreshAppState", { auth, step });
+    await applyStepUi(auth, step);
     clearStatus();
   } catch (error) {
+    console.error("[issuebridge] refreshAppState failed", error);
     const el = document.querySelector("#auth-state");
     if (el) el.textContent = "unavailable";
-    showStatus(String(error));
+    showStatus(formatInvokeError(error));
+  }
+}
+
+async function runSignInWithPat() {
+  const input = document.querySelector<HTMLInputElement>("#pat-input");
+  const token = input?.value.trim() ?? "";
+  if (!token) {
+    showStatus("Enter a personal access token.");
+    return;
+  }
+
+  console.info("[issuebridge] PAT sign-in: start", { tokenLength: token.length });
+  showStatus("Signing in…");
+  setBusy(true);
+  try {
+    const auth = await withTimeout(
+      invoke<AuthStateDto>("sign_in_with_pat", {
+        input: { token },
+      }),
+      20_000,
+      "Sign-in timed out after 20s (check the terminal for [issuebridge] logs).",
+    );
+    console.info("[issuebridge] PAT sign-in: ok", auth);
+    if (input) input.value = "";
+    const step = await invoke<FirstRunStepDto>("first_run_step");
+    console.info("[issuebridge] first_run_step after PAT", step);
+    await applyStepUi(auth, step);
+    if (auth !== "signed_in" || step === "sign_in") {
+      showStatus(
+        "Credentials were accepted, but the app stayed on Sign in. Check the terminal for [issuebridge] keyring logs.",
+      );
+    } else {
+      clearStatus();
+    }
+  } catch (error) {
+    console.error("[issuebridge] PAT sign-in: failed", error);
+    await refreshAppState();
+    showStatus(formatInvokeError(error));
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -471,9 +511,11 @@ async function runUseTheirs() {
 
 async function runOpenCapture() {
   try {
+    console.info("[issuebridge] opening Capture window…");
     await invoke("show_capture");
     clearStatus();
   } catch (error) {
+    console.error("[issuebridge] show_capture failed", error);
     showStatus(String(error));
   }
 }
@@ -588,34 +630,32 @@ async function runSignInWithGithub() {
     await invoke<AuthStateDto>("sign_in_with_github");
     await refreshAppState();
   } catch (error) {
-    showStatus(String(error));
+    // Refresh first (clears status), then show the error so it is not wiped.
     await refreshAppState();
+    showStatus(formatInvokeError(error));
   } finally {
     setBusy(false);
   }
 }
 
-async function runSignInWithPat() {
-  const input = document.querySelector<HTMLInputElement>("#pat-input");
-  const token = input?.value.trim() ?? "";
-  if (!token) {
-    showStatus("Enter a personal access token.");
-    return;
-  }
-
-  setBusy(true);
-  try {
-    await invoke<AuthStateDto>("sign_in_with_pat", {
-      input: { token },
-    });
-    if (input) input.value = "";
-    await refreshAppState();
-  } catch (error) {
-    showStatus(String(error));
-    await refreshAppState();
-  } finally {
-    setBusy(false);
-  }
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 async function runSignOut() {
@@ -624,8 +664,8 @@ async function runSignOut() {
     await invoke<AuthStateDto>("sign_out");
     await refreshAppState();
   } catch (error) {
-    showStatus(String(error));
     await refreshAppState();
+    showStatus(formatInvokeError(error));
   } finally {
     setBusy(false);
   }
@@ -669,7 +709,7 @@ async function runContinueInstall() {
     // Soft All-repositories warning is shown on the Testing set step.
     await refreshAppState();
   } catch (error) {
-    showStatus(String(error));
+    showStatus(formatInvokeError(error));
   } finally {
     setBusy(false);
   }
@@ -744,16 +784,33 @@ function setBusy(busy: boolean) {
   if (patSubmit) patSubmit.disabled = busy;
 }
 
+function formatInvokeError(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 function showStatus(message: string) {
-  const status = document.querySelector<HTMLElement>("#status");
-  if (!status) return;
-  status.hidden = false;
-  status.textContent = message;
+  for (const id of ["status", "auth-status"]) {
+    const status = document.querySelector<HTMLElement>(`#${id}`);
+    if (!status) continue;
+    status.hidden = false;
+    status.textContent = message;
+  }
 }
 
 function clearStatus() {
-  const status = document.querySelector<HTMLElement>("#status");
-  if (!status) return;
-  status.hidden = true;
-  status.textContent = "";
+  for (const id of ["status", "auth-status"]) {
+    const status = document.querySelector<HTMLElement>(`#${id}`);
+    if (!status) continue;
+    status.hidden = true;
+    status.textContent = "";
+  }
 }

@@ -5,11 +5,11 @@ use adapters::{
     add_testing_set_repo, all_repositories_warning, app_visible_repos, apply_ptt, auth_state,
     build_app_core, complete_testing_set, continue_install, edit_draft, first_run_step, get_draft,
     keep_mine, last_used_repo, list_inbox, open_app_install, ptt_hotkey, publish_draft,
-    remove_testing_set_repo, save_capture, setup_tray, show_capture, show_capture_window,
+    remove_testing_set_repo, save_capture, setup_tray, show_capture, show_capture_window_detached,
     sign_in_with_github, sign_in_with_pat, sign_out, skip_try_capture, testing_set,
     update_linked_draft, use_theirs, AppState,
 };
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -19,7 +19,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState {
-            core: Mutex::new(build_app_core()),
+            core: Arc::new(Mutex::new(build_app_core())),
         })
         .invoke_handler(tauri::generate_handler![
             auth_state,
@@ -55,6 +55,12 @@ pub fn run() {
             // Tray-first: closing the main window hides it instead of quitting.
             // While first-run is incomplete, keep main visible on the current step.
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(debug_assertions)]
+                {
+                    window.open_devtools();
+                    eprintln!("[issuebridge] DevTools opened (debug build). Watch this terminal for [issuebridge] logs.");
+                }
+
                 let open_main = {
                     let state = app.state::<AppState>();
                     let core = state
@@ -96,7 +102,7 @@ fn register_open_hotkey(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error
     let handle = app.clone();
     app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
         if event.state == ShortcutState::Pressed {
-            let _ = show_capture_window(&handle);
+            show_capture_window_detached(&handle);
         }
     })?;
 

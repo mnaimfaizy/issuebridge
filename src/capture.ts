@@ -14,19 +14,35 @@ const VOICE_MESSAGES: Record<VoiceKind, string> = {
   permission_denied:
     "Voice needs microphone access. Allow Issuebridge in Windows privacy settings, or type instead.",
   no_device: "No microphone found. Plug one in or type instead.",
-  sidecar_failed: "Voice ran into a problem. Try again or type instead.",
-  empty_transcript: "Didn’t catch that. Try again or type.",
+  sidecar_failed:
+    "Voice could not run (Whisper sidecar). Check the terminal for [issuebridge] whisper logs, or type instead.",
+  empty_transcript: "Didn’t catch that. Hold a bit longer, speak clearly, then release — or type.",
 };
+
+const MAX_PTT_MS = 60_000;
+const MIN_PTT_MS = 350;
+const WAV_RATE = 16_000;
+
+type PttField = "title" | "body";
 
 let testingSet: RepoIdDto[] = [];
 let visibleRepos: RepoIdDto[] = [];
 let selectedRepo: RepoIdDto | null = null;
 
+/** Last focused text field — PTT button steals focus, so we snapshot this on press. */
+let lastTextField: PttField = "body";
+let pttTarget: PttField = "body";
+
 let mediaStream: MediaStream | null = null;
-let mediaRecorder: MediaRecorder | null = null;
-let recordedChunks: Blob[] = [];
+let audioContext: AudioContext | null = null;
+let scriptProcessor: ScriptProcessorNode | null = null;
+let pcmChunks: Float32Array[] = [];
 let recording = false;
 let pttBusy = false;
+let recordStartedAt = 0;
+let timerInterval: number | null = null;
+let maxHoldTimeout: number | null = null;
+let activePointerId: number | null = null;
 
 window.addEventListener("DOMContentLoaded", () => {
   document
@@ -45,14 +61,36 @@ window.addEventListener("DOMContentLoaded", () => {
       renderTypeahead();
     });
 
+  document
+    .querySelector("#capture-title")
+    ?.addEventListener("focus", () => {
+      lastTextField = "title";
+    });
+  document
+    .querySelector("#capture-body")
+    ?.addEventListener("focus", () => {
+      lastTextField = "body";
+    });
+
   const ptt = document.querySelector<HTMLButtonElement>("#capture-ptt");
   ptt?.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
     event.preventDefault();
+    activePointerId = event.pointerId;
+    ptt.setPointerCapture(event.pointerId);
     void startPtt();
   });
-  ptt?.addEventListener("pointerup", () => void stopPtt());
-  ptt?.addEventListener("pointerleave", () => void stopPtt());
-  ptt?.addEventListener("pointercancel", () => void stopPtt());
+  ptt?.addEventListener("pointerup", (event) => {
+    if (activePointerId !== null && event.pointerId !== activePointerId) return;
+    activePointerId = null;
+    void stopPtt();
+  });
+  ptt?.addEventListener("pointercancel", (event) => {
+    if (activePointerId !== null && event.pointerId !== activePointerId) return;
+    activePointerId = null;
+    void stopPtt();
+  });
+  // Do not stop on pointerleave — setPointerCapture keeps the hold until release.
 
   window.addEventListener("focus", () => {
     void bootstrap();
@@ -83,7 +121,9 @@ async function bootstrap() {
     if (body) body.value = "";
 
     const hint = document.querySelector<HTMLElement>("#capture-ptt-hint");
-    if (hint) hint.textContent = hotkey;
+    if (hint) {
+      hint.textContent = `Hotkey: hold ${hotkey}, release to stop`;
+    }
 
     syncRepoInput();
     renderChips();
@@ -163,67 +203,203 @@ function renderTypeahead() {
 async function startPtt() {
   if (recording || pttBusy) return;
   clearVoiceStatus();
+  pttTarget = lastTextField;
 
   try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+    });
   } catch (error) {
+    console.error("[issuebridge] mic error", error);
     showVoiceKind(mapMicError(error));
     return;
   }
 
-  recordedChunks = [];
-  const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-    ? "audio/webm;codecs=opus"
-    : "audio/webm";
-  mediaRecorder = new MediaRecorder(mediaStream, { mimeType: mime });
-  mediaRecorder.addEventListener("dataavailable", (event) => {
-    if (event.data.size > 0) recordedChunks.push(event.data);
-  });
-  mediaRecorder.start();
+  try {
+    audioContext = new AudioContext();
+    await audioContext.resume();
+    const source = audioContext.createMediaStreamSource(mediaStream);
+    // ScriptProcessor is deprecated but reliable in WebView2; avoids WebM decode failures.
+    scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+    pcmChunks = [];
+    scriptProcessor.onaudioprocess = (event) => {
+      if (!recording) return;
+      const input = event.inputBuffer.getChannelData(0);
+      pcmChunks.push(new Float32Array(input));
+    };
+    const mute = audioContext.createGain();
+    mute.gain.value = 0;
+    source.connect(scriptProcessor);
+    scriptProcessor.connect(mute);
+    mute.connect(audioContext.destination);
+  } catch (error) {
+    console.error("[issuebridge] audio graph error", error);
+    await teardownAudio();
+    showVoiceKind("sidecar_failed");
+    return;
+  }
+
   recording = true;
+  recordStartedAt = Date.now();
   setPttRecording(true);
+  startTimerUi();
+  maxHoldTimeout = window.setTimeout(() => {
+    void stopPtt();
+  }, MAX_PTT_MS);
 }
 
 async function stopPtt() {
-  if (!recording || !mediaRecorder) return;
+  if (!recording) return;
   recording = false;
+  clearMaxHold();
+  stopTimerUi();
   setPttRecording(false);
 
-  const recorder = mediaRecorder;
-  mediaRecorder = null;
+  const elapsed = Date.now() - recordStartedAt;
+  const sampleRate = audioContext?.sampleRate ?? 48000;
+  const chunks = pcmChunks;
+  pcmChunks = [];
+  await teardownAudio();
 
-  const blob = await new Promise<Blob>((resolve) => {
-    recorder.addEventListener("stop", () => {
-      resolve(new Blob(recordedChunks, { type: recorder.mimeType }));
-    });
-    recorder.stop();
-  });
-
-  stopMicTracks();
-
-  if (blob.size === 0) {
+  if (elapsed < MIN_PTT_MS || chunks.length === 0) {
     showVoiceKind("empty_transcript");
     return;
   }
 
   pttBusy = true;
+  setPttBusy(true);
   try {
-    const wavBase64 = await blobToWavBase64(blob);
-    const bodyEl = document.querySelector<HTMLTextAreaElement>("#capture-body");
-    const currentBody = bodyEl?.value ?? "";
-    const result = await invoke<{ body: string }>("apply_ptt", {
+    const merged = mergeFloat32(chunks);
+    const pcm16k = downsample(merged, sampleRate, WAV_RATE);
+    const wavBase64 = bytesToBase64(encodeWav(pcm16k, WAV_RATE));
+    console.info("[issuebridge] PTT transcribing…", {
+      elapsedMs: elapsed,
+      samples: pcm16k.length,
+      target: pttTarget,
+    });
+
+    const field = fieldElement(pttTarget);
+    const currentText = field?.value ?? "";
+    const result = await invoke<{ text: string }>("apply_ptt", {
       input: {
-        body: currentBody,
+        text: currentText,
         wavBase64,
       },
     });
-    if (bodyEl) bodyEl.value = result.body;
+    if (field) {
+      field.value = result.text;
+      field.focus();
+      const len = field.value.length;
+      field.setSelectionRange(len, len);
+    }
     clearVoiceStatus();
+    const where = pttTarget === "title" ? "title" : "body";
+    showVoiceSoft(`Added to the ${where}. Edit freely, then Save Draft.`);
   } catch (error) {
+    console.error("[issuebridge] apply_ptt failed", error);
     showVoiceKind(parseVoiceKind(error));
   } finally {
     pttBusy = false;
+    setPttBusy(false);
   }
+}
+
+function fieldElement(
+  field: PttField,
+): HTMLInputElement | HTMLTextAreaElement | null {
+  if (field === "title") {
+    return document.querySelector<HTMLInputElement>("#capture-title");
+  }
+  return document.querySelector<HTMLTextAreaElement>("#capture-body");
+}
+
+async function teardownAudio() {
+  try {
+    scriptProcessor?.disconnect();
+  } catch {
+    // Ignore.
+  }
+  scriptProcessor = null;
+  if (audioContext) {
+    try {
+      await audioContext.close();
+    } catch {
+      // Ignore.
+    }
+  }
+  audioContext = null;
+  stopMicTracks();
+}
+
+function mergeFloat32(chunks: Float32Array[]): Float32Array {
+  let length = 0;
+  for (const chunk of chunks) length += chunk.length;
+  const out = new Float32Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+function downsample(
+  input: Float32Array,
+  fromRate: number,
+  toRate: number,
+): Float32Array {
+  if (fromRate === toRate) return input;
+  const ratio = fromRate / toRate;
+  const outLength = Math.max(1, Math.floor(input.length / ratio));
+  const out = new Float32Array(outLength);
+  for (let i = 0; i < outLength; i++) {
+    const idx = Math.min(input.length - 1, Math.floor(i * ratio));
+    out[i] = input[idx] ?? 0;
+  }
+  return out;
+}
+
+function startTimerUi() {
+  stopTimerUi();
+  const timer = document.querySelector<HTMLElement>("#capture-ptt-timer");
+  if (timer) {
+    timer.hidden = false;
+    timer.textContent = "0:00 / 1:00";
+  }
+  timerInterval = window.setInterval(() => {
+    const elapsed = Math.min(MAX_PTT_MS, Date.now() - recordStartedAt);
+    if (timer) timer.textContent = `${formatMs(elapsed)} / 1:00`;
+  }, 200);
+}
+
+function stopTimerUi() {
+  if (timerInterval !== null) {
+    window.clearInterval(timerInterval);
+    timerInterval = null;
+  }
+  const timer = document.querySelector<HTMLElement>("#capture-ptt-timer");
+  if (timer) {
+    timer.hidden = true;
+    timer.textContent = "";
+  }
+}
+
+function clearMaxHold() {
+  if (maxHoldTimeout !== null) {
+    window.clearTimeout(maxHoldTimeout);
+    maxHoldTimeout = null;
+  }
+}
+
+function formatMs(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 function stopMicTracks() {
@@ -254,31 +430,11 @@ function parseVoiceKind(error: unknown): VoiceKind {
   if (text.includes("permission_denied")) return "permission_denied";
   if (text.includes("no_device")) return "no_device";
   if (text.includes("empty_transcript")) return "empty_transcript";
+  if (text.includes("EncodingError") || text.includes("decode")) {
+    return "empty_transcript";
+  }
   if (text.includes("sidecar_failed")) return "sidecar_failed";
   return "sidecar_failed";
-}
-
-async function blobToWavBase64(blob: Blob): Promise<string> {
-  const arrayBuffer = await blob.arrayBuffer();
-  const audioCtx = new AudioContext();
-  try {
-    const decoded = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
-    const offline = new OfflineAudioContext(
-      1,
-      Math.ceil(decoded.duration * 16000),
-      16000,
-    );
-    const source = offline.createBufferSource();
-    source.buffer = decoded;
-    source.connect(offline.destination);
-    source.start(0);
-    const rendered = await offline.startRendering();
-    const pcm = rendered.getChannelData(0);
-    const wav = encodeWav(pcm, 16000);
-    return bytesToBase64(wav);
-  } finally {
-    await audioCtx.close();
-  }
 }
 
 function encodeWav(samples: Float32Array, sampleRate: number): Uint8Array {
@@ -356,7 +512,11 @@ async function saveDraft() {
 
 async function closeCapture() {
   clearVoiceStatus();
-  stopMicTracks();
+  clearMaxHold();
+  stopTimerUi();
+  recording = false;
+  pcmChunks = [];
+  await teardownAudio();
   try {
     await getCurrentWindow().hide();
   } catch {
@@ -394,7 +554,21 @@ function setPttRecording(active: boolean) {
   const ptt = document.querySelector<HTMLButtonElement>("#capture-ptt");
   if (!ptt) return;
   ptt.classList.toggle("capture-ptt-active", active);
-  ptt.textContent = active ? "Listening…" : "Hold to talk";
+  ptt.setAttribute("aria-pressed", active ? "true" : "false");
+  if (!pttBusy) {
+    ptt.textContent = active ? "Release to stop" : "Hold to talk";
+  }
+}
+
+function setPttBusy(busy: boolean) {
+  const ptt = document.querySelector<HTMLButtonElement>("#capture-ptt");
+  if (!ptt) return;
+  ptt.classList.toggle("capture-ptt-busy", busy);
+  if (busy) {
+    ptt.textContent = "Transcribing…";
+  } else if (!recording) {
+    ptt.textContent = "Hold to talk";
+  }
 }
 
 function showStatus(message: string) {
@@ -418,6 +592,15 @@ function showVoiceKind(kind: VoiceKind) {
   status.dataset.kind = kind;
   status.textContent = VOICE_MESSAGES[kind];
   status.classList.toggle("voice-status-soft", kind === "empty_transcript");
+}
+
+function showVoiceSoft(message: string) {
+  const status = document.querySelector<HTMLElement>("#capture-voice-status");
+  if (!status) return;
+  status.hidden = false;
+  status.textContent = message;
+  status.classList.add("voice-status-soft");
+  status.removeAttribute("data-kind");
 }
 
 function clearVoiceStatus() {

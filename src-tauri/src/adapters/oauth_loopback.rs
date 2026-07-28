@@ -52,10 +52,11 @@ pub fn generate_pkce() -> PkcePair {
 }
 
 pub fn authorize_url(state: &str, pkce: &PkcePair) -> String {
+    let client_id = github_client_id();
     let mut url = Url::parse("https://github.com/login/oauth/authorize").expect("authorize url");
     {
         let mut query = url.query_pairs_mut();
-        query.append_pair("client_id", github_client_id());
+        query.append_pair("client_id", &client_id);
         query.append_pair("redirect_uri", OAUTH_REDIRECT_URI);
         query.append_pair("state", state);
         query.append_pair("code_challenge", &pkce.challenge);
