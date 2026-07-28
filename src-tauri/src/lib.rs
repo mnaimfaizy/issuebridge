@@ -6,7 +6,8 @@ use adapters::{
     complete_testing_set, continue_install, edit_draft, first_run_step, get_draft, keep_mine,
     last_used_repo, list_inbox, open_app_install, publish_draft, remove_testing_set_repo,
     save_capture, setup_tray, show_capture, show_capture_window, sign_in_with_github,
-    sign_in_with_pat, sign_out, testing_set, update_linked_draft, use_theirs, AppState,
+    sign_in_with_pat, sign_out, skip_try_capture, testing_set, update_linked_draft, use_theirs,
+    AppState,
 };
 use std::sync::Mutex;
 use tauri::Manager;
@@ -34,6 +35,7 @@ pub fn run() {
             add_testing_set_repo,
             remove_testing_set_repo,
             complete_testing_set,
+            skip_try_capture,
             save_capture,
             list_inbox,
             get_draft,
@@ -49,7 +51,20 @@ pub fn run() {
             setup_tray(app.handle())?;
 
             // Tray-first: closing the main window hides it instead of quitting.
+            // While first-run is incomplete, keep main visible on the current step.
             if let Some(window) = app.get_webview_window("main") {
+                let open_main = {
+                    let state = app.state::<AppState>();
+                    let core = state
+                        .core
+                        .lock()
+                        .map_err(|e| e.to_string())?;
+                    core.should_open_main_on_launch()
+                };
+                if !open_main {
+                    let _ = window.hide();
+                }
+
                 let window_for_close = window.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {

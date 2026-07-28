@@ -129,6 +129,9 @@ pub struct AppInstallSnapshot {
 pub struct AppSettings {
     pub install_completed: bool,
     pub testing_set_completed: bool,
+    /// One-shot: after Try capture Save/Skip, subsequent launches are tray-first.
+    #[serde(default)]
+    pub first_run_completed: bool,
     pub testing_set: Vec<RepoId>,
     pub app_visible_repos: Vec<RepoId>,
     pub all_repositories_warning: bool,

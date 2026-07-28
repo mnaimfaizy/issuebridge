@@ -45,6 +45,7 @@ pub enum FirstRunStepDto {
     SignIn,
     InstallApp,
     TestingSet,
+    TryCapture,
     Ready,
 }
 
@@ -54,6 +55,7 @@ impl From<FirstRunStep> for FirstRunStepDto {
             FirstRunStep::SignIn => Self::SignIn,
             FirstRunStep::InstallApp => Self::InstallApp,
             FirstRunStep::TestingSet => Self::TestingSet,
+            FirstRunStep::TryCapture => Self::TryCapture,
             FirstRunStep::Ready => Self::Ready,
         }
     }
@@ -307,6 +309,17 @@ pub fn complete_testing_set(state: State<'_, AppState>) -> Result<FirstRunStepDt
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
     core.complete_testing_set()
+        .map_err(testing_set_error_message)?;
+    Ok(FirstRunStepDto::from(core.first_run_step()))
+}
+
+#[tauri::command]
+pub fn skip_try_capture(state: State<'_, AppState>) -> Result<FirstRunStepDto, String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    core.skip_try_capture()
         .map_err(testing_set_error_message)?;
     Ok(FirstRunStepDto::from(core.first_run_step()))
 }

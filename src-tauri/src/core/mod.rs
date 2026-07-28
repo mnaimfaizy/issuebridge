@@ -27,6 +27,7 @@ pub enum FirstRunStep {
     SignIn,
     InstallApp,
     TestingSet,
+    TryCapture,
     Ready,
 }
 
@@ -130,11 +131,21 @@ where
     }
 
     /// Clear stored credentials and return to signed-out state.
-    /// Does not rewind Install / Testing-set progress.
+    /// Does not rewind Install / Testing-set / first-run-complete progress.
     pub fn sign_out(&mut self) -> Result<(), AuthError> {
         self.token_store
             .clear()
             .map_err(|_| AuthError::StorageUnavailable)
+    }
+
+    /// Whether the main window should open on launch (wizard still incomplete).
+    /// After first-run completes, launches are tray-first (`false`).
+    pub fn should_open_main_on_launch(&self) -> bool {
+        !self
+            .settings_store
+            .load()
+            .map(|s| s.first_run_completed)
+            .unwrap_or(false)
     }
 
     /// Current first-run step (derived from auth + persisted settings).
@@ -149,6 +160,9 @@ where
         }
         if !settings.testing_set_completed {
             return FirstRunStep::TestingSet;
+        }
+        if !settings.first_run_completed {
+            return FirstRunStep::TryCapture;
         }
         FirstRunStep::Ready
     }
@@ -258,7 +272,7 @@ where
             .map_err(|_| TestingSetError::StorageUnavailable)
     }
 
-    /// Confirm Testing set (1–3 repos) and advance first-run to Ready.
+    /// Confirm Testing set (1–3 repos) and advance first-run to Try capture.
     pub fn complete_testing_set(&mut self) -> Result<(), TestingSetError> {
         if self.auth_state() != AuthState::SignedIn {
             return Err(TestingSetError::NotSignedIn);
@@ -284,7 +298,24 @@ where
             .map_err(|_| TestingSetError::StorageUnavailable)
     }
 
+    /// Skip optional Try capture and complete first-run (no Draft required).
+    pub fn skip_try_capture(&mut self) -> Result<(), TestingSetError> {
+        if self.auth_state() != AuthState::SignedIn {
+            return Err(TestingSetError::NotSignedIn);
+        }
+
+        let mut settings = self
+            .settings_store
+            .load()
+            .map_err(|_| TestingSetError::StorageUnavailable)?;
+        settings.first_run_completed = true;
+        self.settings_store
+            .save(settings)
+            .map_err(|_| TestingSetError::StorageUnavailable)
+    }
+
     /// Save a Capture into a Draft. Refused when signed out. Does not Publish.
+    /// When first-run is still open after Testing set, Save also completes first-run.
     pub fn save_capture(&mut self, input: CaptureInput) -> Result<Draft, CaptureError> {
         if self.auth_state() != AuthState::SignedIn {
             return Err(CaptureError::NotSignedIn);
@@ -312,6 +343,9 @@ where
             .load()
             .map_err(|_| CaptureError::StorageUnavailable)?;
         settings.last_used_repo = Some(input.repo);
+        if settings.testing_set_completed && !settings.first_run_completed {
+            settings.first_run_completed = true;
+        }
         self.settings_store
             .save(settings)
             .map_err(|_| CaptureError::StorageUnavailable)?;
@@ -950,7 +984,7 @@ mod tests {
     }
 
     #[test]
-    fn complete_testing_set_with_one_to_three_repos_reaches_ready() {
+    fn complete_testing_set_with_one_to_three_repos_reaches_try_capture() {
         let settings = FakeSettingsStore::with_settings(AppSettings {
             install_completed: true,
             app_visible_repos: vec![repo("acme", "widgets")],
@@ -961,7 +995,87 @@ mod tests {
         core.add_testing_set_repo(repo("acme", "widgets"))
             .expect("add");
         core.complete_testing_set().expect("complete");
+        assert_eq!(core.first_run_step(), FirstRunStep::TryCapture);
+
+        let resumed = IssuebridgeCore::new(
+            FakeGitHub::default(),
+            FakeTokenStore {
+                credentials: Some(StoredCredentials {
+                    access_token: "ghp_test_token_not_a_secret".into(),
+                    refresh_token: None,
+                }),
+            },
+            FakeDraftStore::default(),
+            FakeVoiceTranscriber::default(),
+            FakeClock::default(),
+            settings,
+        );
+        assert_eq!(resumed.first_run_step(), FirstRunStep::TryCapture);
+        assert_eq!(resumed.testing_set(), vec![repo("acme", "widgets")]);
+    }
+
+    #[test]
+    fn dismiss_without_save_leaves_try_capture_incomplete() {
+        let settings = FakeSettingsStore::with_settings(AppSettings {
+            install_completed: true,
+            testing_set_completed: true,
+            testing_set: vec![repo("acme", "widgets")],
+            app_visible_repos: vec![repo("acme", "widgets")],
+            ..AppSettings::default()
+        });
+        let core = signed_in_core(FakeGitHub::default(), settings.clone());
+        assert_eq!(core.first_run_step(), FirstRunStep::TryCapture);
+        assert!(core.should_open_main_on_launch());
+        // Dismiss/cancel is adapter-only (hide Capture); core is unchanged until Save or Skip.
+        assert!(!settings.snapshot().first_run_completed);
+        assert_eq!(core.first_run_step(), FirstRunStep::TryCapture);
+    }
+
+    #[test]
+    fn save_capture_during_try_capture_completes_first_run_including_untitled() {
+        let settings = FakeSettingsStore::with_settings(AppSettings {
+            install_completed: true,
+            testing_set_completed: true,
+            testing_set: vec![repo("acme", "widgets")],
+            app_visible_repos: vec![repo("acme", "widgets")],
+            ..AppSettings::default()
+        });
+        let mut core = signed_in_core(FakeGitHub::default(), settings.clone());
+        assert_eq!(core.first_run_step(), FirstRunStep::TryCapture);
+        assert!(core.should_open_main_on_launch());
+
+        core.save_capture(CaptureInput {
+            repo: repo("acme", "widgets"),
+            title: "   ".into(),
+            body: "first capture from try step".into(),
+        })
+        .expect("untitled save");
+
         assert_eq!(core.first_run_step(), FirstRunStep::Ready);
+        assert!(settings.snapshot().first_run_completed);
+        assert!(!core.should_open_main_on_launch());
+
+        let inbox = core.list_inbox().expect("inbox");
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].display_title, "Untitled");
+    }
+
+    #[test]
+    fn skip_try_capture_completes_first_run_to_ready_without_draft() {
+        let settings = FakeSettingsStore::with_settings(AppSettings {
+            install_completed: true,
+            testing_set_completed: true,
+            testing_set: vec![repo("acme", "widgets")],
+            app_visible_repos: vec![repo("acme", "widgets")],
+            ..AppSettings::default()
+        });
+        let mut core = signed_in_core(FakeGitHub::default(), settings.clone());
+        assert_eq!(core.first_run_step(), FirstRunStep::TryCapture);
+
+        core.skip_try_capture().expect("skip");
+        assert_eq!(core.first_run_step(), FirstRunStep::Ready);
+        assert!(settings.snapshot().first_run_completed);
+        assert!(core.list_inbox().expect("inbox").is_empty());
 
         let resumed = IssuebridgeCore::new(
             FakeGitHub::default(),
@@ -977,7 +1091,7 @@ mod tests {
             settings,
         );
         assert_eq!(resumed.first_run_step(), FirstRunStep::Ready);
-        assert_eq!(resumed.testing_set(), vec![repo("acme", "widgets")]);
+        assert!(!resumed.should_open_main_on_launch());
     }
 
     #[test]
@@ -1003,6 +1117,7 @@ mod tests {
         let settings = FakeSettingsStore::with_settings(AppSettings {
             install_completed: true,
             testing_set_completed: true,
+            first_run_completed: true,
             testing_set: vec![repo("acme", "widgets")],
             app_visible_repos: vec![repo("acme", "widgets")],
             ..AppSettings::default()
@@ -1014,6 +1129,7 @@ mod tests {
         assert_eq!(core.first_run_step(), FirstRunStep::SignIn);
         assert!(settings.snapshot().install_completed);
         assert!(settings.snapshot().testing_set_completed);
+        assert!(settings.snapshot().first_run_completed);
         assert_eq!(settings.snapshot().testing_set, vec![repo("acme", "widgets")]);
     }
 
@@ -1021,6 +1137,7 @@ mod tests {
         FakeSettingsStore::with_settings(AppSettings {
             install_completed: true,
             testing_set_completed: true,
+            first_run_completed: true,
             testing_set: vec![repo("acme", "widgets")],
             app_visible_repos: vec![repo("acme", "widgets"), repo("acme", "gadgets")],
             ..AppSettings::default()

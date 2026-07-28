@@ -4,12 +4,12 @@
 
 **Blocked by:** 03 — First-run Install App + Testing set; 04 — Capture text Draft + Inbox list
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] After Testing set, optional Try capture opens the real Capture popup (default first Testing-set repo).
-- [ ] Save (incl. Untitled) or Skip completes first-run and lands in the Inbox; dismiss without Save stays on the step.
-- [ ] Text Save is enough (voice not required); copy may mention the Open hotkey.
-- [ ] While first-run is incomplete, main window opens on the current step (tray still present).
-- [ ] One-shot first-run-complete flag persists; afterward normal tray-first launch; no “Replay onboarding” in v0.1.
-- [ ] Sign-out does not rewind Install/Testing-set completion once done.
-- [ ] Core-level (or thin integration) tests cover completion via Save vs Skip and the complete flag gating tray-first vs wizard.
+- [x] After Testing set, optional Try capture opens the real Capture popup (default first Testing-set repo).
+- [x] Save (incl. Untitled) or Skip completes first-run and lands in the Inbox; dismiss without Save stays on the step.
+- [x] Text Save is enough (voice not required); copy may mention the Open hotkey.
+- [x] While first-run is incomplete, main window opens on the current step (tray still present).
+- [x] One-shot first-run-complete flag persists; afterward normal tray-first launch; no “Replay onboarding” in v0.1.
+- [x] Sign-out does not rewind Install/Testing-set completion once done.
+- [x] Core-level (or thin integration) tests cover completion via Save vs Skip and the complete flag gating tray-first vs wizard.

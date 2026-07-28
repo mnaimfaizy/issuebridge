@@ -2,7 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 type AuthStateDto = "signed_out" | "signed_in";
-type FirstRunStepDto = "sign_in" | "install_app" | "testing_set" | "ready";
+type FirstRunStepDto =
+  | "sign_in"
+  | "install_app"
+  | "testing_set"
+  | "try_capture"
+  | "ready";
 
 type InstallContinueOutcomeDto =
   | { kind: "no_install" }
@@ -51,7 +56,12 @@ window.addEventListener("DOMContentLoaded", () => {
       event.preventDefault();
       void runSignInWithPat();
     });
-  for (const id of ["sign-out", "sign-out-install", "sign-out-testing"]) {
+  for (const id of [
+    "sign-out",
+    "sign-out-install",
+    "sign-out-testing",
+    "sign-out-try-capture",
+  ]) {
     document
       .querySelector(`#${id}`)
       ?.addEventListener("click", () => void runSignOut());
@@ -65,6 +75,12 @@ window.addEventListener("DOMContentLoaded", () => {
   document
     .querySelector("#complete-testing-set")
     ?.addEventListener("click", () => void runCompleteTestingSet());
+  document
+    .querySelector("#try-capture")
+    ?.addEventListener("click", () => void runOpenCapture());
+  document
+    .querySelector("#skip-try-capture")
+    ?.addEventListener("click", () => void runSkipTryCapture());
   document
     .querySelector("#repo-filter")
     ?.addEventListener("input", () => renderRepoResults());
@@ -110,7 +126,8 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
   void listen("inbox-changed", () => {
-    void refreshInboxIfReady();
+    // Save during Try capture completes first-run → refresh step into Inbox.
+    void refreshAppState();
   });
 
   void refreshAppState();
@@ -146,6 +163,7 @@ async function applyStepUi(auth: AuthStateDto, step: FirstRunStepDto) {
   const signIn = document.querySelector<HTMLElement>("#sign-in-step");
   const install = document.querySelector<HTMLElement>("#install-step");
   const testing = document.querySelector<HTMLElement>("#testing-set-step");
+  const tryCapture = document.querySelector<HTMLElement>("#try-capture-step");
   const ready = document.querySelector<HTMLElement>("#ready-home");
   const signedOut = document.querySelector<HTMLElement>("#signed-out-actions");
   const authEl = document.querySelector("#auth-state");
@@ -153,6 +171,7 @@ async function applyStepUi(auth: AuthStateDto, step: FirstRunStepDto) {
   if (signIn) signIn.hidden = step !== "sign_in";
   if (install) install.hidden = step !== "install_app";
   if (testing) testing.hidden = step !== "testing_set";
+  if (tryCapture) tryCapture.hidden = step !== "try_capture";
   if (ready) ready.hidden = step !== "ready";
 
   if (authEl) {
@@ -668,6 +687,18 @@ async function runCompleteTestingSet() {
   }
 }
 
+async function runSkipTryCapture() {
+  setBusy(true);
+  try {
+    await invoke<FirstRunStepDto>("skip_try_capture");
+    await refreshAppState();
+  } catch (error) {
+    showStatus(String(error));
+  } finally {
+    setBusy(false);
+  }
+}
+
 function clearInstallMessages() {
   const hint = document.querySelector<HTMLElement>("#install-hint");
   const warning = document.querySelector<HTMLElement>("#install-warning");
@@ -691,9 +722,12 @@ function setBusy(busy: boolean) {
     "sign-out",
     "sign-out-install",
     "sign-out-testing",
+    "sign-out-try-capture",
     "open-install",
     "continue-install",
     "complete-testing-set",
+    "try-capture",
+    "skip-try-capture",
     "open-capture",
     "empty-capture",
     "save-draft",
