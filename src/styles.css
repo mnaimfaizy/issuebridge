@@ -256,9 +256,33 @@ h1 {
   padding: 0;
 }
 
+.inbox-layout {
+  display: grid;
+  gap: 1.25rem;
+}
+
+@media (min-width: 720px) {
+  .inbox-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+    align-items: start;
+  }
+}
+
 .inbox-row {
-  padding: 0.7rem 0;
+  padding: 0.7rem 0.4rem;
   border-bottom: 1px solid #d5dde7;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.inbox-row:hover,
+.inbox-row:focus-visible {
+  background: #eef3f8;
+  outline: none;
+}
+
+.inbox-row.selected {
+  background: #e2ebf5;
 }
 
 .inbox-row-title {
@@ -271,6 +295,43 @@ h1 {
   color: #4a5565;
   font-size: 0.9rem;
   line-height: 1.35;
+}
+
+.draft-editor {
+  margin-top: 0.25rem;
+  padding-top: 0.25rem;
+}
+
+.draft-editor .section-title {
+  margin-top: 0;
+}
+
+.draft-editor textarea,
+.draft-editor input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0.25rem 0 0.75rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #c5ced9;
+  border-radius: 4px;
+  font: inherit;
+}
+
+.draft-editor textarea {
+  resize: vertical;
+  min-height: 8rem;
+}
+
+.editor-repo,
+.editor-cues,
+.editor-link {
+  margin: 0 0 0.75rem;
+  color: #4a5565;
+  font-size: 0.9rem;
+}
+
+.editor-link {
+  word-break: break-all;
 }
 
 .capture-body {

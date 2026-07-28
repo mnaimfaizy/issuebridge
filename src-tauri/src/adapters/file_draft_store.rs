@@ -6,9 +6,23 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::{Draft, DraftStore, DraftStoreError, RepoId};
+use crate::core::{Draft, DraftStore, DraftStoreError, LocalLink, RemoteSnapshot, RepoId};
 
 const DRAFTS_FILE: &str = "drafts.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LocalLinkRecord {
+    number: u64,
+    html_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RemoteSnapshotRecord {
+    title: String,
+    body: String,
+    label_names: Vec<String>,
+    updated_at: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DraftRecord {
@@ -19,6 +33,10 @@ struct DraftRecord {
     label_names: Vec<String>,
     created_at_millis: u64,
     updated_at_millis: u64,
+    #[serde(default)]
+    local_link: Option<LocalLinkRecord>,
+    #[serde(default)]
+    remote_snapshot: Option<RemoteSnapshotRecord>,
 }
 
 impl From<&Draft> for DraftRecord {
@@ -31,6 +49,16 @@ impl From<&Draft> for DraftRecord {
             label_names: draft.label_names.clone(),
             created_at_millis: system_time_millis(draft.created_at),
             updated_at_millis: system_time_millis(draft.updated_at),
+            local_link: draft.local_link.as_ref().map(|link| LocalLinkRecord {
+                number: link.number,
+                html_url: link.html_url.clone(),
+            }),
+            remote_snapshot: draft.remote_snapshot.as_ref().map(|snap| RemoteSnapshotRecord {
+                title: snap.title.clone(),
+                body: snap.body.clone(),
+                label_names: snap.label_names.clone(),
+                updated_at: snap.updated_at.clone(),
+            }),
         }
     }
 }
@@ -45,6 +73,16 @@ impl From<DraftRecord> for Draft {
             label_names: record.label_names,
             created_at: millis_to_system_time(record.created_at_millis),
             updated_at: millis_to_system_time(record.updated_at_millis),
+            local_link: record.local_link.map(|link| LocalLink {
+                number: link.number,
+                html_url: link.html_url,
+            }),
+            remote_snapshot: record.remote_snapshot.map(|snap| RemoteSnapshot {
+                title: snap.title,
+                body: snap.body,
+                label_names: snap.label_names,
+                updated_at: snap.updated_at,
+            }),
         }
     }
 }
@@ -103,6 +141,14 @@ impl DraftStore for FileDraftStore {
             drafts.push(record);
         }
         self.write_all(&drafts)
+    }
+
+    fn get(&self, id: &str) -> Result<Option<Draft>, DraftStoreError> {
+        Ok(self
+            .read_all()?
+            .into_iter()
+            .find(|d| d.id == id)
+            .map(Draft::from))
     }
 
     fn list(&self) -> Result<Vec<Draft>, DraftStoreError> {

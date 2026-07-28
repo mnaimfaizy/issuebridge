@@ -15,8 +15,8 @@ use crate::adapters::oauth_loopback::{
 };
 use crate::adapters::app_core::AppCore;
 use crate::core::{
-    AuthError, AuthState, CaptureError, CaptureInput, FirstRunStep, InboxError,
-    InstallContinueOutcome, InstallError, RepoId, TestingSetError,
+    AuthError, AuthState, CaptureError, CaptureInput, EditDraftInput, FirstRunStep, InboxError,
+    InstallContinueOutcome, InstallError, PublishError, RepoId, TestingSetError,
 };
 
 pub struct AppState {
@@ -121,6 +121,28 @@ pub struct InboxItemDto {
     pub name: String,
     pub linked: bool,
     pub dirty: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DraftDto {
+    pub id: String,
+    pub owner: String,
+    pub name: String,
+    pub title: String,
+    pub body: String,
+    pub label_names: Vec<String>,
+    pub linked: bool,
+    pub dirty: bool,
+    pub issue_number: Option<u64>,
+    pub html_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EditDraftDto {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub label_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -337,6 +359,58 @@ pub fn list_inbox(state: State<'_, AppState>) -> Result<Vec<InboxItemDto>, Strin
 }
 
 #[tauri::command]
+pub fn get_draft(state: State<'_, AppState>, id: String) -> Result<DraftDto, String> {
+    let core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    core.get_draft(&id)
+        .map(draft_to_dto)
+        .map_err(inbox_error_message)
+}
+
+#[tauri::command]
+pub fn edit_draft(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    input: EditDraftDto,
+) -> Result<DraftDto, String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    let draft = core
+        .edit_draft(EditDraftInput {
+            id: input.id,
+            title: input.title,
+            body: input.body,
+            label_names: input.label_names,
+        })
+        .map_err(inbox_error_message)?;
+    drop(core);
+    let _ = app.emit("inbox-changed", ());
+    Ok(draft_to_dto(draft))
+}
+
+#[tauri::command]
+pub fn publish_draft(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<DraftDto, String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    let draft = core
+        .publish_draft(&id)
+        .map_err(publish_error_message)?;
+    drop(core);
+    let _ = app.emit("inbox-changed", ());
+    Ok(draft_to_dto(draft))
+}
+
+#[tauri::command]
 pub fn last_used_repo(state: State<'_, AppState>) -> Result<Option<RepoIdDto>, String> {
     let core = state
         .core
@@ -358,10 +432,43 @@ fn capture_error_message(err: CaptureError) -> String {
     }
 }
 
+fn draft_to_dto(draft: crate::core::Draft) -> DraftDto {
+    let linked = draft.is_linked();
+    let dirty = draft.is_dirty();
+    DraftDto {
+        id: draft.id,
+        owner: draft.repo.owner,
+        name: draft.repo.name,
+        title: draft.title,
+        body: draft.body,
+        label_names: draft.label_names,
+        linked,
+        dirty,
+        issue_number: draft.local_link.as_ref().map(|l| l.number),
+        html_url: draft.local_link.map(|l| l.html_url),
+    }
+}
+
 fn inbox_error_message(err: InboxError) -> String {
     match err {
         InboxError::NotSignedIn => "Sign in to view the Inbox.".into(),
+        InboxError::NotFound => "That Draft was not found.".into(),
         InboxError::StorageUnavailable => "Could not load Drafts.".into(),
+    }
+}
+
+fn publish_error_message(err: PublishError) -> String {
+    match err {
+        PublishError::NotSignedIn => "Sign in to Publish a Draft.".into(),
+        PublishError::TitleRequired => "Add a title before Publish.".into(),
+        PublishError::AlreadyLinked => {
+            "This Draft is already linked. Updating the remote issue comes later.".into()
+        }
+        PublishError::NotFound => "That Draft was not found.".into(),
+        PublishError::StorageUnavailable => "Could not save Draft after Publish.".into(),
+        PublishError::ProviderUnavailable => {
+            "Could not create the GitHub issue. Try again.".into()
+        }
     }
 }
 

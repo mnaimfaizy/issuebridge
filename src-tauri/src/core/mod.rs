@@ -4,11 +4,14 @@
 mod error;
 mod ports;
 
-pub use error::{AuthError, CaptureError, InboxError, InstallError, TestingSetError};
+pub use error::{
+    AuthError, CaptureError, InboxError, InstallError, PublishError, TestingSetError,
+};
 pub use ports::{
-    AppInstallSnapshot, AppSettings, CaptureInput, Clock, Draft, DraftStore, DraftStoreError,
-    GitHub, GitHubError, InboxItem, RepoId, SettingsStore, SettingsStoreError, StoredCredentials,
-    TokenStore, TokenStoreError, VoiceTranscriber,
+    AppInstallSnapshot, AppSettings, CaptureInput, Clock, CreatedIssue, Draft, DraftStore,
+    DraftStoreError, EditDraftInput, GitHub, GitHubError, InboxItem, LocalLink, RemoteSnapshot,
+    RepoId, SettingsStore, SettingsStoreError, StoredCredentials, TokenStore, TokenStoreError,
+    VoiceTranscriber,
 };
 
 /// Auth state visible to callers (never includes raw tokens).
@@ -296,6 +299,8 @@ where
             label_names: Vec::new(),
             created_at: now,
             updated_at: now,
+            local_link: None,
+            remote_snapshot: None,
         };
 
         self.draft_store
@@ -329,6 +334,106 @@ where
         Ok(drafts.into_iter().map(inbox_item_from_draft).collect())
     }
 
+    /// Load a Draft for the Inbox editor.
+    pub fn get_draft(&self, id: &str) -> Result<Draft, InboxError> {
+        if self.auth_state() != AuthState::SignedIn {
+            return Err(InboxError::NotSignedIn);
+        }
+
+        self.draft_store
+            .get(id)
+            .map_err(|_| InboxError::StorageUnavailable)?
+            .ok_or(InboxError::NotFound)
+    }
+
+    /// Update working title, body, and ordered label names on a Draft.
+    pub fn edit_draft(&mut self, input: EditDraftInput) -> Result<Draft, InboxError> {
+        if self.auth_state() != AuthState::SignedIn {
+            return Err(InboxError::NotSignedIn);
+        }
+
+        let mut draft = self
+            .draft_store
+            .get(&input.id)
+            .map_err(|_| InboxError::StorageUnavailable)?
+            .ok_or(InboxError::NotFound)?;
+
+        draft.title = input.title;
+        draft.body = input.body;
+        draft.label_names = input.label_names;
+        draft.updated_at = self.clock.now();
+
+        self.draft_store
+            .save(draft.clone())
+            .map_err(|_| InboxError::StorageUnavailable)?;
+
+        Ok(draft)
+    }
+
+    /// Publish a Draft to GitHub: create the issue, store Local link + Remote snapshot.
+    pub fn publish_draft(&mut self, id: &str) -> Result<Draft, PublishError> {
+        if self.auth_state() != AuthState::SignedIn {
+            return Err(PublishError::NotSignedIn);
+        }
+
+        let credentials = self
+            .token_store
+            .load()
+            .map_err(|_| PublishError::StorageUnavailable)?
+            .ok_or(PublishError::NotSignedIn)?;
+
+        let mut draft = self
+            .draft_store
+            .get(id)
+            .map_err(|_| PublishError::StorageUnavailable)?
+            .ok_or(PublishError::NotFound)?;
+
+        if draft.is_linked() {
+            return Err(PublishError::AlreadyLinked);
+        }
+
+        if draft.title.trim().is_empty() {
+            return Err(PublishError::TitleRequired);
+        }
+
+        let created = self
+            .github
+            .create_issue(
+                &credentials.access_token,
+                &draft.repo,
+                draft.title.trim(),
+                &draft.body,
+                &draft.label_names,
+            )
+            .map_err(|err| match err {
+                GitHubError::InvalidCredentials | GitHubError::Unavailable => {
+                    PublishError::ProviderUnavailable
+                }
+            })?;
+
+        // Align working fields with what GitHub accepted so Dirty stays clear after Publish.
+        draft.title = created.title.clone();
+        draft.body = created.body.clone();
+        draft.label_names = created.label_names.clone();
+        draft.local_link = Some(LocalLink {
+            number: created.number,
+            html_url: created.html_url,
+        });
+        draft.remote_snapshot = Some(RemoteSnapshot {
+            title: created.title,
+            body: created.body,
+            label_names: created.label_names,
+            updated_at: created.updated_at,
+        });
+        draft.updated_at = self.clock.now();
+
+        self.draft_store
+            .save(draft.clone())
+            .map_err(|_| PublishError::StorageUnavailable)?;
+
+        Ok(draft)
+    }
+
     pub fn last_used_repo(&self) -> Option<RepoId> {
         self.settings_store
             .load()
@@ -360,15 +465,16 @@ fn inbox_item_from_draft(draft: Draft) -> InboxItem {
     let display_title = if draft.title.trim().is_empty() {
         "Untitled".to_string()
     } else {
-        draft.title
+        draft.title.clone()
     };
-    // Linked / Dirty arrive with Publish; new Capture Drafts are unlinked and clean.
+    let linked = draft.is_linked();
+    let dirty = draft.is_dirty();
     InboxItem {
         id: draft.id,
         display_title,
         repo: draft.repo,
-        linked: false,
-        dirty: false,
+        linked,
+        dirty,
     }
 }
 
@@ -877,5 +983,140 @@ mod tests {
         assert_eq!(inbox.len(), 2);
         assert_eq!(inbox[0].display_title, "Newer");
         assert_eq!(inbox[1].display_title, "Older");
+    }
+
+    #[test]
+    fn inbox_editor_can_change_title_body_and_label_names() {
+        let mut core = ready_core();
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "Rough title".into(),
+                body: "Rough body".into(),
+            })
+            .expect("capture");
+
+        let edited = core
+            .edit_draft(EditDraftInput {
+                id: saved.id.clone(),
+                title: "Polished title".into(),
+                body: "Polished body".into(),
+                label_names: vec!["bug".into(), "ui".into()],
+            })
+            .expect("edit");
+
+        assert_eq!(edited.title, "Polished title");
+        assert_eq!(edited.body, "Polished body");
+        assert_eq!(edited.label_names, vec!["bug".to_string(), "ui".to_string()]);
+
+        let loaded = core.get_draft(&saved.id).expect("get");
+        assert_eq!(loaded.title, "Polished title");
+        assert_eq!(loaded.body, "Polished body");
+        assert_eq!(loaded.label_names, vec!["bug".to_string(), "ui".to_string()]);
+
+        let inbox = core.list_inbox().expect("inbox");
+        assert_eq!(inbox[0].display_title, "Polished title");
+        assert!(!inbox[0].linked);
+        assert!(!inbox[0].dirty);
+    }
+
+    #[test]
+    fn publish_without_title_is_refused() {
+        let mut core = ready_core();
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "   ".into(),
+                body: "Needs a title before Publish.".into(),
+            })
+            .expect("capture");
+
+        let err = core
+            .publish_draft(&saved.id)
+            .expect_err("Publish without title must be refused");
+        assert_eq!(err, PublishError::TitleRequired);
+
+        let loaded = core.get_draft(&saved.id).expect("get");
+        assert!(loaded.local_link.is_none());
+        assert!(loaded.remote_snapshot.is_none());
+    }
+
+    #[test]
+    fn publish_with_title_creates_issue_and_stores_local_link_and_snapshot() {
+        let mut core = ready_core();
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "Broken button".into(),
+                body: "Clicking Save does nothing.".into(),
+            })
+            .expect("capture");
+        core.edit_draft(EditDraftInput {
+            id: saved.id.clone(),
+            title: "Broken button".into(),
+            body: "Clicking Save does nothing.".into(),
+            label_names: vec!["bug".into()],
+        })
+        .expect("labels");
+
+        let published = core.publish_draft(&saved.id).expect("Publish");
+
+        let link = published.local_link.expect("Local link");
+        assert_eq!(link.number, 1);
+        assert_eq!(link.html_url, "https://github.com/acme/widgets/issues/1");
+
+        let snapshot = published.remote_snapshot.expect("Remote snapshot");
+        assert_eq!(snapshot.title, "Broken button");
+        assert_eq!(snapshot.body, "Clicking Save does nothing.");
+        assert_eq!(snapshot.label_names, vec!["bug".to_string()]);
+        assert_eq!(snapshot.updated_at, "2024-01-15T12:00:00Z");
+
+        let inbox = core.list_inbox().expect("inbox");
+        assert_eq!(inbox.len(), 1);
+        assert!(inbox[0].linked);
+        assert!(!inbox[0].dirty);
+
+        let err = core
+            .publish_draft(&saved.id)
+            .expect_err("second Publish must not create another issue");
+        assert_eq!(err, PublishError::AlreadyLinked);
+    }
+
+    #[test]
+    fn linked_draft_is_dirty_when_working_fields_diverge_from_remote_snapshot() {
+        let mut core = ready_core();
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "Original".into(),
+                body: "Body".into(),
+            })
+            .expect("capture");
+        core.publish_draft(&saved.id).expect("Publish");
+
+        core.edit_draft(EditDraftInput {
+            id: saved.id.clone(),
+            title: "Changed title".into(),
+            body: "Body".into(),
+            label_names: Vec::new(),
+        })
+        .expect("edit after Publish");
+
+        let inbox = core.list_inbox().expect("inbox");
+        assert!(inbox[0].linked);
+        assert!(inbox[0].dirty);
+
+        // Align working fields with snapshot again → clean.
+        core.edit_draft(EditDraftInput {
+            id: saved.id.clone(),
+            title: "Original".into(),
+            body: "Body".into(),
+            label_names: Vec::new(),
+        })
+        .expect("realign");
+
+        let inbox = core.list_inbox().expect("inbox");
+        assert!(inbox[0].linked);
+        assert!(!inbox[0].dirty);
     }
 }

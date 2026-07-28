@@ -4,12 +4,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use super::{
-    AppInstallSnapshot, AppSettings, Clock, Draft, DraftStore, DraftStoreError, GitHub, GitHubError,
-    SettingsStore, SettingsStoreError, StoredCredentials, TokenStore, TokenStoreError,
-    VoiceTranscriber,
+    AppInstallSnapshot, AppSettings, Clock, CreatedIssue, Draft, DraftStore, DraftStoreError,
+    GitHub, GitHubError, RepoId, SettingsStore, SettingsStoreError, StoredCredentials, TokenStore,
+    TokenStoreError, VoiceTranscriber,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FakeGitHub {
     /// When true, `validate_pat` fails with InvalidCredentials.
     pub reject_pat: bool,
@@ -17,6 +17,9 @@ pub struct FakeGitHub {
     pub oauth_result: Result<StoredCredentials, GitHubError>,
     /// Result returned by `list_app_install_snapshot`.
     pub install_snapshot: Result<AppInstallSnapshot, GitHubError>,
+    /// Optional override for `create_issue`; when `None`, issues are minted successfully.
+    pub create_issue_result: Option<Result<CreatedIssue, GitHubError>>,
+    pub next_issue_number: Arc<Mutex<u64>>,
 }
 
 impl Default for FakeGitHub {
@@ -29,6 +32,8 @@ impl Default for FakeGitHub {
                 repos: Vec::new(),
                 all_repositories: false,
             }),
+            create_issue_result: None,
+            next_issue_number: Arc::new(Mutex::new(0)),
         }
     }
 }
@@ -54,6 +59,36 @@ impl GitHub for FakeGitHub {
         _token: &str,
     ) -> Result<AppInstallSnapshot, GitHubError> {
         self.install_snapshot.clone()
+    }
+
+    fn create_issue(
+        &self,
+        _token: &str,
+        repo: &RepoId,
+        title: &str,
+        body: &str,
+        label_names: &[String],
+    ) -> Result<CreatedIssue, GitHubError> {
+        if let Some(result) = &self.create_issue_result {
+            return result.clone();
+        }
+        let mut next = self
+            .next_issue_number
+            .lock()
+            .map_err(|_| GitHubError::Unavailable)?;
+        *next += 1;
+        let number = *next;
+        Ok(CreatedIssue {
+            number,
+            html_url: format!(
+                "https://github.com/{}/{}/issues/{number}",
+                repo.owner, repo.name
+            ),
+            title: title.to_string(),
+            body: body.to_string(),
+            label_names: label_names.to_vec(),
+            updated_at: "2024-01-15T12:00:00Z".into(),
+        })
     }
 }
 
@@ -85,11 +120,26 @@ pub struct FakeDraftStore {
 
 impl DraftStore for FakeDraftStore {
     fn save(&mut self, draft: Draft) -> Result<(), DraftStoreError> {
-        self.inner
+        let mut drafts = self
+            .inner
+            .lock()
+            .map_err(|_| DraftStoreError::Unavailable)?;
+        if let Some(existing) = drafts.iter_mut().find(|d| d.id == draft.id) {
+            *existing = draft;
+        } else {
+            drafts.push(draft);
+        }
+        Ok(())
+    }
+
+    fn get(&self, id: &str) -> Result<Option<Draft>, DraftStoreError> {
+        Ok(self
+            .inner
             .lock()
             .map_err(|_| DraftStoreError::Unavailable)?
-            .push(draft);
-        Ok(())
+            .iter()
+            .find(|d| d.id == id)
+            .cloned())
     }
 
     fn list(&self) -> Result<Vec<Draft>, DraftStoreError> {

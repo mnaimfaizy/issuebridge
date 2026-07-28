@@ -20,8 +20,22 @@ type InboxItemDto = {
   dirty: boolean;
 };
 
+type DraftDto = {
+  id: string;
+  owner: string;
+  name: string;
+  title: string;
+  body: string;
+  label_names: string[];
+  linked: boolean;
+  dirty: boolean;
+  issue_number: number | null;
+  html_url: string | null;
+};
+
 let visibleRepos: RepoIdDto[] = [];
 let selectedRepos: RepoIdDto[] = [];
+let selectedDraftId: string | null = null;
 
 window.addEventListener("DOMContentLoaded", () => {
   document
@@ -55,6 +69,12 @@ window.addEventListener("DOMContentLoaded", () => {
       .querySelector(`#${id}`)
       ?.addEventListener("click", () => void runOpenCapture());
   }
+  document
+    .querySelector("#save-draft")
+    ?.addEventListener("click", () => void runSaveDraft());
+  document
+    .querySelector("#publish-draft")
+    ?.addEventListener("click", () => void runPublishDraft());
 
   window.addEventListener("focus", () => {
     void refreshInboxIfReady();
@@ -139,6 +159,7 @@ function renderInbox(items: InboxItemDto[]) {
   const empty = document.querySelector<HTMLElement>("#inbox-empty");
   const list = document.querySelector("#inbox-list");
   const openCapture = document.querySelector<HTMLElement>("#open-capture");
+  const editor = document.querySelector<HTMLElement>("#draft-editor");
   if (!empty || !list) return;
 
   list.replaceChildren();
@@ -146,15 +167,37 @@ function renderInbox(items: InboxItemDto[]) {
   if (items.length === 0) {
     empty.hidden = false;
     if (openCapture) openCapture.hidden = true;
+    selectedDraftId = null;
+    if (editor) editor.hidden = true;
     return;
   }
 
   empty.hidden = true;
   if (openCapture) openCapture.hidden = false;
 
+  if (
+    selectedDraftId &&
+    !items.some((item) => item.id === selectedDraftId)
+  ) {
+    selectedDraftId = null;
+    if (editor) editor.hidden = true;
+  }
+
   for (const item of items) {
     const li = document.createElement("li");
     li.className = "inbox-row";
+    if (item.id === selectedDraftId) {
+      li.classList.add("selected");
+    }
+    li.tabIndex = 0;
+    li.setAttribute("role", "button");
+    li.addEventListener("click", () => void openDraftEditor(item.id));
+    li.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        void openDraftEditor(item.id);
+      }
+    });
 
     const title = document.createElement("div");
     title.className = "inbox-row-title";
@@ -169,6 +212,114 @@ function renderInbox(items: InboxItemDto[]) {
     li.appendChild(title);
     li.appendChild(meta);
     list.appendChild(li);
+  }
+}
+
+async function openDraftEditor(id: string) {
+  try {
+    const draft = await invoke<DraftDto>("get_draft", { id });
+    selectedDraftId = draft.id;
+    fillEditor(draft);
+    await loadInbox();
+    clearStatus();
+  } catch (error) {
+    showStatus(String(error));
+  }
+}
+
+function fillEditor(draft: DraftDto) {
+  const editor = document.querySelector<HTMLElement>("#draft-editor");
+  const repo = document.querySelector("#editor-repo");
+  const cues = document.querySelector("#editor-cues");
+  const title = document.querySelector<HTMLInputElement>("#editor-title");
+  const body = document.querySelector<HTMLTextAreaElement>("#editor-body");
+  const labels = document.querySelector<HTMLInputElement>("#editor-labels");
+  const link = document.querySelector<HTMLElement>("#editor-link");
+  const publish = document.querySelector<HTMLButtonElement>("#publish-draft");
+  if (!editor || !title || !body || !labels) return;
+
+  editor.hidden = false;
+  if (repo) repo.textContent = `${draft.owner}/${draft.name}`;
+  if (cues) {
+    const linkCue = draft.linked ? "linked" : "unlinked";
+    const dirtyCue = draft.dirty ? "dirty" : "clean";
+    cues.textContent = `${linkCue} · ${dirtyCue}`;
+  }
+  title.value = draft.title;
+  body.value = draft.body;
+  labels.value = draft.label_names.join(", ");
+  if (publish) publish.hidden = draft.linked;
+  if (link) {
+    if (draft.html_url && draft.issue_number != null) {
+      link.hidden = false;
+      link.textContent = `GitHub #${draft.issue_number}: ${draft.html_url}`;
+    } else {
+      link.hidden = true;
+      link.textContent = "";
+    }
+  }
+}
+
+function readEditorForm(): {
+  title: string;
+  body: string;
+  label_names: string[];
+} {
+  const title =
+    document.querySelector<HTMLInputElement>("#editor-title")?.value ?? "";
+  const body =
+    document.querySelector<HTMLTextAreaElement>("#editor-body")?.value ?? "";
+  const labels = document.querySelector<HTMLInputElement>("#editor-labels");
+  const label_names = (labels?.value ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  return { title, body, label_names };
+}
+
+async function runSaveDraft() {
+  if (!selectedDraftId) return;
+  const form = readEditorForm();
+  setBusy(true);
+  try {
+    const draft = await invoke<DraftDto>("edit_draft", {
+      input: {
+        id: selectedDraftId,
+        ...form,
+      },
+    });
+    fillEditor(draft);
+    await loadInbox();
+    clearStatus();
+  } catch (error) {
+    showStatus(String(error));
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function runPublishDraft() {
+  if (!selectedDraftId) return;
+  const form = readEditorForm();
+  setBusy(true);
+  try {
+    await invoke<DraftDto>("edit_draft", {
+      input: {
+        id: selectedDraftId,
+        ...form,
+      },
+    });
+    const draft = await invoke<DraftDto>("publish_draft", {
+      id: selectedDraftId,
+    });
+    fillEditor(draft);
+    await loadInbox();
+    clearStatus();
+  } catch (error) {
+    showStatus(String(error));
+    await loadInbox();
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -418,6 +569,8 @@ function setBusy(busy: boolean) {
     "complete-testing-set",
     "open-capture",
     "empty-capture",
+    "save-draft",
+    "publish-draft",
   ];
   for (const id of ids) {
     const button = document.querySelector<HTMLButtonElement>(`#${id}`);

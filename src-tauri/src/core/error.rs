@@ -13,7 +13,19 @@ pub enum CaptureError {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InboxError {
     NotSignedIn,
+    NotFound,
     StorageUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PublishError {
+    NotSignedIn,
+    TitleRequired,
+    AlreadyLinked,
+    NotFound,
+    StorageUnavailable,
+    ProviderUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

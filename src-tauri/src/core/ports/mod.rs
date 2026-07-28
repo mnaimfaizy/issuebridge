@@ -22,7 +22,24 @@ pub struct CaptureInput {
     pub body: String,
 }
 
-/// Local Draft record (persistence shape for v0.1 — unlinked fields only for now).
+/// This install’s association between a Draft and the remote GitHub issue it published.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalLink {
+    pub number: u64,
+    pub html_url: String,
+}
+
+/// Last-known remote title, body, labels, and `updated_at` after Publish or remote update.
+/// `updated_at` is GitHub’s ISO-8601 string (exact value used for conflict compare later).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteSnapshot {
+    pub title: String,
+    pub body: String,
+    pub label_names: Vec<String>,
+    pub updated_at: String,
+}
+
+/// Local Draft record — linked when `local_link` is present; Dirty is derived from snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Draft {
     pub id: String,
@@ -32,6 +49,50 @@ pub struct Draft {
     pub label_names: Vec<String>,
     pub created_at: SystemTime,
     pub updated_at: SystemTime,
+    #[serde(default)]
+    pub local_link: Option<LocalLink>,
+    #[serde(default)]
+    pub remote_snapshot: Option<RemoteSnapshot>,
+}
+
+impl Draft {
+    pub fn is_linked(&self) -> bool {
+        self.local_link.is_some()
+    }
+
+    /// Dirty when linked and working title/body/labels differ from the Remote snapshot.
+    pub fn is_dirty(&self) -> bool {
+        let Some(snapshot) = &self.remote_snapshot else {
+            return false;
+        };
+        if !self.is_linked() {
+            return false;
+        }
+        self.title != snapshot.title
+            || self.body != snapshot.body
+            || self.label_names != snapshot.label_names
+    }
+}
+
+/// Inbox editor updates to working title, body, and ordered label names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditDraftInput {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub label_names: Vec<String>,
+}
+
+/// Result of creating a GitHub issue via the GitHub port.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreatedIssue {
+    pub number: u64,
+    pub html_url: String,
+    pub title: String,
+    pub body: String,
+    pub label_names: Vec<String>,
+    /// GitHub ISO-8601 `updated_at`.
+    pub updated_at: String,
 }
 
 /// One Inbox row — display fields derived from a Draft.
@@ -99,6 +160,16 @@ pub trait GitHub: Send + Sync {
         &self,
         token: &str,
     ) -> Result<AppInstallSnapshot, GitHubError>;
+
+    /// Create a GitHub issue from Draft working fields (no rediscovery label/footer).
+    fn create_issue(
+        &self,
+        token: &str,
+        repo: &RepoId,
+        title: &str,
+        body: &str,
+        label_names: &[String],
+    ) -> Result<CreatedIssue, GitHubError>;
 }
 
 pub trait TokenStore: Send + Sync {
@@ -114,6 +185,7 @@ pub enum TokenStoreError {
 
 pub trait DraftStore: Send + Sync {
     fn save(&mut self, draft: Draft) -> Result<(), DraftStoreError>;
+    fn get(&self, id: &str) -> Result<Option<Draft>, DraftStoreError>;
     fn list(&self) -> Result<Vec<Draft>, DraftStoreError>;
 }
 

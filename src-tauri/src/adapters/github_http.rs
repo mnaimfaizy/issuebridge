@@ -1,10 +1,12 @@
-//! GitHub HTTP adapter for PAT validation, OAuth code exchange, and App install listing.
+//! GitHub HTTP adapter for PAT validation, OAuth code exchange, App install listing, and issues.
 
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, AUTHORIZATION, LINK};
 use serde::Deserialize;
 
-use crate::core::{AppInstallSnapshot, GitHub, GitHubError, RepoId, StoredCredentials};
+use crate::core::{
+    AppInstallSnapshot, CreatedIssue, GitHub, GitHubError, RepoId, StoredCredentials,
+};
 
 const USER_AGENT_VALUE: &str = "Issuebridge/0.1";
 const TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
@@ -89,6 +91,21 @@ struct RepoJson {
 #[derive(Debug, Deserialize)]
 struct OwnerJson {
     login: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct IssueResponse {
+    number: u64,
+    html_url: String,
+    title: String,
+    body: Option<String>,
+    labels: Vec<LabelJson>,
+    updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LabelJson {
+    name: String,
 }
 
 impl GitHub for HttpGitHub {
@@ -190,6 +207,49 @@ impl GitHub for HttpGitHub {
             has_install: true,
             repos,
             all_repositories,
+        })
+    }
+
+    fn create_issue(
+        &self,
+        token: &str,
+        repo: &RepoId,
+        title: &str,
+        body: &str,
+        label_names: &[String],
+    ) -> Result<CreatedIssue, GitHubError> {
+        let url = format!(
+            "https://api.github.com/repos/{}/{}/issues",
+            repo.owner, repo.name
+        );
+        let response = self
+            .client
+            .post(&url)
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .header(ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", API_VERSION)
+            .json(&serde_json::json!({
+                "title": title,
+                "body": body,
+                "labels": label_names,
+            }))
+            .send()
+            .map_err(|_| GitHubError::Unavailable)?;
+
+        match response.status().as_u16() {
+            201 => {}
+            401 | 403 => return Err(GitHubError::InvalidCredentials),
+            _ => return Err(GitHubError::Unavailable),
+        }
+
+        let issue: IssueResponse = response.json().map_err(|_| GitHubError::Unavailable)?;
+        Ok(CreatedIssue {
+            number: issue.number,
+            html_url: issue.html_url,
+            title: issue.title,
+            body: issue.body.unwrap_or_default(),
+            label_names: issue.labels.into_iter().map(|l| l.name).collect(),
+            updated_at: issue.updated_at,
         })
     }
 }
