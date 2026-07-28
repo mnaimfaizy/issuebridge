@@ -1,0 +1,52 @@
+# Official Windows NSIS release build (v0.1).
+# Injects GitHub App credentials at compile time; never commit secrets.
+#
+# Repository secrets (Settings -> Secrets and variables -> Actions):
+#   ISSUEBRIDGE_GITHUB_CLIENT_ID
+#   ISSUEBRIDGE_GITHUB_CLIENT_SECRET
+
+name: Release Windows NSIS
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-nsis:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Packaging contract
+        run: npm run test:packaging
+
+      - name: Official NSIS release build
+        env:
+          ISSUEBRIDGE_GITHUB_CLIENT_ID: ${{ secrets.ISSUEBRIDGE_GITHUB_CLIENT_ID }}
+          ISSUEBRIDGE_GITHUB_CLIENT_SECRET: ${{ secrets.ISSUEBRIDGE_GITHUB_CLIENT_SECRET }}
+        run: powershell -ExecutionPolicy Bypass -File scripts/release-build.ps1
+
+      - name: Upload setup.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: issuebridge-windows-nsis
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error

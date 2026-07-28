@@ -4,9 +4,14 @@
 
 **Blocked by:** 01 — Tauri shell + application core seam; 08 — Voice PTT (Whisper sidecar) + failure UX
 
-**Status:** ready-for-agent
+**Status:** implemented
 
-- [ ] Release packaging targets NSIS only (`*-setup.exe`) with `installMode: currentUser`.
-- [ ] Installer bundles app + `whisper-cli` sidecar + `ggml-base.bin` so offline PTT works after install without a separate model download.
-- [ ] Official release build path can inject `client_id` + `client_secret` (env/CI); secrets are not committed to the repo.
-- [ ] Documented/verified that MSI is not a v0.1 deliverable; unsigned SmartScreen behavior is accepted for this slice.
+- [x] Release packaging targets NSIS only (`*-setup.exe`) with `installMode: currentUser`.
+- [x] Installer bundles app + `whisper-cli` sidecar + `ggml-base.bin` so offline PTT works after install without a separate model download.
+- [x] Official release build path can inject `client_id` + `client_secret` (env/CI); secrets are not committed to the repo.
+- [x] Documented/verified that MSI is not a v0.1 deliverable; unsigned SmartScreen behavior is accepted for this slice.
+
+**Notes:**
+- Contract tests: `npm run test:packaging` (`scripts/packaging-contract.*`).
+- Local/CI release: `scripts/release-build.ps1` and `.github/workflows/release-windows.yml`.
+- Run `scripts/fetch-whisper-assets.ps1` (or the release script) before packaging so placeholders are replaced with verified upstream artifacts.

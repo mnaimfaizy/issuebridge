@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test:core": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:packaging": "node --test scripts/packaging-contract.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
