@@ -3,10 +3,10 @@ pub mod core;
 
 use adapters::{
     add_testing_set_repo, all_repositories_warning, app_visible_repos, auth_state, build_app_core,
-    complete_testing_set, continue_install, edit_draft, first_run_step, get_draft, last_used_repo,
-    list_inbox, open_app_install, publish_draft, remove_testing_set_repo, save_capture, setup_tray,
-    show_capture, show_capture_window, sign_in_with_github, sign_in_with_pat, sign_out,
-    testing_set, AppState,
+    complete_testing_set, continue_install, edit_draft, first_run_step, get_draft, keep_mine,
+    last_used_repo, list_inbox, open_app_install, publish_draft, remove_testing_set_repo,
+    save_capture, setup_tray, show_capture, show_capture_window, sign_in_with_github,
+    sign_in_with_pat, sign_out, testing_set, update_linked_draft, use_theirs, AppState,
 };
 use std::sync::Mutex;
 use tauri::Manager;
@@ -39,6 +39,9 @@ pub fn run() {
             get_draft,
             edit_draft,
             publish_draft,
+            update_linked_draft,
+            keep_mine,
+            use_theirs,
             last_used_repo,
             show_capture
         ])

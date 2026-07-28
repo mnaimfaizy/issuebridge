@@ -1,5 +1,6 @@
 //! In-memory fakes for core-level tests.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -8,6 +9,10 @@ use super::{
     GitHub, GitHubError, RepoId, SettingsStore, SettingsStoreError, StoredCredentials, TokenStore,
     TokenStoreError, VoiceTranscriber,
 };
+
+fn issue_key(repo: &RepoId, number: u64) -> String {
+    format!("{}/{}/{number}", repo.owner, repo.name)
+}
 
 #[derive(Debug, Clone)]
 pub struct FakeGitHub {
@@ -20,6 +25,10 @@ pub struct FakeGitHub {
     /// Optional override for `create_issue`; when `None`, issues are minted successfully.
     pub create_issue_result: Option<Result<CreatedIssue, GitHubError>>,
     pub next_issue_number: Arc<Mutex<u64>>,
+    /// Stored issues for get/update; shared across clones so tests can mutate `updated_at`.
+    pub issues: Arc<Mutex<HashMap<String, CreatedIssue>>>,
+    /// Bumps on each successful `update_issue` to mint a fresh `updated_at`.
+    pub update_seq: Arc<Mutex<u64>>,
 }
 
 impl Default for FakeGitHub {
@@ -34,6 +43,41 @@ impl Default for FakeGitHub {
             }),
             create_issue_result: None,
             next_issue_number: Arc::new(Mutex::new(0)),
+            issues: Arc::new(Mutex::new(HashMap::new())),
+            update_seq: Arc::new(Mutex::new(0)),
+        }
+    }
+}
+
+impl FakeGitHub {
+    /// Override remote `updated_at` for conflict mismatch tests (shared across core clones).
+    pub fn set_remote_updated_at(&self, repo: &RepoId, number: u64, updated_at: &str) {
+        let key = issue_key(repo, number);
+        if let Ok(mut issues) = self.issues.lock() {
+            if let Some(issue) = issues.get_mut(&key) {
+                issue.updated_at = updated_at.to_string();
+            }
+        }
+    }
+
+    /// Replace remote issue fields (simulates edits on GitHub outside Issuebridge).
+    pub fn set_remote_issue(
+        &self,
+        repo: &RepoId,
+        number: u64,
+        title: &str,
+        body: &str,
+        label_names: &[String],
+        updated_at: &str,
+    ) {
+        let key = issue_key(repo, number);
+        if let Ok(mut issues) = self.issues.lock() {
+            if let Some(issue) = issues.get_mut(&key) {
+                issue.title = title.to_string();
+                issue.body = body.to_string();
+                issue.label_names = label_names.to_vec();
+                issue.updated_at = updated_at.to_string();
+            }
         }
     }
 }
@@ -70,6 +114,13 @@ impl GitHub for FakeGitHub {
         label_names: &[String],
     ) -> Result<CreatedIssue, GitHubError> {
         if let Some(result) = &self.create_issue_result {
+            if let Ok(issue) = result {
+                let mut issues = self
+                    .issues
+                    .lock()
+                    .map_err(|_| GitHubError::Unavailable)?;
+                issues.insert(issue_key(repo, issue.number), issue.clone());
+            }
             return result.clone();
         }
         let mut next = self
@@ -78,7 +129,7 @@ impl GitHub for FakeGitHub {
             .map_err(|_| GitHubError::Unavailable)?;
         *next += 1;
         let number = *next;
-        Ok(CreatedIssue {
+        let issue = CreatedIssue {
             number,
             html_url: format!(
                 "https://github.com/{}/{}/issues/{number}",
@@ -88,7 +139,57 @@ impl GitHub for FakeGitHub {
             body: body.to_string(),
             label_names: label_names.to_vec(),
             updated_at: "2024-01-15T12:00:00Z".into(),
-        })
+        };
+        let mut issues = self
+            .issues
+            .lock()
+            .map_err(|_| GitHubError::Unavailable)?;
+        issues.insert(issue_key(repo, number), issue.clone());
+        Ok(issue)
+    }
+
+    fn get_issue(
+        &self,
+        _token: &str,
+        repo: &RepoId,
+        number: u64,
+    ) -> Result<CreatedIssue, GitHubError> {
+        let issues = self
+            .issues
+            .lock()
+            .map_err(|_| GitHubError::Unavailable)?;
+        issues
+            .get(&issue_key(repo, number))
+            .cloned()
+            .ok_or(GitHubError::Unavailable)
+    }
+
+    fn update_issue(
+        &self,
+        _token: &str,
+        repo: &RepoId,
+        number: u64,
+        title: &str,
+        body: &str,
+        label_names: &[String],
+    ) -> Result<CreatedIssue, GitHubError> {
+        let mut issues = self
+            .issues
+            .lock()
+            .map_err(|_| GitHubError::Unavailable)?;
+        let issue = issues
+            .get_mut(&issue_key(repo, number))
+            .ok_or(GitHubError::Unavailable)?;
+        issue.title = title.to_string();
+        issue.body = body.to_string();
+        issue.label_names = label_names.to_vec();
+        let mut seq = self
+            .update_seq
+            .lock()
+            .map_err(|_| GitHubError::Unavailable)?;
+        *seq += 1;
+        issue.updated_at = format!("2024-01-16T12:{:02}:00Z", *seq);
+        Ok(issue.clone())
     }
 }
 

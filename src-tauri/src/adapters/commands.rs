@@ -16,7 +16,7 @@ use crate::adapters::oauth_loopback::{
 use crate::adapters::app_core::AppCore;
 use crate::core::{
     AuthError, AuthState, CaptureError, CaptureInput, EditDraftInput, FirstRunStep, InboxError,
-    InstallContinueOutcome, InstallError, PublishError, RepoId, TestingSetError,
+    InstallContinueOutcome, InstallError, PublishError, RepoId, TestingSetError, UpdateError,
 };
 
 pub struct AppState {
@@ -410,6 +410,80 @@ pub fn publish_draft(
     Ok(draft_to_dto(draft))
 }
 
+/// Outcome of pushing a linked Draft — success or must-choose conflict (not a transport error).
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum UpdateLinkedOutcomeDto {
+    Updated { draft: DraftDto },
+    Conflict {
+        html_url: Option<String>,
+        issue_number: Option<u64>,
+    },
+}
+
+#[tauri::command]
+pub fn update_linked_draft(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<UpdateLinkedOutcomeDto, String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    match core.update_linked_draft(&id) {
+        Ok(draft) => {
+            drop(core);
+            let _ = app.emit("inbox-changed", ());
+            Ok(UpdateLinkedOutcomeDto::Updated {
+                draft: draft_to_dto(draft),
+            })
+        }
+        Err(UpdateError::Conflict) => {
+            let draft = core
+                .get_draft(&id)
+                .map_err(inbox_error_message)?;
+            Ok(UpdateLinkedOutcomeDto::Conflict {
+                html_url: draft.local_link.as_ref().map(|l| l.html_url.clone()),
+                issue_number: draft.local_link.as_ref().map(|l| l.number),
+            })
+        }
+        Err(err) => Err(update_error_message(err)),
+    }
+}
+
+#[tauri::command]
+pub fn keep_mine(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<DraftDto, String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    let draft = core.keep_mine(&id).map_err(update_error_message)?;
+    drop(core);
+    let _ = app.emit("inbox-changed", ());
+    Ok(draft_to_dto(draft))
+}
+
+#[tauri::command]
+pub fn use_theirs(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<DraftDto, String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    let draft = core.use_theirs(&id).map_err(update_error_message)?;
+    drop(core);
+    let _ = app.emit("inbox-changed", ());
+    Ok(draft_to_dto(draft))
+}
+
 #[tauri::command]
 pub fn last_used_repo(state: State<'_, AppState>) -> Result<Option<RepoIdDto>, String> {
     let core = state
@@ -462,12 +536,28 @@ fn publish_error_message(err: PublishError) -> String {
         PublishError::NotSignedIn => "Sign in to Publish a Draft.".into(),
         PublishError::TitleRequired => "Add a title before Publish.".into(),
         PublishError::AlreadyLinked => {
-            "This Draft is already linked. Updating the remote issue comes later.".into()
+            "This Draft is already linked. Use Update to send changes to GitHub.".into()
         }
         PublishError::NotFound => "That Draft was not found.".into(),
         PublishError::StorageUnavailable => "Could not save Draft after Publish.".into(),
         PublishError::ProviderUnavailable => {
             "Could not create the GitHub issue. Try again.".into()
+        }
+    }
+}
+
+fn update_error_message(err: UpdateError) -> String {
+    match err {
+        UpdateError::NotSignedIn => "Sign in to update a linked Draft.".into(),
+        UpdateError::NotFound => "That Draft was not found.".into(),
+        UpdateError::NotLinked => "Link this Draft with Publish before updating.".into(),
+        UpdateError::TitleRequired => "Add a title before Update.".into(),
+        UpdateError::Conflict => {
+            "This issue changed on GitHub since you last updated it.".into()
+        }
+        UpdateError::StorageUnavailable => "Could not save Draft after update.".into(),
+        UpdateError::ProviderUnavailable => {
+            "Could not update the GitHub issue. Try again.".into()
         }
     }
 }

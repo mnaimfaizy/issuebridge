@@ -182,6 +182,9 @@
                 <button type="button" id="publish-draft" class="btn primary">
                   Publish
                 </button>
+                <button type="button" id="update-draft" class="btn primary" hidden>
+                  Update
+                </button>
               </div>
               <p id="editor-link" class="editor-link" hidden></p>
             </section>
@@ -190,6 +193,40 @@
       </section>
 
       <p id="status" class="status" hidden></p>
+
+      <div
+        id="conflict-modal"
+        class="conflict-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="conflict-title"
+        hidden
+      >
+        <div class="conflict-panel">
+          <h2 id="conflict-title" class="conflict-title">Conflict</h2>
+          <p id="conflict-copy" class="conflict-copy">
+            This issue changed on GitHub since you last updated it. Keep your
+            local edits, or use the GitHub version.
+          </p>
+          <div class="conflict-actions">
+            <button type="button" id="conflict-keep-mine" class="btn primary">
+              Keep mine
+            </button>
+            <button type="button" id="conflict-use-theirs" class="btn primary">
+              Use theirs
+            </button>
+          </div>
+          <p class="conflict-secondary">
+            <a
+              id="conflict-view-github"
+              href="#"
+              target="_blank"
+              rel="noopener noreferrer"
+              >View on GitHub</a
+            >
+          </p>
+        </div>
+      </div>
     </main>
   </body>
 </html>

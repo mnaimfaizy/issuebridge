@@ -5,7 +5,7 @@ mod error;
 mod ports;
 
 pub use error::{
-    AuthError, CaptureError, InboxError, InstallError, PublishError, TestingSetError,
+    AuthError, CaptureError, InboxError, InstallError, PublishError, TestingSetError, UpdateError,
 };
 pub use ports::{
     AppInstallSnapshot, AppSettings, CaptureInput, Clock, CreatedIssue, Draft, DraftStore,
@@ -434,6 +434,119 @@ where
         Ok(draft)
     }
 
+    /// Push working fields for a linked Draft when remote `updated_at` still matches the snapshot.
+    pub fn update_linked_draft(&mut self, id: &str) -> Result<Draft, UpdateError> {
+        let (credentials, mut draft, number) = self.load_linked_for_update(id)?;
+        if draft.title.trim().is_empty() {
+            return Err(UpdateError::TitleRequired);
+        }
+
+        let remote = self
+            .github
+            .get_issue(&credentials.access_token, &draft.repo, number)
+            .map_err(map_update_github_error)?;
+
+        let snapshot = draft
+            .remote_snapshot
+            .as_ref()
+            .ok_or(UpdateError::NotLinked)?;
+        if remote.updated_at != snapshot.updated_at {
+            return Err(UpdateError::Conflict);
+        }
+
+        let updated = self
+            .github
+            .update_issue(
+                &credentials.access_token,
+                &draft.repo,
+                number,
+                draft.title.trim(),
+                &draft.body,
+                &draft.label_names,
+            )
+            .map_err(map_update_github_error)?;
+
+        apply_remote_issue_to_draft(&mut draft, &updated, self.clock.now());
+        self.draft_store
+            .save(draft.clone())
+            .map_err(|_| UpdateError::StorageUnavailable)?;
+        Ok(draft)
+    }
+
+    /// Conflict resolution: PATCH local working fields to GitHub and refresh the Remote snapshot.
+    pub fn keep_mine(&mut self, id: &str) -> Result<Draft, UpdateError> {
+        let (credentials, mut draft, number) = self.load_linked_for_update(id)?;
+        if draft.title.trim().is_empty() {
+            return Err(UpdateError::TitleRequired);
+        }
+
+        let updated = self
+            .github
+            .update_issue(
+                &credentials.access_token,
+                &draft.repo,
+                number,
+                draft.title.trim(),
+                &draft.body,
+                &draft.label_names,
+            )
+            .map_err(map_update_github_error)?;
+
+        apply_remote_issue_to_draft(&mut draft, &updated, self.clock.now());
+        self.draft_store
+            .save(draft.clone())
+            .map_err(|_| UpdateError::StorageUnavailable)?;
+        Ok(draft)
+    }
+
+    /// Conflict resolution: replace local working fields from a fresh GET and refresh the snapshot.
+    pub fn use_theirs(&mut self, id: &str) -> Result<Draft, UpdateError> {
+        let (credentials, mut draft, number) = self.load_linked_for_update(id)?;
+        let remote = self
+            .github
+            .get_issue(&credentials.access_token, &draft.repo, number)
+            .map_err(map_update_github_error)?;
+
+        apply_remote_issue_to_draft(&mut draft, &remote, self.clock.now());
+        self.draft_store
+            .save(draft.clone())
+            .map_err(|_| UpdateError::StorageUnavailable)?;
+        Ok(draft)
+    }
+
+    fn load_linked_for_update(
+        &self,
+        id: &str,
+    ) -> Result<(StoredCredentials, Draft, u64), UpdateError> {
+        if self.auth_state() != AuthState::SignedIn {
+            return Err(UpdateError::NotSignedIn);
+        }
+
+        let credentials = self
+            .token_store
+            .load()
+            .map_err(|_| UpdateError::StorageUnavailable)?
+            .ok_or(UpdateError::NotSignedIn)?;
+
+        let draft = self
+            .draft_store
+            .get(id)
+            .map_err(|_| UpdateError::StorageUnavailable)?
+            .ok_or(UpdateError::NotFound)?;
+
+        let number = draft
+            .local_link
+            .as_ref()
+            .map(|l| l.number)
+            .ok_or(UpdateError::NotLinked)?;
+
+        if draft.remote_snapshot.is_none() {
+            return Err(UpdateError::NotLinked);
+        }
+
+        Ok((credentials, draft, number))
+    }
+
     pub fn last_used_repo(&self) -> Option<RepoId> {
         self.settings_store
             .load()
@@ -483,6 +596,27 @@ fn map_github_error(err: GitHubError) -> AuthError {
         GitHubError::InvalidCredentials => AuthError::InvalidCredentials,
         GitHubError::Unavailable => AuthError::ProviderUnavailable,
     }
+}
+
+fn map_update_github_error(err: GitHubError) -> UpdateError {
+    match err {
+        GitHubError::InvalidCredentials | GitHubError::Unavailable => {
+            UpdateError::ProviderUnavailable
+        }
+    }
+}
+
+fn apply_remote_issue_to_draft(draft: &mut Draft, issue: &CreatedIssue, now: std::time::SystemTime) {
+    draft.title = issue.title.clone();
+    draft.body = issue.body.clone();
+    draft.label_names = issue.label_names.clone();
+    draft.remote_snapshot = Some(RemoteSnapshot {
+        title: issue.title.clone(),
+        body: issue.body.clone(),
+        label_names: issue.label_names.clone(),
+        updated_at: issue.updated_at.clone(),
+    });
+    draft.updated_at = now;
 }
 
 #[cfg(test)]
@@ -883,17 +1017,25 @@ mod tests {
         assert_eq!(settings.snapshot().testing_set, vec![repo("acme", "widgets")]);
     }
 
+    fn ready_settings() -> FakeSettingsStore {
+        FakeSettingsStore::with_settings(AppSettings {
+            install_completed: true,
+            testing_set_completed: true,
+            testing_set: vec![repo("acme", "widgets")],
+            app_visible_repos: vec![repo("acme", "widgets"), repo("acme", "gadgets")],
+            ..AppSettings::default()
+        })
+    }
+
     fn ready_core() -> TestCore {
-        signed_in_core(
-            FakeGitHub::default(),
-            FakeSettingsStore::with_settings(AppSettings {
-                install_completed: true,
-                testing_set_completed: true,
-                testing_set: vec![repo("acme", "widgets")],
-                app_visible_repos: vec![repo("acme", "widgets"), repo("acme", "gadgets")],
-                ..AppSettings::default()
-            }),
-        )
+        signed_in_core(FakeGitHub::default(), ready_settings())
+    }
+
+    /// Ready core plus a shared FakeGitHub handle for controlling remote `updated_at`.
+    fn ready_core_with_github() -> (TestCore, FakeGitHub) {
+        let github = FakeGitHub::default();
+        let handle = github.clone();
+        (signed_in_core(github, ready_settings()), handle)
     }
 
     #[test]
@@ -1118,5 +1260,163 @@ mod tests {
         let inbox = core.list_inbox().expect("inbox");
         assert!(inbox[0].linked);
         assert!(!inbox[0].dirty);
+    }
+
+    #[test]
+    fn updating_linked_draft_when_snapshot_matches_refreshes_remote_snapshot() {
+        let (mut core, _github) = ready_core_with_github();
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "Original".into(),
+                body: "Body".into(),
+            })
+            .expect("capture");
+        core.publish_draft(&saved.id).expect("Publish");
+
+        core.edit_draft(EditDraftInput {
+            id: saved.id.clone(),
+            title: "Updated title".into(),
+            body: "Updated body".into(),
+            label_names: vec!["bug".into()],
+        })
+        .expect("edit");
+
+        let inbox = core.list_inbox().expect("inbox");
+        assert!(inbox[0].dirty);
+
+        let updated = core
+            .update_linked_draft(&saved.id)
+            .expect("matched update should succeed");
+
+        let snapshot = updated.remote_snapshot.as_ref().expect("Remote snapshot");
+        assert_eq!(snapshot.title, "Updated title");
+        assert_eq!(snapshot.body, "Updated body");
+        assert_eq!(snapshot.label_names, vec!["bug".to_string()]);
+        assert_eq!(snapshot.updated_at, "2024-01-16T12:01:00Z");
+        assert!(!updated.is_dirty());
+
+        let inbox = core.list_inbox().expect("inbox");
+        assert!(inbox[0].linked);
+        assert!(!inbox[0].dirty);
+    }
+
+    #[test]
+    fn updating_linked_draft_when_remote_updated_at_mismatches_is_conflict() {
+        let (mut core, github) = ready_core_with_github();
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "Original".into(),
+                body: "Body".into(),
+            })
+            .expect("capture");
+        core.publish_draft(&saved.id).expect("Publish");
+
+        core.edit_draft(EditDraftInput {
+            id: saved.id.clone(),
+            title: "Local edit".into(),
+            body: "Body".into(),
+            label_names: Vec::new(),
+        })
+        .expect("edit");
+
+        github.set_remote_updated_at(&repo("acme", "widgets"), 1, "2024-01-20T09:00:00Z");
+
+        let err = core
+            .update_linked_draft(&saved.id)
+            .expect_err("mismatch must surface Conflict");
+        assert_eq!(err, UpdateError::Conflict);
+
+        // Working fields stay as local edits; Dirty remains.
+        let loaded = core.get_draft(&saved.id).expect("get");
+        assert_eq!(loaded.title, "Local edit");
+        assert!(loaded.is_dirty());
+        assert_eq!(
+            loaded.remote_snapshot.expect("snapshot").updated_at,
+            "2024-01-15T12:00:00Z"
+        );
+    }
+
+    #[test]
+    fn keep_mine_patches_working_fields_and_refreshes_snapshot() {
+        let (mut core, github) = ready_core_with_github();
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "Original".into(),
+                body: "Body".into(),
+            })
+            .expect("capture");
+        core.publish_draft(&saved.id).expect("Publish");
+
+        core.edit_draft(EditDraftInput {
+            id: saved.id.clone(),
+            title: "Keep this".into(),
+            body: "Mine".into(),
+            label_names: vec!["ui".into()],
+        })
+        .expect("edit");
+
+        github.set_remote_updated_at(&repo("acme", "widgets"), 1, "2024-01-20T09:00:00Z");
+        assert_eq!(
+            core.update_linked_draft(&saved.id).expect_err("conflict"),
+            UpdateError::Conflict
+        );
+
+        let resolved = core.keep_mine(&saved.id).expect("Keep mine");
+        assert_eq!(resolved.title, "Keep this");
+        assert_eq!(resolved.body, "Mine");
+        assert_eq!(resolved.label_names, vec!["ui".to_string()]);
+        let snapshot = resolved.remote_snapshot.as_ref().expect("snapshot");
+        assert_eq!(snapshot.title, "Keep this");
+        assert_eq!(snapshot.body, "Mine");
+        assert_eq!(snapshot.label_names, vec!["ui".to_string()]);
+        assert_eq!(snapshot.updated_at, "2024-01-16T12:01:00Z");
+        assert!(!resolved.is_dirty());
+    }
+
+    #[test]
+    fn use_theirs_replaces_local_fields_from_remote_and_refreshes_snapshot() {
+        let (mut core, github) = ready_core_with_github();
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "Original".into(),
+                body: "Body".into(),
+            })
+            .expect("capture");
+        core.publish_draft(&saved.id).expect("Publish");
+
+        github.set_remote_issue(
+            &repo("acme", "widgets"),
+            1,
+            "Theirs title",
+            "Theirs body",
+            &["remote".into()],
+            "2024-01-20T09:00:00Z",
+        );
+
+        core.edit_draft(EditDraftInput {
+            id: saved.id.clone(),
+            title: "Local only".into(),
+            body: "Will be discarded".into(),
+            label_names: vec!["local".into()],
+        })
+        .expect("edit");
+
+        assert_eq!(
+            core.update_linked_draft(&saved.id).expect_err("conflict"),
+            UpdateError::Conflict
+        );
+
+        let resolved = core.use_theirs(&saved.id).expect("Use theirs");
+        assert_eq!(resolved.title, "Theirs title");
+        assert_eq!(resolved.body, "Theirs body");
+        assert_eq!(resolved.label_names, vec!["remote".to_string()]);
+        let snapshot = resolved.remote_snapshot.as_ref().expect("snapshot");
+        assert_eq!(snapshot.title, "Theirs title");
+        assert_eq!(snapshot.updated_at, "2024-01-20T09:00:00Z");
+        assert!(!resolved.is_dirty());
     }
 }

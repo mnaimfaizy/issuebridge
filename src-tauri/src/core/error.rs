@@ -30,6 +30,19 @@ pub enum PublishError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+pub enum UpdateError {
+    NotSignedIn,
+    NotFound,
+    NotLinked,
+    TitleRequired,
+    /// Remote `updated_at` no longer matches the Remote snapshot — caller must resolve.
+    Conflict,
+    StorageUnavailable,
+    ProviderUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AuthError {
     EmptyToken,
     InvalidCredentials,

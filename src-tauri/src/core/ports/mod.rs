@@ -30,7 +30,7 @@ pub struct LocalLink {
 }
 
 /// Last-known remote title, body, labels, and `updated_at` after Publish or remote update.
-/// `updated_at` is GitHub’s ISO-8601 string (exact value used for conflict compare later).
+/// `updated_at` is GitHub’s ISO-8601 string (exact value used for conflict compare).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteSnapshot {
     pub title: String,
@@ -166,6 +166,25 @@ pub trait GitHub: Send + Sync {
         &self,
         token: &str,
         repo: &RepoId,
+        title: &str,
+        body: &str,
+        label_names: &[String],
+    ) -> Result<CreatedIssue, GitHubError>;
+
+    /// GET a GitHub issue by number (for conflict compare and Use theirs).
+    fn get_issue(
+        &self,
+        token: &str,
+        repo: &RepoId,
+        number: u64,
+    ) -> Result<CreatedIssue, GitHubError>;
+
+    /// PATCH a GitHub issue’s title, body, and labels (linked update / Keep mine).
+    fn update_issue(
+        &self,
+        token: &str,
+        repo: &RepoId,
+        number: u64,
         title: &str,
         body: &str,
         label_names: &[String],

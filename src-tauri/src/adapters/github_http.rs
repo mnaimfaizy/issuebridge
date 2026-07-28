@@ -243,14 +243,84 @@ impl GitHub for HttpGitHub {
         }
 
         let issue: IssueResponse = response.json().map_err(|_| GitHubError::Unavailable)?;
-        Ok(CreatedIssue {
-            number: issue.number,
-            html_url: issue.html_url,
-            title: issue.title,
-            body: issue.body.unwrap_or_default(),
-            label_names: issue.labels.into_iter().map(|l| l.name).collect(),
-            updated_at: issue.updated_at,
-        })
+        Ok(issue_from_response(issue))
+    }
+
+    fn get_issue(
+        &self,
+        token: &str,
+        repo: &RepoId,
+        number: u64,
+    ) -> Result<CreatedIssue, GitHubError> {
+        let url = format!(
+            "https://api.github.com/repos/{}/{}/issues/{number}",
+            repo.owner, repo.name
+        );
+        let response = self
+            .client
+            .get(&url)
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .header(ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", API_VERSION)
+            .send()
+            .map_err(|_| GitHubError::Unavailable)?;
+
+        match response.status().as_u16() {
+            200 => {}
+            401 | 403 => return Err(GitHubError::InvalidCredentials),
+            _ => return Err(GitHubError::Unavailable),
+        }
+
+        let issue: IssueResponse = response.json().map_err(|_| GitHubError::Unavailable)?;
+        Ok(issue_from_response(issue))
+    }
+
+    fn update_issue(
+        &self,
+        token: &str,
+        repo: &RepoId,
+        number: u64,
+        title: &str,
+        body: &str,
+        label_names: &[String],
+    ) -> Result<CreatedIssue, GitHubError> {
+        let url = format!(
+            "https://api.github.com/repos/{}/{}/issues/{number}",
+            repo.owner, repo.name
+        );
+        let response = self
+            .client
+            .patch(&url)
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .header(ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", API_VERSION)
+            .json(&serde_json::json!({
+                "title": title,
+                "body": body,
+                "labels": label_names,
+            }))
+            .send()
+            .map_err(|_| GitHubError::Unavailable)?;
+
+        match response.status().as_u16() {
+            200 => {}
+            401 | 403 => return Err(GitHubError::InvalidCredentials),
+            _ => return Err(GitHubError::Unavailable),
+        }
+
+        let issue: IssueResponse = response.json().map_err(|_| GitHubError::Unavailable)?;
+        Ok(issue_from_response(issue))
+    }
+}
+
+fn issue_from_response(issue: IssueResponse) -> CreatedIssue {
+    CreatedIssue {
+        number: issue.number,
+        html_url: issue.html_url,
+        title: issue.title,
+        body: issue.body.unwrap_or_default(),
+        label_names: issue.labels.into_iter().map(|l| l.name).collect(),
+        updated_at: issue.updated_at,
     }
 }
 

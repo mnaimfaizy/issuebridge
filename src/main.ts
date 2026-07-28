@@ -33,6 +33,10 @@ type DraftDto = {
   html_url: string | null;
 };
 
+type UpdateLinkedOutcomeDto =
+  | { kind: "updated"; draft: DraftDto }
+  | { kind: "conflict"; html_url: string | null; issue_number: number | null };
+
 let visibleRepos: RepoIdDto[] = [];
 let selectedRepos: RepoIdDto[] = [];
 let selectedDraftId: string | null = null;
@@ -75,6 +79,27 @@ window.addEventListener("DOMContentLoaded", () => {
   document
     .querySelector("#publish-draft")
     ?.addEventListener("click", () => void runPublishDraft());
+  document
+    .querySelector("#update-draft")
+    ?.addEventListener("click", () => void runUpdateDraft());
+  document
+    .querySelector("#conflict-keep-mine")
+    ?.addEventListener("click", () => void runKeepMine());
+  document
+    .querySelector("#conflict-use-theirs")
+    ?.addEventListener("click", () => void runUseTheirs());
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      const modal = document.querySelector<HTMLElement>("#conflict-modal");
+      if (!modal || modal.hidden) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    },
+    true,
+  );
 
   window.addEventListener("focus", () => {
     void refreshInboxIfReady();
@@ -236,6 +261,7 @@ function fillEditor(draft: DraftDto) {
   const labels = document.querySelector<HTMLInputElement>("#editor-labels");
   const link = document.querySelector<HTMLElement>("#editor-link");
   const publish = document.querySelector<HTMLButtonElement>("#publish-draft");
+  const update = document.querySelector<HTMLButtonElement>("#update-draft");
   if (!editor || !title || !body || !labels) return;
 
   editor.hidden = false;
@@ -249,10 +275,17 @@ function fillEditor(draft: DraftDto) {
   body.value = draft.body;
   labels.value = draft.label_names.join(", ");
   if (publish) publish.hidden = draft.linked;
+  if (update) update.hidden = !draft.linked;
   if (link) {
     if (draft.html_url && draft.issue_number != null) {
       link.hidden = false;
-      link.textContent = `GitHub #${draft.issue_number}: ${draft.html_url}`;
+      link.innerHTML = "";
+      const anchor = document.createElement("a");
+      anchor.href = draft.html_url;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      anchor.textContent = `GitHub #${draft.issue_number}`;
+      link.append(anchor);
     } else {
       link.hidden = true;
       link.textContent = "";
@@ -318,6 +351,100 @@ async function runPublishDraft() {
   } catch (error) {
     showStatus(String(error));
     await loadInbox();
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function runUpdateDraft() {
+  if (!selectedDraftId) return;
+  const form = readEditorForm();
+  setBusy(true);
+  try {
+    await invoke<DraftDto>("edit_draft", {
+      input: {
+        id: selectedDraftId,
+        ...form,
+      },
+    });
+    const outcome = await invoke<UpdateLinkedOutcomeDto>("update_linked_draft", {
+      id: selectedDraftId,
+    });
+    if (outcome.kind === "conflict") {
+      openConflictModal(outcome.html_url);
+      return;
+    }
+    fillEditor(outcome.draft);
+    await loadInbox();
+    clearStatus();
+  } catch (error) {
+    showStatus(String(error));
+    await loadInbox();
+  } finally {
+    setBusy(false);
+  }
+}
+
+function setBackgroundInert(inert: boolean) {
+  for (const selector of ["#sign-in", "#install-app", "#testing-set", "#ready", "#status"]) {
+    const el = document.querySelector<HTMLElement>(selector);
+    if (el) el.inert = inert;
+  }
+}
+
+function openConflictModal(htmlUrl: string | null) {
+  const modal = document.querySelector<HTMLElement>("#conflict-modal");
+  const view = document.querySelector<HTMLAnchorElement>("#conflict-view-github");
+  if (!modal) return;
+  if (view) {
+    if (htmlUrl) {
+      view.href = htmlUrl;
+      view.hidden = false;
+    } else {
+      view.removeAttribute("href");
+      view.hidden = true;
+    }
+  }
+  setBackgroundInert(true);
+  modal.hidden = false;
+  document
+    .querySelector<HTMLButtonElement>("#conflict-keep-mine")
+    ?.focus();
+}
+
+function closeConflictModal() {
+  const modal = document.querySelector<HTMLElement>("#conflict-modal");
+  if (modal) modal.hidden = true;
+  setBackgroundInert(false);
+}
+
+async function runKeepMine() {
+  if (!selectedDraftId) return;
+  setBusy(true);
+  try {
+    const draft = await invoke<DraftDto>("keep_mine", { id: selectedDraftId });
+    closeConflictModal();
+    fillEditor(draft);
+    await loadInbox();
+    clearStatus();
+  } catch (error) {
+    showStatus(String(error));
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function runUseTheirs() {
+  if (!selectedDraftId) return;
+  setBusy(true);
+  try {
+    const draft = await invoke<DraftDto>("use_theirs", { id: selectedDraftId });
+    closeConflictModal();
+    fillEditor(draft);
+    await loadInbox();
+    clearStatus();
+  } catch (error) {
+    showStatus(String(error));
   } finally {
     setBusy(false);
   }
@@ -571,6 +698,9 @@ function setBusy(busy: boolean) {
     "empty-capture",
     "save-draft",
     "publish-draft",
+    "update-draft",
+    "conflict-keep-mine",
+    "conflict-use-theirs",
   ];
   for (const id of ids) {
     const button = document.querySelector<HTMLButtonElement>(`#${id}`);
