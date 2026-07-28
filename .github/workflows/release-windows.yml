@@ -44,9 +44,21 @@ jobs:
           ISSUEBRIDGE_GITHUB_CLIENT_SECRET: ${{ secrets.ISSUEBRIDGE_GITHUB_CLIENT_SECRET }}
         run: powershell -ExecutionPolicy Bypass -File scripts/release-build.ps1
 
-      - name: Upload setup.exe
+      - name: Upload setup.exe (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
           name: issuebridge-windows-nsis
           path: src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
+
+      # Attach installer to the GitHub Release for tag pushes so users get a
+      # stable /releases/download/.../*.exe URL (Actions artifacts are not that).
+      - name: Attach setup.exe to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src-tauri/target/release/bundle/nsis/*-setup.exe
+          fail_on_unmatched_files: true
+          # Tags with a SemVer pre-release suffix (e.g. v0.1.0-rc.1) are prereleases.
+          # Omit body/name so an existing Release (from the release skill) keeps its notes.
+          prerelease: ${{ contains(github.ref_name, '-') }}

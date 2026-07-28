@@ -101,8 +101,8 @@ Update in one working tree (do not commit unless asked):
 
    - Commit (use `commit` skill; often `chore: prepare release X.Y.Z` or `build: …`)
    - Annotated tag: `vX.Y.Z` or `vX.Y.Z-alpha.N` etc.
-   - Push the tag to trigger `.github/workflows/release-windows.yml`
-   - For beta/rc/stable: create/update the GitHub Release (mark pre-release for alpha/beta/rc) with the same notes and the NSIS artifact from CI
+   - Push the tag to trigger `.github/workflows/release-windows.yml` (CI attaches `*-setup.exe` to the GitHub Release automatically on tag pushes)
+   - For beta/rc/stable: create/update the GitHub Release (mark pre-release for alpha/beta/rc) with the same notes before or after the tag; CI uploads the installer asset either way
 
 Alpha may be tag + artifact only (notes optional), per `CONTEXT.md`.
 
