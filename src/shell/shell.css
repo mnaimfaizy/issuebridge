@@ -1,0 +1,199 @@
+.ib-shell {
+  --ib-shell: var(--colorNeutralBackground2);
+  --ib-content: var(--colorNeutralBackground1);
+  --ib-border: var(--colorNeutralStroke2);
+  --ib-muted: var(--colorNeutralForeground3);
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  width: 100vw;
+  height: 100vh;
+  min-width: 620px;
+  min-height: 440px;
+  overflow: hidden;
+  color: var(--colorNeutralForeground1);
+  background: var(--ib-shell);
+  font-family: "Segoe UI", "Segoe UI Variable", sans-serif;
+}
+
+.ib-sidebar {
+  z-index: 4;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 8px 8px;
+  border-right: 1px solid var(--ib-border);
+  background: var(--ib-shell);
+  box-sizing: border-box;
+}
+
+.ib-brand {
+  display: flex;
+  height: 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 12px;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.ib-brand-mark {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  place-items: center;
+  border-radius: var(--borderRadiusMedium, 4px);
+  color: var(--colorNeutralForegroundOnBrand);
+  background: var(--colorBrandBackground);
+  font-size: 9px;
+  letter-spacing: -0.2px;
+}
+
+.ib-nav-primary {
+  flex: 1;
+}
+
+.ib-nav-bottom {
+  display: grid;
+  gap: 4px;
+}
+
+.ib-nav-item {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--borderRadiusMedium, 4px);
+  color: var(--colorNeutralForeground2);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.ib-nav-item > svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+
+.ib-nav-item:hover {
+  background: var(--colorNeutralBackground1Hover);
+}
+
+.ib-nav-item.active {
+  color: var(--colorNeutralForeground1);
+  background: var(--colorNeutralBackground1Selected);
+  font-weight: 600;
+}
+
+.ib-nav-item.active::before {
+  position: absolute;
+  left: 0;
+  width: 3px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--colorBrandBackground);
+  content: "";
+}
+
+.ib-account {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 8px;
+  border-top: 1px solid var(--ib-border);
+}
+
+.ib-account-cue {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.ib-account-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.ib-account-copy strong,
+.ib-account-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ib-account-copy small {
+  margin-top: 2px;
+  color: var(--ib-muted);
+  font-size: 11px;
+}
+
+.ib-content {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--ib-content);
+}
+
+.ib-legacy-host {
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+.ib-legacy-host[hidden] {
+  display: none !important;
+}
+
+.ib-destination {
+  display: grid;
+  gap: 16px;
+  max-width: 40rem;
+  padding: 24px 28px;
+  box-sizing: border-box;
+}
+
+.ib-destination-header {
+  display: grid;
+  gap: 8px;
+}
+
+.ib-settings-block {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--ib-border);
+  border-radius: var(--borderRadiusLarge, 8px);
+  background: var(--ib-shell);
+}
+
+@media (max-width: 720px) {
+  .ib-shell {
+    grid-template-columns: 64px minmax(0, 1fr);
+    min-width: 0;
+  }
+
+  .ib-brand span:not(.ib-brand-mark),
+  .ib-nav-item > span,
+  .ib-account-copy {
+    display: none;
+  }
+
+  .ib-nav-item {
+    justify-content: center;
+    padding-inline: 8px;
+  }
+}

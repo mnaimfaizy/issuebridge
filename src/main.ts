@@ -46,7 +46,19 @@ let visibleRepos: RepoIdDto[] = [];
 let selectedRepos: RepoIdDto[] = [];
 let selectedDraftId: string | null = null;
 
-window.addEventListener("DOMContentLoaded", () => {
+/** Bind vanilla Inbox / first-run / conflict UI after the shell mounts it. */
+export async function bootMainUi() {
+  const bindAnchor = document.querySelector<HTMLElement>("#sign-in-github");
+  if (!bindAnchor) {
+    console.error("[issuebridge] legacy workspace not in DOM yet");
+    return;
+  }
+  if (bindAnchor.dataset.ibBound === "1") {
+    await refreshAppState();
+    return;
+  }
+  bindAnchor.dataset.ibBound = "1";
+
   document
     .querySelector("#sign-in-github")
     ?.addEventListener("click", () => void runSignInWithGithub());
@@ -130,8 +142,13 @@ window.addEventListener("DOMContentLoaded", () => {
     void refreshAppState();
   });
 
-  void refreshAppState();
-});
+  await refreshAppState();
+}
+
+/** Re-read auth / first-run and refresh vanilla surfaces (shell account sync). */
+export async function refreshMainUi() {
+  await refreshAppState();
+}
 
 async function refreshInboxIfReady() {
   try {
@@ -151,6 +168,9 @@ async function refreshAppState() {
     console.info("[issuebridge] refreshAppState", { auth, step });
     await applyStepUi(auth, step);
     clearStatus();
+    window.dispatchEvent(
+      new CustomEvent("issuebridge:app-state", { detail: { auth, step } }),
+    );
   } catch (error) {
     console.error("[issuebridge] refreshAppState failed", error);
     const el = document.querySelector("#auth-state");

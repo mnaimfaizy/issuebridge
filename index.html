@@ -5,255 +5,269 @@
     <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Issuebridge</title>
-    <script type="module" src="/src/main.ts" defer></script>
+    <script type="module" src="/src/main.tsx"></script>
   </head>
 
   <body>
-    <main class="shell">
-      <h1>Issuebridge</h1>
-      <p class="lede">
-        Capture GitHub issues while testing. Use the tray to show or hide this
-        window.
-      </p>
+    <div id="root"></div>
 
-      <section
-        id="sign-in-step"
-        class="auth"
-        aria-labelledby="auth-heading"
-        hidden
-      >
-        <h2 id="auth-heading" class="section-title">Sign in</h2>
-        <p class="step-copy">
-          Sign in so Issuebridge can create and update issues as you.
-        </p>
-        <p>
-          Auth:
-          <span id="auth-state">loading…</span>
-        </p>
-
-        <div id="signed-out-actions" class="actions" hidden>
-          <button type="button" id="sign-in-github" class="btn primary">
-            Sign in with GitHub
-          </button>
-          <details class="pat-details">
-            <summary>Use a personal access token</summary>
-            <form id="pat-form" class="pat-form">
-              <label for="pat-input">Personal access token</label>
-              <input
-                id="pat-input"
-                name="token"
-                type="password"
-                autocomplete="off"
-                spellcheck="false"
-                placeholder="ghp_…"
-              />
-              <button type="submit" class="btn">Sign in with PAT</button>
-            </form>
-          </details>
-          <p id="auth-status" class="status" hidden></p>
-        </div>
-      </section>
-
-      <section
-        id="install-step"
-        class="step"
-        aria-labelledby="install-heading"
-        hidden
-      >
-        <h2 id="install-heading" class="section-title">Install App</h2>
-        <p class="step-copy">
-          Install the Issuebridge GitHub App on
-          <strong>selected repositories</strong> you plan to capture against —
-          not every repo in the org. If it is already installed, skip re-install
-          and click Continue.
-        </p>
-        <div class="actions">
-          <button type="button" id="open-install" class="btn primary">
-            Install on GitHub
-          </button>
-          <button type="button" id="continue-install" class="btn">
-            Continue
-          </button>
-        </div>
-        <p id="install-hint" class="gate-note" hidden></p>
-        <div class="actions secondary">
-          <button type="button" id="sign-out-install" class="btn">
-            Sign out
-          </button>
-        </div>
-      </section>
-
-      <section
-        id="testing-set-step"
-        class="step"
-        aria-labelledby="testing-set-heading"
-        hidden
-      >
-        <h2 id="testing-set-heading" class="section-title">Testing set</h2>
-        <p class="step-copy">
-          Pick 1–3 App-visible repos. These become fast chips when you capture.
-        </p>
-        <p id="testing-warning" class="soft-warning" hidden></p>
-        <label class="filter-label" for="repo-filter">Search repositories</label>
-        <input
-          id="repo-filter"
-          type="search"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="owner/name"
-        />
-        <ul id="repo-results" class="repo-list" aria-label="App-visible repositories"></ul>
-        <div id="testing-chips" class="chips" aria-label="Testing set"></div>
-        <div class="actions">
-          <button type="button" id="complete-testing-set" class="btn primary">
-            Continue
-          </button>
-        </div>
-        <div class="actions secondary">
-          <button type="button" id="sign-out-testing" class="btn">
-            Sign out
-          </button>
-        </div>
-      </section>
-
-      <section
-        id="try-capture-step"
-        class="step"
-        aria-labelledby="try-capture-heading"
-        hidden
-      >
-        <h2 id="try-capture-heading" class="section-title">Try capture</h2>
-        <p class="step-copy">
-          Open the real Capture popup and save a Draft (Untitled is fine). Text
-          is enough — voice is optional. Later you can open Capture anytime with
-          <kbd>Ctrl+Alt+Shift+I</kbd>, or skip this step.
-        </p>
-        <div class="actions">
-          <button type="button" id="try-capture" class="btn primary">
-            Try capture
-          </button>
-          <button type="button" id="skip-try-capture" class="btn">Skip</button>
-        </div>
-        <div class="actions secondary">
-          <button type="button" id="sign-out-try-capture" class="btn">
-            Sign out
-          </button>
-        </div>
-      </section>
-
-      <section
-        id="ready-home"
-        class="ready"
-        aria-labelledby="ready-heading"
-        hidden
-      >
-        <div class="ready-header">
+    <template id="legacy-workspace-template">
+      <div class="legacy-workspace">
+        <section
+          id="sign-in-step"
+          class="auth"
+          aria-labelledby="auth-heading"
+          hidden
+        >
+          <h2 id="auth-heading" class="section-title">Sign in</h2>
+          <p class="step-copy">
+            Sign in so Issuebridge can create and update issues as you.
+          </p>
           <p>
             Auth:
-            <span id="auth-state-ready">Signed in</span>
+            <span id="auth-state">loading…</span>
           </p>
-          <button type="button" id="sign-out" class="btn">Sign out</button>
-        </div>
 
-        <section
-          id="inbox-section"
-          class="inbox"
-          aria-labelledby="inbox-heading"
-        >
-          <div class="inbox-header">
-            <h2 id="inbox-heading" class="section-title">Inbox</h2>
-            <button type="button" id="open-capture" class="btn primary">
-              Capture
+          <div id="signed-out-actions" class="actions" hidden>
+            <button type="button" id="sign-in-github" class="btn primary">
+              Sign in with GitHub
             </button>
-          </div>
-          <div id="inbox-empty" class="inbox-empty" hidden>
-            <p class="step-copy">
-              No drafts yet. Capture with the hotkey or start one here.
-            </p>
-            <button type="button" id="empty-capture" class="btn primary">
-              Capture
-            </button>
-          </div>
-          <div class="inbox-layout">
-            <ul id="inbox-list" class="inbox-list" aria-label="Drafts"></ul>
-            <section
-              id="draft-editor"
-              class="draft-editor"
-              aria-labelledby="editor-heading"
-              hidden
-            >
-              <h3 id="editor-heading" class="section-title">Edit Draft</h3>
-              <p id="editor-repo" class="editor-repo"></p>
-              <p id="editor-cues" class="editor-cues"></p>
-              <label class="filter-label" for="editor-title">Title</label>
-              <input
-                id="editor-title"
-                type="text"
-                autocomplete="off"
-                spellcheck="true"
-              />
-              <label class="filter-label" for="editor-body">Body</label>
-              <textarea id="editor-body" rows="8"></textarea>
-              <label class="filter-label" for="editor-labels"
-                >Labels (comma-separated names)</label
-              >
-              <input
-                id="editor-labels"
-                type="text"
-                autocomplete="off"
-                spellcheck="false"
-                placeholder="bug, ui"
-              />
-              <div class="actions">
-                <button type="button" id="save-draft" class="btn">Save</button>
-                <button type="button" id="publish-draft" class="btn primary">
-                  Publish
-                </button>
-                <button type="button" id="update-draft" class="btn primary" hidden>
-                  Update
-                </button>
-              </div>
-              <p id="editor-link" class="editor-link" hidden></p>
-            </section>
+            <details class="pat-details">
+              <summary>Use a personal access token</summary>
+              <form id="pat-form" class="pat-form">
+                <label for="pat-input">Personal access token</label>
+                <input
+                  id="pat-input"
+                  name="token"
+                  type="password"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="ghp_…"
+                />
+                <button type="submit" class="btn">Sign in with PAT</button>
+              </form>
+            </details>
+            <p id="auth-status" class="status" hidden></p>
           </div>
         </section>
-      </section>
 
-      <p id="status" class="status" hidden></p>
-
-      <div
-        id="conflict-modal"
-        class="conflict-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="conflict-title"
-        hidden
-      >
-        <div class="conflict-panel">
-          <h2 id="conflict-title" class="conflict-title">Conflict</h2>
-          <p id="conflict-copy" class="conflict-copy">
-            This issue changed on GitHub since you last updated it. Keep your
-            local edits, or use the GitHub version.
+        <section
+          id="install-step"
+          class="step"
+          aria-labelledby="install-heading"
+          hidden
+        >
+          <h2 id="install-heading" class="section-title">Install App</h2>
+          <p class="step-copy">
+            Install the Issuebridge GitHub App on
+            <strong>selected repositories</strong> you plan to capture against —
+            not every repo in the org. If it is already installed, skip
+            re-install and click Continue.
           </p>
-          <div class="conflict-actions">
-            <button type="button" id="conflict-keep-mine" class="btn primary">
-              Keep mine
+          <div class="actions">
+            <button type="button" id="open-install" class="btn primary">
+              Install on GitHub
             </button>
-            <button type="button" id="conflict-use-theirs" class="btn primary">
-              Use theirs
+            <button type="button" id="continue-install" class="btn">
+              Continue
             </button>
           </div>
-          <p class="conflict-secondary">
-            <a
-              id="conflict-view-github"
-              href="#"
-              target="_blank"
-              rel="noopener noreferrer"
-              >View on GitHub</a
-            >
+          <p id="install-hint" class="gate-note" hidden></p>
+          <div class="actions secondary">
+            <button type="button" id="sign-out-install" class="btn">
+              Sign out
+            </button>
+          </div>
+        </section>
+
+        <section
+          id="testing-set-step"
+          class="step"
+          aria-labelledby="testing-set-heading"
+          hidden
+        >
+          <h2 id="testing-set-heading" class="section-title">Testing set</h2>
+          <p class="step-copy">
+            Pick 1–3 App-visible repos. These become fast chips when you
+            capture.
           </p>
+          <p id="testing-warning" class="soft-warning" hidden></p>
+          <label class="filter-label" for="repo-filter"
+            >Search repositories</label
+          >
+          <input
+            id="repo-filter"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="owner/name"
+          />
+          <ul
+            id="repo-results"
+            class="repo-list"
+            aria-label="App-visible repositories"
+          ></ul>
+          <div id="testing-chips" class="chips" aria-label="Testing set"></div>
+          <div class="actions">
+            <button type="button" id="complete-testing-set" class="btn primary">
+              Continue
+            </button>
+          </div>
+          <div class="actions secondary">
+            <button type="button" id="sign-out-testing" class="btn">
+              Sign out
+            </button>
+          </div>
+        </section>
+
+        <section
+          id="try-capture-step"
+          class="step"
+          aria-labelledby="try-capture-heading"
+          hidden
+        >
+          <h2 id="try-capture-heading" class="section-title">Try capture</h2>
+          <p class="step-copy">
+            Open the real Capture popup and save a Draft (Untitled is fine).
+            Text is enough — voice is optional. Later you can open Capture
+            anytime with <kbd>Ctrl+Alt+Shift+I</kbd>, or skip this step.
+          </p>
+          <div class="actions">
+            <button type="button" id="try-capture" class="btn primary">
+              Try capture
+            </button>
+            <button type="button" id="skip-try-capture" class="btn">Skip</button>
+          </div>
+          <div class="actions secondary">
+            <button type="button" id="sign-out-try-capture" class="btn">
+              Sign out
+            </button>
+          </div>
+        </section>
+
+        <section
+          id="ready-home"
+          class="ready"
+          aria-labelledby="ready-heading"
+          hidden
+        >
+          <div class="ready-header ready-header-legacy">
+            <p>
+              Auth:
+              <span id="auth-state-ready">Signed in</span>
+            </p>
+            <button type="button" id="sign-out" class="btn">Sign out</button>
+          </div>
+
+          <section
+            id="inbox-section"
+            class="inbox"
+            aria-labelledby="inbox-heading"
+          >
+            <div class="inbox-header">
+              <h2 id="inbox-heading" class="section-title">Inbox</h2>
+              <button type="button" id="open-capture" class="btn primary">
+                Capture
+              </button>
+            </div>
+            <div id="inbox-empty" class="inbox-empty" hidden>
+              <p class="step-copy">
+                No drafts yet. Capture with the hotkey or start one here.
+              </p>
+              <button type="button" id="empty-capture" class="btn primary">
+                Capture
+              </button>
+            </div>
+            <div class="inbox-layout">
+              <ul id="inbox-list" class="inbox-list" aria-label="Drafts"></ul>
+              <section
+                id="draft-editor"
+                class="draft-editor"
+                aria-labelledby="editor-heading"
+                hidden
+              >
+                <h3 id="editor-heading" class="section-title">Edit Draft</h3>
+                <p id="editor-repo" class="editor-repo"></p>
+                <p id="editor-cues" class="editor-cues"></p>
+                <label class="filter-label" for="editor-title">Title</label>
+                <input
+                  id="editor-title"
+                  type="text"
+                  autocomplete="off"
+                  spellcheck="true"
+                />
+                <label class="filter-label" for="editor-body">Body</label>
+                <textarea id="editor-body" rows="8"></textarea>
+                <label class="filter-label" for="editor-labels"
+                  >Labels (comma-separated names)</label
+                >
+                <input
+                  id="editor-labels"
+                  type="text"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="bug, ui"
+                />
+                <div class="actions">
+                  <button type="button" id="save-draft" class="btn">Save</button>
+                  <button type="button" id="publish-draft" class="btn primary">
+                    Publish
+                  </button>
+                  <button
+                    type="button"
+                    id="update-draft"
+                    class="btn primary"
+                    hidden
+                  >
+                    Update
+                  </button>
+                </div>
+                <p id="editor-link" class="editor-link" hidden></p>
+              </section>
+            </div>
+          </section>
+        </section>
+
+        <p id="status" class="status" hidden></p>
+
+        <div
+          id="conflict-modal"
+          class="conflict-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="conflict-title"
+          hidden
+        >
+          <div class="conflict-panel">
+            <h2 id="conflict-title" class="conflict-title">Conflict</h2>
+            <p id="conflict-copy" class="conflict-copy">
+              This issue changed on GitHub since you last updated it. Keep your
+              local edits, or use the GitHub version.
+            </p>
+            <div class="conflict-actions">
+              <button type="button" id="conflict-keep-mine" class="btn primary">
+                Keep mine
+              </button>
+              <button
+                type="button"
+                id="conflict-use-theirs"
+                class="btn primary"
+              >
+                Use theirs
+              </button>
+            </div>
+            <p class="conflict-secondary">
+              <a
+                id="conflict-view-github"
+                href="#"
+                target="_blank"
+                rel="noopener noreferrer"
+                >View on GitHub</a
+              >
+            </p>
+          </div>
         </div>
       </div>
-    </main>
+    </template>
   </body>
 </html>
