@@ -1,0 +1,249 @@
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+.ib-capture-root {
+  --ib-shell: var(--colorNeutralBackground2);
+  --ib-content: var(--colorNeutralBackground1);
+  --ib-border: var(--colorNeutralStroke2);
+  --ib-muted: var(--colorNeutralForeground3);
+  min-height: 100vh;
+  color: var(--colorNeutralForeground1);
+  background: var(--ib-shell);
+  box-sizing: border-box;
+  font-family: "Segoe UI", "Segoe UI Variable", sans-serif;
+}
+
+.ib-capture-root.theme-dark {
+  background: var(--ib-shell);
+}
+
+.ib-capture {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  width: 100%;
+  min-height: 100vh;
+  max-height: 100vh;
+  overflow: auto;
+  box-sizing: border-box;
+  background: var(--ib-content);
+}
+
+.ib-capture-hero {
+  display: grid;
+  gap: 14px;
+  padding: 16px 14px 14px;
+  border-bottom: 1px solid var(--ib-border);
+  background: var(--ib-shell);
+}
+
+.ib-capture-eyebrow {
+  color: var(--ib-muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+}
+
+.ib-capture-hero h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.2px;
+}
+
+.ib-capture-hero p {
+  margin: 4px 0 0;
+  color: var(--ib-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ib-capture-voice {
+  display: grid;
+  gap: 8px;
+}
+
+.ib-capture-ptt {
+  min-height: 48px;
+  user-select: none;
+  touch-action: none;
+}
+
+.ib-capture-ptt-recording {
+  background: var(--colorPaletteRedBackground3) !important;
+  border-color: var(--colorPaletteRedBorderActive) !important;
+  color: var(--colorPaletteRedForeground1) !important;
+}
+
+.ib-capture-ptt-busy {
+  opacity: 0.85;
+}
+
+.ib-capture-voice-meta {
+  display: grid;
+  gap: 2px;
+  color: var(--ib-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+
+.ib-capture-timer {
+  color: var(--colorPaletteRedForeground1);
+  font-size: 13px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.ib-capture-voice-status {
+  margin: 0;
+  color: var(--colorPaletteRedForeground1);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.ib-capture-voice-status.soft {
+  color: var(--ib-muted);
+}
+
+.ib-capture-compose {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  margin: 12px 14px;
+  padding: 12px;
+  border: 1px solid var(--ib-border);
+  border-radius: var(--borderRadiusLarge, 8px);
+  background: var(--ib-shell);
+  box-shadow: var(--shadow4);
+}
+
+.ib-capture-compose textarea {
+  min-height: 110px;
+}
+
+.ib-capture-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ib-capture-chip {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  padding: 7px 10px;
+  border: 1px solid var(--ib-border);
+  border-radius: var(--borderRadiusMedium, 4px);
+  color: inherit;
+  background: var(--ib-shell);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ib-capture-chip:hover {
+  background: var(--colorNeutralBackground1Hover);
+}
+
+.ib-capture-chip.selected {
+  border-color: var(--colorBrandStroke1);
+  background: var(--colorBrandBackground2);
+  box-shadow: inset 0 0 0 1px var(--colorBrandStroke1);
+}
+
+.ib-capture-chip-name {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.ib-capture-chip-owner {
+  color: var(--ib-muted);
+  font-size: 10px;
+}
+
+.ib-capture-repo-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--ib-border);
+  border-radius: var(--borderRadiusMedium, 4px);
+  background: var(--ib-shell);
+  max-height: 8rem;
+  overflow: auto;
+}
+
+.ib-capture-repo-pick {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ib-capture-repo-pick:hover {
+  background: var(--colorNeutralBackground1Hover);
+}
+
+.ib-capture-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px 14px;
+}
+
+.ib-capture-actions.sticky {
+  position: sticky;
+  bottom: 0;
+  border-top: 1px solid var(--ib-border);
+  background: color-mix(in srgb, var(--ib-content) 92%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.ib-capture-action-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.ib-capture-target-cue {
+  color: var(--ib-muted);
+  font-size: 11px;
+}
+
+.ib-capture-save-status {
+  margin: 0;
+  padding: 0 14px 14px;
+  color: var(--colorPaletteRedForeground1);
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ib-capture-chip {
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease;
+  }
+
+  .ib-capture-ptt {
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ib-capture-chip,
+  .ib-capture-ptt {
+    transition: none;
+  }
+}
