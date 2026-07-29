@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ShellLayout } from "./shell/ShellLayout";
 import type { Destination } from "./shell/destinations";
 import type { AccountAuth } from "./shell/Sidebar";
+import type { FirstRunStep } from "./settings/gating";
 import {
   readSystemPrefersDark,
   readThemePreference,
@@ -18,12 +19,7 @@ import {
 import { refreshMainUi } from "./main";
 
 type AuthStateDto = "signed_out" | "signed_in";
-type FirstRunStepDto =
-  | "sign_in"
-  | "install_app"
-  | "testing_set"
-  | "try_capture"
-  | "ready";
+type FirstRunStepDto = FirstRunStep;
 
 export function App() {
   const [destination, setDestination] = useState<Destination>("inbox");
@@ -32,8 +28,10 @@ export function App() {
   );
   const [systemDark, setSystemDark] = useState(() => readSystemPrefersDark());
   const [auth, setAuth] = useState<AccountAuth>("signed_out");
-  const [firstRunComplete, setFirstRunComplete] = useState(false);
+  const [firstRunStep, setFirstRunStep] = useState<FirstRunStep>("sign_in");
   const [accountBusy, setAccountBusy] = useState(false);
+
+  const firstRunComplete = firstRunStep === "ready";
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -54,7 +52,7 @@ export function App() {
         setAuth(detail.auth === "signed_in" ? "signed_in" : "signed_out");
       }
       if (detail?.step) {
-        setFirstRunComplete(detail.step === "ready");
+        setFirstRunStep(detail.step);
       }
       if (!detail?.auth || !detail?.step) {
         void refreshShellAccount();
@@ -85,10 +83,10 @@ export function App() {
         invoke<FirstRunStepDto>("first_run_step"),
       ]);
       setAuth(state === "signed_in" ? "signed_in" : "signed_out");
-      setFirstRunComplete(step === "ready");
+      setFirstRunStep(step);
     } catch {
       setAuth("signed_out");
-      setFirstRunComplete(false);
+      setFirstRunStep("sign_in");
     }
   }
 
@@ -129,6 +127,7 @@ export function App() {
         destination={destination}
         onNavigate={setDestination}
         auth={auth}
+        firstRunStep={firstRunStep}
         firstRunComplete={firstRunComplete}
         accountBusy={accountBusy}
         onSignOut={() => void handleSignOut()}
