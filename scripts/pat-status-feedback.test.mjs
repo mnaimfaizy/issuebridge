@@ -1,7 +1,6 @@
 /**
- * Feedback loop for silent PAT sign-in failures.
- * Models main.ts: catch { showStatus(err); await refreshAppState(); }
- * where refreshAppState always clearStatus().
+ * Feedback loop for silent PAT sign-in failures (#40 Sign-in step).
+ * Models SignInStep: catch { refresh; setError(err) } so the MessageBar stays.
  *
  * Red = failed PAT leaves no visible status (user's symptom).
  * Green = failed PAT keeps the error message visible.
@@ -13,7 +12,10 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const mainTs = readFileSync(join(root, "src", "main.ts"), "utf8");
+const signInStep = readFileSync(
+  join(root, "src", "firstrun", "SignInStep.tsx"),
+  "utf8",
+);
 
 /**
  * Simulate catch-path status lifecycle.
@@ -47,19 +49,21 @@ function visibleStatusAfterFailedPat(mode) {
 
 describe("PAT sign-in silent failure", () => {
   it("failed PAT must leave an error message visible (user symptom)", () => {
-    // Production catch order in main.ts today: showStatus then refreshAppState.
-    // That must not wipe the message.
+    // SignInStep sets error after refresh on catch — MessageBar stays visible.
+    const setsErrorAfterCatch =
+      /setError\(formatInvokeError\(err\)\)/.test(signInStep) &&
+      /MessageBar/.test(signInStep);
     const usesBuggyOrder =
       /showStatus\(String\(error\)\);\s*await refreshAppState\(\);/.test(
-        mainTs,
+        signInStep,
       );
-    const mode = usesBuggyOrder ? "buggy" : "fixed";
+    const mode = usesBuggyOrder || !setsErrorAfterCatch ? "buggy" : "fixed";
     const visible = visibleStatusAfterFailedPat(mode);
     assert.equal(
       visible,
       "GitHub rejected those credentials.",
-      usesBuggyOrder
-        ? "RED: main.ts showStatus-then-refreshAppState clears the error (silent failure)"
+      usesBuggyOrder || !setsErrorAfterCatch
+        ? "RED: PAT error must remain visible after refresh"
         : "status should remain visible",
     );
   });
