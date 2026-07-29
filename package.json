@@ -10,16 +10,23 @@
     "tauri": "tauri",
     "test:core": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:packaging": "node --test scripts/packaging-contract.test.mjs",
-    "test:ui-contracts": "node --test scripts/pat-status-feedback.test.mjs",
+    "test:ui-contracts": "node --test scripts/pat-status-feedback.test.mjs scripts/shell-chrome-contract.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fluentui/react-components": "^9.74.4",
+    "@fluentui/react-icons": "^2.0.334",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-global-shortcut": "^2.3.2",
-    "@tauri-apps/plugin-opener": "^2"
+    "@tauri-apps/plugin-opener": "^2",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.7.0",
     "typescript": "~5.6.2",
     "vite": "^6.0.3"
   }
