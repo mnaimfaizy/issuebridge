@@ -7,7 +7,7 @@ type LegacyWorkspaceHostProps = {
 };
 
 /**
- * Hosts the existing vanilla Inbox / first-run / conflict markup until later
+ * Hosts the existing vanilla first-run / conflict markup until later
  * slices replace those surfaces. Boot is once-per-mount.
  */
 export function LegacyWorkspaceHost({ visible }: LegacyWorkspaceHostProps) {

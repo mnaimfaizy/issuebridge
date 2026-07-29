@@ -79,13 +79,20 @@ describe("shell chrome (#36)", () => {
     assert.match(shell, /inbox/);
   });
 
-  it("legacy Inbox / first-run / conflict remain hosted for later slices", () => {
+  it("legacy first-run / conflict remain hosted for later slices", () => {
     const host = readSrc("shell", "LegacyWorkspaceHost.tsx");
     assert.match(host, /bootMainUi/);
     const mainUi = readSrc("main.ts");
     assert.match(mainUi, /export\s+(async\s+)?function\s+bootMainUi/);
-    assert.match(mainUi, /conflict-keep-mine/);
-    assert.match(mainUi, /list_inbox/);
+    assert.match(mainUi, /conflict-modal/);
     assert.match(mainUi, /first_run_step/);
+    assert.doesNotMatch(
+      mainUi,
+      /list_inbox/,
+      "Inbox list moved to React workbench (#37)",
+    );
+    const index = readFileSync(join(root, "index.html"), "utf8");
+    assert.match(index, /id=["']conflict-modal["']/);
+    assert.match(index, /id=["']conflict-keep-mine["']/);
   });
 });
