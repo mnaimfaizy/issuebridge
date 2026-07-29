@@ -1,7 +1,8 @@
 import { Sidebar, type AccountAuth } from "./Sidebar";
 import type { Destination } from "./destinations";
 import { LegacyWorkspaceHost } from "./LegacyWorkspaceHost";
-import { AppearancePage } from "../settings/AppearancePage";
+import { SettingsPage } from "../settings/SettingsPage";
+import type { FirstRunStep } from "../settings/gating";
 import { HelpPage } from "../help/HelpPage";
 import { InboxWorkbench } from "../inbox/InboxWorkbench";
 import type { ThemePreference } from "../theme/preference";
@@ -11,6 +12,7 @@ type ShellLayoutProps = {
   destination: Destination;
   onNavigate: (destination: Destination) => void;
   auth: AccountAuth;
+  firstRunStep: FirstRunStep;
   firstRunComplete: boolean;
   accountBusy: boolean;
   onSignOut: () => void;
@@ -23,6 +25,7 @@ export function ShellLayout({
   destination,
   onNavigate,
   auth,
+  firstRunStep,
   firstRunComplete,
   accountBusy,
   onSignOut,
@@ -48,9 +51,15 @@ export function ShellLayout({
         {showInboxWorkbench ? <InboxWorkbench /> : null}
         <LegacyWorkspaceHost visible={showFirstRun} />
         {destination === "settings" && (
-          <AppearancePage
+          <SettingsPage
             themePreference={themePreference}
             onThemePreferenceChange={onThemePreferenceChange}
+            auth={auth}
+            firstRunStep={firstRunStep}
+            firstRunComplete={firstRunComplete}
+            accountBusy={accountBusy}
+            onSignOut={onSignOut}
+            onSignIn={onSignIn}
           />
         )}
         {destination === "help" && <HelpPage />}
