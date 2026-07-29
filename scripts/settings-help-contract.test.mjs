@@ -131,9 +131,12 @@ describe("Settings + Help destinations (#38)", () => {
 
   it("Capture popup stays chrome-free of Settings/Help/account", () => {
     const captureHtml = readRoot("capture.html");
-    assert.doesNotMatch(captureHtml, /id=["']root["']/);
-    assert.doesNotMatch(captureHtml, /ShellLayout|SettingsPage|HelpPage/);
-    const captureTs = readSrc("capture.ts");
-    assert.doesNotMatch(captureTs, /SettingsPage|HelpPage|ShellLayout/);
+    assert.doesNotMatch(captureHtml, /ShellLayout|SettingsPage|HelpPage|Sidebar/);
+    assert.ok(
+      existsSync(src("capture", "CaptureApp.tsx")),
+      "expected Fluent CaptureApp",
+    );
+    const captureApp = readSrc("capture", "CaptureApp.tsx");
+    assert.doesNotMatch(captureApp, /SettingsPage|HelpPage|ShellLayout|Sidebar/);
   });
 });

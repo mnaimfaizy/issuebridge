@@ -17,6 +17,7 @@ pub fn show_capture_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String>
     let window = WebviewWindowBuilder::new(app, "capture", WebviewUrl::App("capture.html".into()))
         .title("Capture")
         .inner_size(420.0, 520.0)
+        .min_inner_size(360.0, 420.0)
         .resizable(true)
         .always_on_top(true)
         .visible(true)
