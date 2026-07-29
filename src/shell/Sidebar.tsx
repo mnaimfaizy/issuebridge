@@ -49,6 +49,11 @@ export function Sidebar({
           active={destination === "inbox"}
           icon={<MailInboxRegular />}
           onClick={() => onNavigate("inbox")}
+          gated={!firstRunComplete}
+          disabled={!firstRunComplete}
+          helper={
+            firstRunComplete ? undefined : "Available after first-run"
+          }
         />
       </div>
 
@@ -105,23 +110,44 @@ function NavItem({
   active,
   icon,
   onClick,
+  gated,
+  helper,
+  disabled,
 }: {
   label: string;
   active: boolean;
   icon: ReactElement;
   onClick: () => void;
+  gated?: boolean;
+  helper?: string;
+  disabled?: boolean;
 }) {
+  const button = (
+    <button
+      type="button"
+      className={`ib-nav-item${active ? " active" : ""}${gated ? " gated" : ""}`}
+      aria-current={active ? "page" : undefined}
+      aria-disabled={disabled ? "true" : undefined}
+      disabled={disabled}
+      onClick={disabled ? undefined : onClick}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+
   return (
-    <Tooltip content={label} relationship="label" positioning="after">
-      <button
-        type="button"
-        className={`ib-nav-item${active ? " active" : ""}`}
-        aria-current={active ? "page" : undefined}
-        onClick={onClick}
-      >
-        {icon}
-        <span>{label}</span>
-      </button>
-    </Tooltip>
+    <div className="ib-nav-item-wrap">
+      {helper ? (
+        <Tooltip content={helper} relationship="description" positioning="after">
+          {button}
+        </Tooltip>
+      ) : (
+        <Tooltip content={label} relationship="label" positioning="after">
+          {button}
+        </Tooltip>
+      )}
+      {helper ? <span className="ib-nav-helper">{helper}</span> : null}
+    </div>
   );
 }

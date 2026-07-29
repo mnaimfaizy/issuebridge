@@ -56,6 +56,23 @@
   flex: 1;
 }
 
+.ib-nav-item-wrap {
+  display: grid;
+  gap: 0;
+}
+
+.ib-nav-item.gated {
+  opacity: 0.72;
+}
+
+.ib-nav-helper {
+  display: block;
+  padding: 0 12px 8px;
+  color: var(--ib-muted);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
 .ib-nav-bottom {
   display: grid;
   gap: 4px;
@@ -88,6 +105,10 @@
 
 .ib-nav-item:hover {
   background: var(--colorNeutralBackground1Hover);
+}
+
+.ib-nav-item:disabled {
+  cursor: not-allowed;
 }
 
 .ib-nav-item.active {
@@ -286,6 +307,7 @@
 
   .ib-brand span:not(.ib-brand-mark),
   .ib-nav-item > span,
+  .ib-nav-helper,
   .ib-account-copy {
     display: none;
   }
