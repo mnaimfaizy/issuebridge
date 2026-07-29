@@ -3,6 +3,7 @@ import type { Destination } from "./destinations";
 import { LegacyWorkspaceHost } from "./LegacyWorkspaceHost";
 import { AppearancePage } from "../settings/AppearancePage";
 import { HelpPage } from "../help/HelpPage";
+import { InboxWorkbench } from "../inbox/InboxWorkbench";
 import type { ThemePreference } from "../theme/preference";
 import "./shell.css";
 
@@ -29,6 +30,9 @@ export function ShellLayout({
   themePreference,
   onThemePreferenceChange,
 }: ShellLayoutProps) {
+  const showInboxWorkbench = destination === "inbox" && firstRunComplete;
+  const showFirstRun = destination === "inbox" && !firstRunComplete;
+
   return (
     <div className="ib-shell">
       <Sidebar
@@ -41,7 +45,8 @@ export function ShellLayout({
         onSignIn={onSignIn}
       />
       <div className="ib-content" role="main">
-        <LegacyWorkspaceHost visible={destination === "inbox"} />
+        {showInboxWorkbench ? <InboxWorkbench /> : null}
+        <LegacyWorkspaceHost visible={showFirstRun} />
         {destination === "settings" && (
           <AppearancePage
             themePreference={themePreference}

@@ -16,37 +16,10 @@ type InstallContinueOutcomeDto =
 
 type RepoIdDto = { owner: string; name: string };
 
-type InboxItemDto = {
-  id: string;
-  display_title: string;
-  owner: string;
-  name: string;
-  linked: boolean;
-  dirty: boolean;
-};
-
-type DraftDto = {
-  id: string;
-  owner: string;
-  name: string;
-  title: string;
-  body: string;
-  label_names: string[];
-  linked: boolean;
-  dirty: boolean;
-  issue_number: number | null;
-  html_url: string | null;
-};
-
-type UpdateLinkedOutcomeDto =
-  | { kind: "updated"; draft: DraftDto }
-  | { kind: "conflict"; html_url: string | null; issue_number: number | null };
-
 let visibleRepos: RepoIdDto[] = [];
 let selectedRepos: RepoIdDto[] = [];
-let selectedDraftId: string | null = null;
 
-/** Bind vanilla Inbox / first-run / conflict UI after the shell mounts it. */
+/** Bind vanilla first-run / conflict UI after the shell mounts it. */
 export async function bootMainUi() {
   const bindAnchor = document.querySelector<HTMLElement>("#sign-in-github");
   if (!bindAnchor) {
@@ -96,26 +69,8 @@ export async function bootMainUi() {
   document
     .querySelector("#repo-filter")
     ?.addEventListener("input", () => renderRepoResults());
-  for (const id of ["open-capture", "empty-capture"]) {
-    document
-      .querySelector(`#${id}`)
-      ?.addEventListener("click", () => void runOpenCapture());
-  }
-  document
-    .querySelector("#save-draft")
-    ?.addEventListener("click", () => void runSaveDraft());
-  document
-    .querySelector("#publish-draft")
-    ?.addEventListener("click", () => void runPublishDraft());
-  document
-    .querySelector("#update-draft")
-    ?.addEventListener("click", () => void runUpdateDraft());
-  document
-    .querySelector("#conflict-keep-mine")
-    ?.addEventListener("click", () => void runKeepMine());
-  document
-    .querySelector("#conflict-use-theirs")
-    ?.addEventListener("click", () => void runUseTheirs());
+  // Vanilla #conflict-modal remains for slice 5; Update conflicts are handled
+  // by the React Inbox workbench ConflictDialog (#37).
   document.addEventListener(
     "keydown",
     (event) => {
@@ -129,14 +84,6 @@ export async function bootMainUi() {
     true,
   );
 
-  window.addEventListener("focus", () => {
-    void refreshInboxIfReady();
-  });
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") {
-      void refreshInboxIfReady();
-    }
-  });
   void listen("inbox-changed", () => {
     // Save during Try capture completes first-run → refresh step into Inbox.
     void refreshAppState();
@@ -148,17 +95,6 @@ export async function bootMainUi() {
 /** Re-read auth / first-run and refresh vanilla surfaces (shell account sync). */
 export async function refreshMainUi() {
   await refreshAppState();
-}
-
-async function refreshInboxIfReady() {
-  try {
-    const step = await invoke<FirstRunStepDto>("first_run_step");
-    if (step === "ready") {
-      await loadInbox();
-    }
-  } catch {
-    // Ignore refresh races while signed out / mid-transition.
-  }
 }
 
 async function refreshAppState() {
@@ -244,288 +180,6 @@ async function applyStepUi(auth: AuthStateDto, step: FirstRunStepDto) {
   }
   if (step === "install_app") {
     clearInstallMessages();
-  }
-  if (step === "ready") {
-    await loadInbox();
-  }
-}
-
-async function loadInbox() {
-  try {
-    const items = await invoke<InboxItemDto[]>("list_inbox");
-    renderInbox(items);
-  } catch (error) {
-    showStatus(String(error));
-  }
-}
-
-function renderInbox(items: InboxItemDto[]) {
-  const empty = document.querySelector<HTMLElement>("#inbox-empty");
-  const list = document.querySelector("#inbox-list");
-  const openCapture = document.querySelector<HTMLElement>("#open-capture");
-  const editor = document.querySelector<HTMLElement>("#draft-editor");
-  if (!empty || !list) return;
-
-  list.replaceChildren();
-
-  if (items.length === 0) {
-    empty.hidden = false;
-    if (openCapture) openCapture.hidden = true;
-    selectedDraftId = null;
-    if (editor) editor.hidden = true;
-    return;
-  }
-
-  empty.hidden = true;
-  if (openCapture) openCapture.hidden = false;
-
-  if (
-    selectedDraftId &&
-    !items.some((item) => item.id === selectedDraftId)
-  ) {
-    selectedDraftId = null;
-    if (editor) editor.hidden = true;
-  }
-
-  for (const item of items) {
-    const li = document.createElement("li");
-    li.className = "inbox-row";
-    if (item.id === selectedDraftId) {
-      li.classList.add("selected");
-    }
-    li.tabIndex = 0;
-    li.setAttribute("role", "button");
-    li.addEventListener("click", () => void openDraftEditor(item.id));
-    li.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        void openDraftEditor(item.id);
-      }
-    });
-
-    const title = document.createElement("div");
-    title.className = "inbox-row-title";
-    title.textContent = item.display_title;
-
-    const meta = document.createElement("div");
-    meta.className = "inbox-row-meta";
-    const linkCue = item.linked ? "linked" : "unlinked";
-    const dirtyCue = item.dirty ? "dirty" : "clean";
-    meta.textContent = `${item.owner}/${item.name} · ${linkCue} · ${dirtyCue}`;
-
-    li.appendChild(title);
-    li.appendChild(meta);
-    list.appendChild(li);
-  }
-}
-
-async function openDraftEditor(id: string) {
-  try {
-    const draft = await invoke<DraftDto>("get_draft", { id });
-    selectedDraftId = draft.id;
-    fillEditor(draft);
-    await loadInbox();
-    clearStatus();
-  } catch (error) {
-    showStatus(String(error));
-  }
-}
-
-function fillEditor(draft: DraftDto) {
-  const editor = document.querySelector<HTMLElement>("#draft-editor");
-  const repo = document.querySelector("#editor-repo");
-  const cues = document.querySelector("#editor-cues");
-  const title = document.querySelector<HTMLInputElement>("#editor-title");
-  const body = document.querySelector<HTMLTextAreaElement>("#editor-body");
-  const labels = document.querySelector<HTMLInputElement>("#editor-labels");
-  const link = document.querySelector<HTMLElement>("#editor-link");
-  const publish = document.querySelector<HTMLButtonElement>("#publish-draft");
-  const update = document.querySelector<HTMLButtonElement>("#update-draft");
-  if (!editor || !title || !body || !labels) return;
-
-  editor.hidden = false;
-  if (repo) repo.textContent = `${draft.owner}/${draft.name}`;
-  if (cues) {
-    const linkCue = draft.linked ? "linked" : "unlinked";
-    const dirtyCue = draft.dirty ? "dirty" : "clean";
-    cues.textContent = `${linkCue} · ${dirtyCue}`;
-  }
-  title.value = draft.title;
-  body.value = draft.body;
-  labels.value = draft.label_names.join(", ");
-  if (publish) publish.hidden = draft.linked;
-  if (update) update.hidden = !draft.linked;
-  if (link) {
-    if (draft.html_url && draft.issue_number != null) {
-      link.hidden = false;
-      link.innerHTML = "";
-      const anchor = document.createElement("a");
-      anchor.href = draft.html_url;
-      anchor.target = "_blank";
-      anchor.rel = "noopener noreferrer";
-      anchor.textContent = `GitHub #${draft.issue_number}`;
-      link.append(anchor);
-    } else {
-      link.hidden = true;
-      link.textContent = "";
-    }
-  }
-}
-
-function readEditorForm(): {
-  title: string;
-  body: string;
-  label_names: string[];
-} {
-  const title =
-    document.querySelector<HTMLInputElement>("#editor-title")?.value ?? "";
-  const body =
-    document.querySelector<HTMLTextAreaElement>("#editor-body")?.value ?? "";
-  const labels = document.querySelector<HTMLInputElement>("#editor-labels");
-  const label_names = (labels?.value ?? "")
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-  return { title, body, label_names };
-}
-
-async function runSaveDraft() {
-  if (!selectedDraftId) return;
-  const form = readEditorForm();
-  setBusy(true);
-  try {
-    const draft = await invoke<DraftDto>("edit_draft", {
-      input: {
-        id: selectedDraftId,
-        ...form,
-      },
-    });
-    fillEditor(draft);
-    await loadInbox();
-    clearStatus();
-  } catch (error) {
-    showStatus(String(error));
-  } finally {
-    setBusy(false);
-  }
-}
-
-async function runPublishDraft() {
-  if (!selectedDraftId) return;
-  const form = readEditorForm();
-  setBusy(true);
-  try {
-    await invoke<DraftDto>("edit_draft", {
-      input: {
-        id: selectedDraftId,
-        ...form,
-      },
-    });
-    const draft = await invoke<DraftDto>("publish_draft", {
-      id: selectedDraftId,
-    });
-    fillEditor(draft);
-    await loadInbox();
-    clearStatus();
-  } catch (error) {
-    showStatus(String(error));
-    await loadInbox();
-  } finally {
-    setBusy(false);
-  }
-}
-
-async function runUpdateDraft() {
-  if (!selectedDraftId) return;
-  const form = readEditorForm();
-  setBusy(true);
-  try {
-    await invoke<DraftDto>("edit_draft", {
-      input: {
-        id: selectedDraftId,
-        ...form,
-      },
-    });
-    const outcome = await invoke<UpdateLinkedOutcomeDto>("update_linked_draft", {
-      id: selectedDraftId,
-    });
-    if (outcome.kind === "conflict") {
-      openConflictModal(outcome.html_url);
-      return;
-    }
-    fillEditor(outcome.draft);
-    await loadInbox();
-    clearStatus();
-  } catch (error) {
-    showStatus(String(error));
-    await loadInbox();
-  } finally {
-    setBusy(false);
-  }
-}
-
-function setBackgroundInert(inert: boolean) {
-  for (const selector of ["#sign-in", "#install-app", "#testing-set", "#ready", "#status"]) {
-    const el = document.querySelector<HTMLElement>(selector);
-    if (el) el.inert = inert;
-  }
-}
-
-function openConflictModal(htmlUrl: string | null) {
-  const modal = document.querySelector<HTMLElement>("#conflict-modal");
-  const view = document.querySelector<HTMLAnchorElement>("#conflict-view-github");
-  if (!modal) return;
-  if (view) {
-    if (htmlUrl) {
-      view.href = htmlUrl;
-      view.hidden = false;
-    } else {
-      view.removeAttribute("href");
-      view.hidden = true;
-    }
-  }
-  setBackgroundInert(true);
-  modal.hidden = false;
-  document
-    .querySelector<HTMLButtonElement>("#conflict-keep-mine")
-    ?.focus();
-}
-
-function closeConflictModal() {
-  const modal = document.querySelector<HTMLElement>("#conflict-modal");
-  if (modal) modal.hidden = true;
-  setBackgroundInert(false);
-}
-
-async function runKeepMine() {
-  if (!selectedDraftId) return;
-  setBusy(true);
-  try {
-    const draft = await invoke<DraftDto>("keep_mine", { id: selectedDraftId });
-    closeConflictModal();
-    fillEditor(draft);
-    await loadInbox();
-    clearStatus();
-  } catch (error) {
-    showStatus(String(error));
-  } finally {
-    setBusy(false);
-  }
-}
-
-async function runUseTheirs() {
-  if (!selectedDraftId) return;
-  setBusy(true);
-  try {
-    const draft = await invoke<DraftDto>("use_theirs", { id: selectedDraftId });
-    closeConflictModal();
-    fillEditor(draft);
-    await loadInbox();
-    clearStatus();
-  } catch (error) {
-    showStatus(String(error));
-  } finally {
-    setBusy(false);
   }
 }
 
@@ -788,13 +442,6 @@ function setBusy(busy: boolean) {
     "complete-testing-set",
     "try-capture",
     "skip-try-capture",
-    "open-capture",
-    "empty-capture",
-    "save-draft",
-    "publish-draft",
-    "update-draft",
-    "conflict-keep-mine",
-    "conflict-use-theirs",
   ];
   for (const id of ids) {
     const button = document.querySelector<HTMLButtonElement>(`#${id}`);

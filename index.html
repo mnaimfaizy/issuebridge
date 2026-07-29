@@ -151,6 +151,7 @@
           aria-labelledby="ready-heading"
           hidden
         >
+          <!-- Inbox workbench is React (#37). Keep #sign-out for setBusy wiring. -->
           <div class="ready-header ready-header-legacy">
             <p>
               Auth:
@@ -158,74 +159,6 @@
             </p>
             <button type="button" id="sign-out" class="btn">Sign out</button>
           </div>
-
-          <section
-            id="inbox-section"
-            class="inbox"
-            aria-labelledby="inbox-heading"
-          >
-            <div class="inbox-header">
-              <h2 id="inbox-heading" class="section-title">Inbox</h2>
-              <button type="button" id="open-capture" class="btn primary">
-                Capture
-              </button>
-            </div>
-            <div id="inbox-empty" class="inbox-empty" hidden>
-              <p class="step-copy">
-                No drafts yet. Capture with the hotkey or start one here.
-              </p>
-              <button type="button" id="empty-capture" class="btn primary">
-                Capture
-              </button>
-            </div>
-            <div class="inbox-layout">
-              <ul id="inbox-list" class="inbox-list" aria-label="Drafts"></ul>
-              <section
-                id="draft-editor"
-                class="draft-editor"
-                aria-labelledby="editor-heading"
-                hidden
-              >
-                <h3 id="editor-heading" class="section-title">Edit Draft</h3>
-                <p id="editor-repo" class="editor-repo"></p>
-                <p id="editor-cues" class="editor-cues"></p>
-                <label class="filter-label" for="editor-title">Title</label>
-                <input
-                  id="editor-title"
-                  type="text"
-                  autocomplete="off"
-                  spellcheck="true"
-                />
-                <label class="filter-label" for="editor-body">Body</label>
-                <textarea id="editor-body" rows="8"></textarea>
-                <label class="filter-label" for="editor-labels"
-                  >Labels (comma-separated names)</label
-                >
-                <input
-                  id="editor-labels"
-                  type="text"
-                  autocomplete="off"
-                  spellcheck="false"
-                  placeholder="bug, ui"
-                />
-                <div class="actions">
-                  <button type="button" id="save-draft" class="btn">Save</button>
-                  <button type="button" id="publish-draft" class="btn primary">
-                    Publish
-                  </button>
-                  <button
-                    type="button"
-                    id="update-draft"
-                    class="btn primary"
-                    hidden
-                  >
-                    Update
-                  </button>
-                </div>
-                <p id="editor-link" class="editor-link" hidden></p>
-              </section>
-            </div>
-          </section>
         </section>
 
         <p id="status" class="status" hidden></p>
