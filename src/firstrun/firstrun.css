@@ -74,6 +74,7 @@
 
 .ib-firstrun-step {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   max-width: 680px;
   padding: 22px 24px;

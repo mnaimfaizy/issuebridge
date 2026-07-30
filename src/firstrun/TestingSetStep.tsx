@@ -121,7 +121,7 @@ export function TestingSetStep({ onAdvanced }: TestingSetStepProps) {
       </Body1>
       {allReposWarning ? (
         <MessageBar intent="info" aria-live="polite">
-          <MessageBarBody>
+          <MessageBarBody className="ib-message-copy">
             You chose All repositories. That&apos;s allowed — you can narrow
             this to selected repos on GitHub later.
           </MessageBarBody>
@@ -129,7 +129,7 @@ export function TestingSetStep({ onAdvanced }: TestingSetStepProps) {
       ) : null}
       {error ? (
         <MessageBar intent="error" aria-live="polite">
-          <MessageBarBody>{error}</MessageBarBody>
+          <MessageBarBody className="ib-message-copy">{error}</MessageBarBody>
         </MessageBar>
       ) : null}
       <Label weight="semibold" htmlFor="firstrun-repo-filter">

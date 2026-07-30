@@ -181,10 +181,17 @@
 
 .ib-destination {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   max-width: 40rem;
   padding: 24px 28px;
   box-sizing: border-box;
+}
+
+/* Fluent MessageBars stay on one line until they can reflow, so status copy
+   needs a track that shrinks below the text and may break long tokens. */
+.ib-message-copy {
+  overflow-wrap: anywhere;
 }
 
 .ib-destination-header {
@@ -194,6 +201,7 @@
 
 .ib-settings-block {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   padding: 16px;
   border: 1px solid var(--ib-border);

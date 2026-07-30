@@ -78,12 +78,12 @@ export function InstallAppStep({ onAdvanced }: InstallAppStepProps) {
       </Body1>
       {hint ? (
         <MessageBar intent="warning" aria-live="polite">
-          <MessageBarBody>{hint}</MessageBarBody>
+          <MessageBarBody className="ib-message-copy">{hint}</MessageBarBody>
         </MessageBar>
       ) : null}
       {error ? (
         <MessageBar intent="error" aria-live="polite">
-          <MessageBarBody>{error}</MessageBarBody>
+          <MessageBarBody className="ib-message-copy">{error}</MessageBarBody>
         </MessageBar>
       ) : null}
       <div className="ib-firstrun-actions">

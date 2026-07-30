@@ -405,7 +405,7 @@ export function InboxWorkbench() {
                   : "info"
             }
           >
-            <MessageBarBody>
+            <MessageBarBody className="ib-message-copy">
               {status.kind === "busy" ? (
                 <>
                   <Spinner size="tiny" />{" "}

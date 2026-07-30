@@ -94,6 +94,13 @@ describe("Inbox workbench (#37)", () => {
     const workbench = readSrc("inbox", "InboxWorkbench.tsx");
     assert.match(workbench, /MessageBar/);
     assert.doesNotMatch(workbench, /toast|snackbar/i);
+    const css = readSrc("inbox", "inbox.css");
+    assert.match(
+      css,
+      /\.ib-workbench-command\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/,
+      "status bars must wrap rather than widen the command area",
+    );
+    assert.match(workbench, /<MessageBarBody className="ib-message-copy"/);
     const status = readSrc("inbox", "statusModel.ts");
     assert.match(status, /3000|SUCCESS_CLEAR/);
     assert.equal(successClears("timeout"), null);

@@ -66,7 +66,7 @@ export function TryCaptureStep({ onAdvanced }: TryCaptureStepProps) {
       </Body1>
       {error ? (
         <MessageBar intent="error" aria-live="polite">
-          <MessageBarBody>{error}</MessageBarBody>
+          <MessageBarBody className="ib-message-copy">{error}</MessageBarBody>
         </MessageBar>
       ) : null}
       <div className="ib-firstrun-actions">

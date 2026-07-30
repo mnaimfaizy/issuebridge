@@ -141,7 +141,7 @@ export function TestingSetSection({
 
       {allReposWarning && editable ? (
         <MessageBar intent="info">
-          <MessageBarBody>
+          <MessageBarBody className="ib-message-copy">
             You chose All repositories. That&apos;s allowed — you can narrow
             this to selected repos on GitHub later.
           </MessageBarBody>
@@ -149,7 +149,7 @@ export function TestingSetSection({
       ) : null}
       {error && editable ? (
         <MessageBar intent="error">
-          <MessageBarBody>{error}</MessageBarBody>
+          <MessageBarBody className="ib-message-copy">{error}</MessageBarBody>
         </MessageBar>
       ) : null}
       <Label weight="semibold" htmlFor="settings-repo-filter">

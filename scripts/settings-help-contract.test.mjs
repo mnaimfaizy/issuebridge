@@ -75,6 +75,15 @@ describe("Settings + Help destinations (#38)", () => {
     assert.match(testing, /disabled|helper|gated/i);
     assert.match(testing, /up to 3|length >= 3/);
     assert.match(testing, /settings-repo-filter|Search repositories/);
+    assert.match(testing, /<MessageBarBody className="ib-message-copy"/);
+    const shellCss = readSrc("shell", "shell.css");
+    for (const block of ["ib-destination", "ib-settings-block"]) {
+      assert.match(
+        shellCss,
+        new RegExp(`\\.${block}\\s*\\{[^}]*grid-template-columns:\\s*minmax\\(0,\\s*1fr\\)`),
+        `${block} must let status bars wrap instead of widening the page`,
+      );
+    }
     const gating = readSrc("settings", "gating.ts");
     assert.match(gating, /isTestingSetEditable|testingSet/);
     assert.match(gating, /firstRunComplete/);

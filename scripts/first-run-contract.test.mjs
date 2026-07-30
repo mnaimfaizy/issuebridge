@@ -83,6 +83,31 @@ describe("First-run progress strip (#40)", () => {
     assert.match(tryCapture, /Ctrl\+Alt\+Shift\+I/);
   });
 
+  it("status MessageBars wrap instead of widening the step into horizontal scroll", () => {
+    // Fluent MessageBars are nowrap until they reflow, and only reflow when the
+    // box is narrower than the text — so the grid track must be shrinkable.
+    const css = readSrc("firstrun", "firstrun.css");
+    assert.match(
+      css,
+      /\.ib-firstrun-step\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/,
+    );
+    const shell = readSrc("shell", "shell.css");
+    assert.match(shell, /\.ib-message-copy\s*\{[^}]*overflow-wrap:\s*anywhere/);
+    for (const step of [
+      "SignInStep",
+      "InstallAppStep",
+      "TestingSetStep",
+      "TryCaptureStep",
+    ]) {
+      const source = readSrc("firstrun", `${step}.tsx`);
+      assert.match(
+        source,
+        /<MessageBarBody className="ib-message-copy"/,
+        `${step} must let long status copy wrap`,
+      );
+    }
+  });
+
   it("progressive chrome: Inbox gated during first-run; Help available; Settings progressive", () => {
     const sidebar = readSrc("shell", "Sidebar.tsx");
     assert.match(sidebar, /firstRunComplete/);
