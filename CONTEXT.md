@@ -33,7 +33,7 @@ A linked Draft whose working title, body, or labels differ from its Remote snaps
 _Avoid_: Unsynced, pending, modified (unqualified)
 
 **Testing set**:
-Up to three repositories the user marks as currently under test; shown as fast repo chips in the capture popup. Not the same as the GitHub App’s installed-repo list.
+Repositories the user marks as currently under test; shown as fast repo chips in the Capture popup. The recommended maximum is three; a larger set (up to every repository the GitHub App can see) is an explicit power-user choice, never the default on first-time setup. Not the same as the GitHub App’s installed-repo list.
 _Avoid_: Watch list, favorites, pinned repos
 
 **Label catalog**:

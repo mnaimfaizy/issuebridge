@@ -261,6 +261,23 @@
   gap: 8px;
 }
 
+.ib-testing-max-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.ib-testing-max-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.ib-testing-max-controls .fui-Input {
+  max-width: 6rem;
+}
+
 .ib-chip {
   padding: 6px 10px;
   border: 1px solid var(--ib-border);

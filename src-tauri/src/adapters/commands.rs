@@ -328,6 +328,53 @@ pub fn remove_testing_set_repo(
 }
 
 #[tauri::command]
+pub fn testing_set_max(state: State<'_, AppState>) -> Result<usize, String> {
+    let core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    Ok(core.testing_set_max())
+}
+
+#[tauri::command]
+pub fn set_testing_set_max(state: State<'_, AppState>, max: usize) -> Result<usize, String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    core.set_testing_set_max(max)
+        .map_err(testing_set_error_message)?;
+    Ok(core.testing_set_max())
+}
+
+#[tauri::command]
+pub fn add_all_app_visible_to_testing_set(
+    state: State<'_, AppState>,
+) -> Result<Vec<RepoIdDto>, String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    core.add_all_app_visible_to_testing_set()
+        .map_err(testing_set_error_message)?;
+    Ok(core
+        .testing_set()
+        .into_iter()
+        .map(RepoIdDto::from)
+        .collect())
+}
+
+#[tauri::command]
+pub fn reconcile_testing_set_with_app_visible(state: State<'_, AppState>) -> Result<bool, String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    core.reconcile_testing_set_with_app_visible()
+        .map_err(testing_set_error_message)
+}
+
+#[tauri::command]
 pub fn complete_testing_set(state: State<'_, AppState>) -> Result<FirstRunStepDto, String> {
     let mut core = state
         .core
@@ -764,7 +811,20 @@ fn testing_set_error_message(err: TestingSetError) -> String {
         TestingSetError::InstallIncomplete => {
             "Finish installing the GitHub App before choosing a Testing set.".into()
         }
-        TestingSetError::LimitReached => "You can pick up to 3 repositories.".into(),
+        TestingSetError::SettingsOnly => {
+            "Finish first-run setup before changing the Testing set max in Settings.".into()
+        }
+        TestingSetError::LimitReached { max } => {
+            format!("You can pick up to {max} repositories.")
+        }
+        TestingSetError::MaxBelowCurrentSet { current, requested } => {
+            format!(
+                "Remove repositories from the Testing set until you have {requested} or fewer (currently {current}) before lowering the max."
+            )
+        }
+        TestingSetError::MaxOutOfRange => {
+            "Testing set max must be between 1 and the number of App-visible repositories.".into()
+        }
         TestingSetError::NotAppVisible => {
             "That repository is not visible to the Issuebridge App yet.".into()
         }

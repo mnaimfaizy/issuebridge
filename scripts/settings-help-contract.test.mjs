@@ -60,17 +60,22 @@ describe("Settings + Help destinations (#38)", () => {
     assert.match(account, /firstRunComplete|isAccountSettingsEnabled/);
   });
 
-  it("Testing set edits ≤3 App-visible repos with search/chips; gated with helper", () => {
+  it("Testing set edits App-visible repos with max control, Add all, search/chips; gated with helper", () => {
     const testing = readSrc("settings", "TestingSetSection.tsx");
     assert.match(testing, /app_visible_repos/);
     assert.match(testing, /testing_set/);
+    assert.match(testing, /testing_set_max|set_testing_set_max/);
+    assert.match(testing, /add_all_app_visible_to_testing_set/);
+    assert.match(testing, /reconcile_testing_set_with_app_visible/);
     assert.match(testing, /add_testing_set_repo/);
     assert.match(testing, /remove_testing_set_repo/);
     assert.match(testing, /Search|filter|owner\/name/i);
     assert.match(testing, /chip|Testing set/i);
     assert.match(testing, /disabled|helper|gated/i);
-    assert.match(testing, /up to 3|length >= 3/);
+    assert.match(testing, /Apply max|Add all App-visible|recommended/i);
+    assert.match(testing, /Dialog|Continue/);
     assert.match(testing, /settings-repo-filter|Search repositories/);
+    assert.match(testing, /settings-testing-set-max/);
     assert.match(testing, /<MessageBarBody className="ib-message-copy"/);
     const shellCss = readSrc("shell", "shell.css");
     for (const block of ["ib-destination", "ib-settings-block"]) {

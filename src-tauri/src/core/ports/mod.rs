@@ -150,8 +150,12 @@ pub struct AppInstallSnapshot {
     pub all_repositories: bool,
 }
 
+fn default_testing_set_max() -> usize {
+    3
+}
+
 /// Persisted first-run / Testing-set preferences (not credentials).
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppSettings {
     pub install_completed: bool,
     pub testing_set_completed: bool,
@@ -159,6 +163,9 @@ pub struct AppSettings {
     #[serde(default)]
     pub first_run_completed: bool,
     pub testing_set: Vec<RepoId>,
+    /// Settings-only cap on Testing set size (default/recommended 3). First-run adds ignore this and hard-cap at 3.
+    #[serde(default = "default_testing_set_max")]
+    pub testing_set_max: usize,
     pub app_visible_repos: Vec<RepoId>,
     pub all_repositories_warning: bool,
     /// Last repo chosen in Capture (chips / typeahead).
@@ -168,6 +175,23 @@ pub struct AppSettings {
     /// Push-to-talk hotkey (default `Ctrl+Alt+Shift+V`).
     #[serde(default)]
     pub ptt_hotkey: Option<String>,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            install_completed: false,
+            testing_set_completed: false,
+            first_run_completed: false,
+            testing_set: Vec::new(),
+            testing_set_max: default_testing_set_max(),
+            app_visible_repos: Vec::new(),
+            all_repositories_warning: false,
+            last_used_repo: None,
+            open_hotkey: None,
+            ptt_hotkey: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
