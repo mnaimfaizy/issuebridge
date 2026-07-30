@@ -53,12 +53,15 @@ impl From<&Draft> for DraftRecord {
                 number: link.number,
                 html_url: link.html_url.clone(),
             }),
-            remote_snapshot: draft.remote_snapshot.as_ref().map(|snap| RemoteSnapshotRecord {
-                title: snap.title.clone(),
-                body: snap.body.clone(),
-                label_names: snap.label_names.clone(),
-                updated_at: snap.updated_at.clone(),
-            }),
+            remote_snapshot: draft
+                .remote_snapshot
+                .as_ref()
+                .map(|snap| RemoteSnapshotRecord {
+                    title: snap.title.clone(),
+                    body: snap.body.clone(),
+                    label_names: snap.label_names.clone(),
+                    updated_at: snap.updated_at.clone(),
+                }),
         }
     }
 }
@@ -117,8 +120,7 @@ impl FileDraftStore {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|_| DraftStoreError::Unavailable)?;
         }
-        let bytes =
-            serde_json::to_vec_pretty(drafts).map_err(|_| DraftStoreError::Unavailable)?;
+        let bytes = serde_json::to_vec_pretty(drafts).map_err(|_| DraftStoreError::Unavailable)?;
         fs::write(&self.path, bytes).map_err(|_| DraftStoreError::Unavailable)
     }
 }

@@ -34,11 +34,15 @@ impl VoiceTranscriber for WhisperVoiceTranscriber {
         }
 
         let sidecar = resolve_sidecar_path().ok_or_else(|| {
-            eprintln!("[issuebridge] whisper: sidecar not found (run scripts/fetch-whisper-assets.ps1)");
+            eprintln!(
+                "[issuebridge] whisper: sidecar not found (run scripts/fetch-whisper-assets.ps1)"
+            );
             VoiceError::SidecarFailed
         })?;
         let model = resolve_model_path().ok_or_else(|| {
-            eprintln!("[issuebridge] whisper: model not found (run scripts/fetch-whisper-assets.ps1)");
+            eprintln!(
+                "[issuebridge] whisper: model not found (run scripts/fetch-whisper-assets.ps1)"
+            );
             VoiceError::SidecarFailed
         })?;
 
@@ -218,13 +222,20 @@ fn sidecar_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     // Dev layout first so we pick the DLL-complete binaries folder over a bare
     // target/debug/whisper-cli.exe copy from Tauri.
-    out.push(PathBuf::from("src-tauri/binaries/whisper-cli-x86_64-pc-windows-msvc.exe"));
-    out.push(PathBuf::from("binaries/whisper-cli-x86_64-pc-windows-msvc.exe"));
+    out.push(PathBuf::from(
+        "src-tauri/binaries/whisper-cli-x86_64-pc-windows-msvc.exe",
+    ));
+    out.push(PathBuf::from(
+        "binaries/whisper-cli-x86_64-pc-windows-msvc.exe",
+    ));
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             out.push(dir.join("whisper-cli.exe"));
             out.push(dir.join("whisper-cli-x86_64-pc-windows-msvc.exe"));
-            out.push(dir.join("binaries").join("whisper-cli-x86_64-pc-windows-msvc.exe"));
+            out.push(
+                dir.join("binaries")
+                    .join("whisper-cli-x86_64-pc-windows-msvc.exe"),
+            );
         }
     }
     out

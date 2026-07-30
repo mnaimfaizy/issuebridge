@@ -162,10 +162,7 @@ pub trait GitHub: Send + Sync {
     ) -> Result<StoredCredentials, GitHubError>;
 
     /// List App installations + accessible repos for the given user token.
-    fn list_app_install_snapshot(
-        &self,
-        token: &str,
-    ) -> Result<AppInstallSnapshot, GitHubError>;
+    fn list_app_install_snapshot(&self, token: &str) -> Result<AppInstallSnapshot, GitHubError>;
 
     /// Create a GitHub issue from Draft working fields (no rediscovery label/footer).
     fn create_issue(

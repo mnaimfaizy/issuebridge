@@ -375,7 +375,7 @@ where
             .draft_store
             .list()
             .map_err(|_| InboxError::StorageUnavailable)?;
-        drafts.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        drafts.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
 
         Ok(drafts.into_iter().map(inbox_item_from_draft).collect())
     }
@@ -687,7 +687,11 @@ fn map_update_github_error(err: GitHubError) -> UpdateError {
     }
 }
 
-fn apply_remote_issue_to_draft(draft: &mut Draft, issue: &CreatedIssue, now: std::time::SystemTime) {
+fn apply_remote_issue_to_draft(
+    draft: &mut Draft,
+    issue: &CreatedIssue,
+    now: std::time::SystemTime,
+) {
     draft.title = issue.title.clone();
     draft.body = issue.body.clone();
     draft.label_names = issue.label_names.clone();
@@ -1185,7 +1189,10 @@ mod tests {
         assert!(settings.snapshot().install_completed);
         assert!(settings.snapshot().testing_set_completed);
         assert!(settings.snapshot().first_run_completed);
-        assert_eq!(settings.snapshot().testing_set, vec![repo("acme", "widgets")]);
+        assert_eq!(
+            settings.snapshot().testing_set,
+            vec![repo("acme", "widgets")]
+        );
     }
 
     fn ready_settings() -> FakeSettingsStore {
@@ -1321,12 +1328,18 @@ mod tests {
 
         assert_eq!(edited.title, "Polished title");
         assert_eq!(edited.body, "Polished body");
-        assert_eq!(edited.label_names, vec!["bug".to_string(), "ui".to_string()]);
+        assert_eq!(
+            edited.label_names,
+            vec!["bug".to_string(), "ui".to_string()]
+        );
 
         let loaded = core.get_draft(&saved.id).expect("get");
         assert_eq!(loaded.title, "Polished title");
         assert_eq!(loaded.body, "Polished body");
-        assert_eq!(loaded.label_names, vec!["bug".to_string(), "ui".to_string()]);
+        assert_eq!(
+            loaded.label_names,
+            vec!["bug".to_string(), "ui".to_string()]
+        );
 
         let inbox = core.list_inbox().expect("inbox");
         assert_eq!(inbox[0].display_title, "Polished title");
@@ -1597,9 +1610,7 @@ mod tests {
         let voice = FakeVoiceTranscriber::with_result(Ok("spoken bug details".into()));
         let core = signed_in_core_with_voice(FakeGitHub::default(), ready_settings(), voice);
 
-        let body = core
-            .apply_ptt("Steps:", "unused.wav")
-            .expect("PTT success");
+        let body = core.apply_ptt("Steps:", "unused.wav").expect("PTT success");
 
         assert_eq!(body, "Steps: spoken bug details");
     }
@@ -1616,8 +1627,7 @@ mod tests {
 
     #[test]
     fn apply_ptt_permission_denied_leaves_body_unchanged_path() {
-        let voice =
-            FakeVoiceTranscriber::with_result(Err(VoiceError::PermissionDenied));
+        let voice = FakeVoiceTranscriber::with_result(Err(VoiceError::PermissionDenied));
         let core = signed_in_core_with_voice(FakeGitHub::default(), ready_settings(), voice);
 
         let err = core
@@ -1663,10 +1673,8 @@ mod tests {
 
     #[test]
     fn text_save_succeeds_after_voice_failure() {
-        let voice =
-            FakeVoiceTranscriber::with_result(Err(VoiceError::SidecarFailed));
-        let mut core =
-            signed_in_core_with_voice(FakeGitHub::default(), ready_settings(), voice);
+        let voice = FakeVoiceTranscriber::with_result(Err(VoiceError::SidecarFailed));
+        let mut core = signed_in_core_with_voice(FakeGitHub::default(), ready_settings(), voice);
 
         assert_eq!(
             core.apply_ptt("", "unused.wav").expect_err("voice failed"),

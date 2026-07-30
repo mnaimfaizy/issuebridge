@@ -204,17 +204,17 @@ impl GitHub for HttpGitHub {
             return Err(GitHubError::InvalidCredentials);
         }
 
-        eprintln!("[issuebridge] OAuth exchange ok (access_len={})", access_token.len());
+        eprintln!(
+            "[issuebridge] OAuth exchange ok (access_len={})",
+            access_token.len()
+        );
         Ok(StoredCredentials {
             access_token,
             refresh_token: body.refresh_token.filter(|t| !t.is_empty()),
         })
     }
 
-    fn list_app_install_snapshot(
-        &self,
-        token: &str,
-    ) -> Result<AppInstallSnapshot, GitHubError> {
+    fn list_app_install_snapshot(&self, token: &str) -> Result<AppInstallSnapshot, GitHubError> {
         let installations = self.fetch_installations(token)?;
         let ours: Vec<&Installation> = installations
             .iter()
@@ -495,4 +495,3 @@ fn next_link(header: Option<&str>) -> Option<String> {
 fn truncate_for_log(body: &str) -> String {
     body.chars().take(300).collect()
 }
-

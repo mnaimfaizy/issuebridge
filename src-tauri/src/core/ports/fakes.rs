@@ -98,10 +98,7 @@ impl GitHub for FakeGitHub {
         self.oauth_result.clone()
     }
 
-    fn list_app_install_snapshot(
-        &self,
-        _token: &str,
-    ) -> Result<AppInstallSnapshot, GitHubError> {
+    fn list_app_install_snapshot(&self, _token: &str) -> Result<AppInstallSnapshot, GitHubError> {
         self.install_snapshot.clone()
     }
 
@@ -115,10 +112,7 @@ impl GitHub for FakeGitHub {
     ) -> Result<CreatedIssue, GitHubError> {
         if let Some(result) = &self.create_issue_result {
             if let Ok(issue) = result {
-                let mut issues = self
-                    .issues
-                    .lock()
-                    .map_err(|_| GitHubError::Unavailable)?;
+                let mut issues = self.issues.lock().map_err(|_| GitHubError::Unavailable)?;
                 issues.insert(issue_key(repo, issue.number), issue.clone());
             }
             return result.clone();
@@ -140,10 +134,7 @@ impl GitHub for FakeGitHub {
             label_names: label_names.to_vec(),
             updated_at: "2024-01-15T12:00:00Z".into(),
         };
-        let mut issues = self
-            .issues
-            .lock()
-            .map_err(|_| GitHubError::Unavailable)?;
+        let mut issues = self.issues.lock().map_err(|_| GitHubError::Unavailable)?;
         issues.insert(issue_key(repo, number), issue.clone());
         Ok(issue)
     }
@@ -154,10 +145,7 @@ impl GitHub for FakeGitHub {
         repo: &RepoId,
         number: u64,
     ) -> Result<CreatedIssue, GitHubError> {
-        let issues = self
-            .issues
-            .lock()
-            .map_err(|_| GitHubError::Unavailable)?;
+        let issues = self.issues.lock().map_err(|_| GitHubError::Unavailable)?;
         issues
             .get(&issue_key(repo, number))
             .cloned()
@@ -173,10 +161,7 @@ impl GitHub for FakeGitHub {
         body: &str,
         label_names: &[String],
     ) -> Result<CreatedIssue, GitHubError> {
-        let mut issues = self
-            .issues
-            .lock()
-            .map_err(|_| GitHubError::Unavailable)?;
+        let mut issues = self.issues.lock().map_err(|_| GitHubError::Unavailable)?;
         let issue = issues
             .get_mut(&issue_key(repo, number))
             .ok_or(GitHubError::Unavailable)?;
@@ -266,10 +251,7 @@ impl FakeSettingsStore {
     }
 
     pub fn snapshot(&self) -> AppSettings {
-        self.inner
-            .lock()
-            .expect("FakeSettingsStore lock")
-            .clone()
+        self.inner.lock().expect("FakeSettingsStore lock").clone()
     }
 }
 

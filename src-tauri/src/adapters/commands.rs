@@ -8,12 +8,12 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
 use tauri_plugin_opener::OpenerExt;
 
+use crate::adapters::app_core::AppCore;
 use crate::adapters::github_http::APP_INSTALL_URL;
 use crate::adapters::oauth_loopback::{
     authorize_url, bind_loopback, generate_pkce, generate_state, wait_for_authorization_code,
     OAuthLoopbackError,
 };
-use crate::adapters::app_core::AppCore;
 use crate::adapters::whisper_voice::write_temp_wav;
 use crate::core::{
     AuthError, AuthState, CaptureError, CaptureInput, EditDraftInput, FirstRunStep, InboxError,
@@ -183,9 +183,7 @@ pub async fn sign_in_with_pat(
     let token = input.token;
     let result = tauri::async_runtime::spawn_blocking(move || {
         eprintln!("[issuebridge] sign_in_with_pat: validating with GitHub…");
-        let mut core = core
-            .lock()
-            .map_err(|_| "core lock poisoned".to_string())?;
+        let mut core = core.lock().map_err(|_| "core lock poisoned".to_string())?;
         let outcome = core
             .sign_in_with_pat(&token)
             .map(AuthStateDto::from)
@@ -248,9 +246,7 @@ pub fn open_app_install(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn continue_install(
-    state: State<'_, AppState>,
-) -> Result<InstallContinueOutcomeDto, String> {
+pub fn continue_install(state: State<'_, AppState>) -> Result<InstallContinueOutcomeDto, String> {
     let mut core = state
         .core
         .lock()
@@ -288,7 +284,11 @@ pub fn testing_set(state: State<'_, AppState>) -> Result<Vec<RepoIdDto>, String>
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    Ok(core.testing_set().into_iter().map(RepoIdDto::from).collect())
+    Ok(core
+        .testing_set()
+        .into_iter()
+        .map(RepoIdDto::from)
+        .collect())
 }
 
 #[tauri::command]
@@ -302,7 +302,11 @@ pub fn add_testing_set_repo(
         .map_err(|_| "core lock poisoned".to_string())?;
     core.add_testing_set_repo(RepoId::from(repo))
         .map_err(testing_set_error_message)?;
-    Ok(core.testing_set().into_iter().map(RepoIdDto::from).collect())
+    Ok(core
+        .testing_set()
+        .into_iter()
+        .map(RepoIdDto::from)
+        .collect())
 }
 
 #[tauri::command]
@@ -316,7 +320,11 @@ pub fn remove_testing_set_repo(
         .map_err(|_| "core lock poisoned".to_string())?;
     core.remove_testing_set_repo(&RepoId::from(repo))
         .map_err(testing_set_error_message)?;
-    Ok(core.testing_set().into_iter().map(RepoIdDto::from).collect())
+    Ok(core
+        .testing_set()
+        .into_iter()
+        .map(RepoIdDto::from)
+        .collect())
 }
 
 #[tauri::command]
@@ -336,8 +344,7 @@ pub fn skip_try_capture(state: State<'_, AppState>) -> Result<FirstRunStepDto, S
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    core.skip_try_capture()
-        .map_err(testing_set_error_message)?;
+    core.skip_try_capture().map_err(testing_set_error_message)?;
     Ok(FirstRunStepDto::from(core.first_run_step()))
 }
 
@@ -432,9 +439,7 @@ pub fn publish_draft(
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    let draft = core
-        .publish_draft(&id)
-        .map_err(publish_error_message)?;
+    let draft = core.publish_draft(&id).map_err(publish_error_message)?;
     drop(core);
     let _ = app.emit("inbox-changed", ());
     Ok(draft_to_dto(draft))
@@ -444,7 +449,9 @@ pub fn publish_draft(
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum UpdateLinkedOutcomeDto {
-    Updated { draft: DraftDto },
+    Updated {
+        draft: DraftDto,
+    },
     Conflict {
         html_url: Option<String>,
         issue_number: Option<u64>,
@@ -470,9 +477,7 @@ pub fn update_linked_draft(
             })
         }
         Err(UpdateError::Conflict) => {
-            let draft = core
-                .get_draft(&id)
-                .map_err(inbox_error_message)?;
+            let draft = core.get_draft(&id).map_err(inbox_error_message)?;
             Ok(UpdateLinkedOutcomeDto::Conflict {
                 html_url: draft.local_link.as_ref().map(|l| l.html_url.clone()),
                 issue_number: draft.local_link.as_ref().map(|l| l.number),
@@ -570,9 +575,7 @@ pub async fn apply_ptt(
 
     let result = tauri::async_runtime::spawn_blocking(move || {
         let outcome = {
-            let locked = core
-                .lock()
-                .map_err(|_| "core lock poisoned".to_string())?;
+            let locked = core.lock().map_err(|_| "core lock poisoned".to_string())?;
             locked
                 .apply_ptt(&text, &path_str)
                 .map_err(voice_error_message)
@@ -657,9 +660,7 @@ fn publish_error_message(err: PublishError) -> String {
         }
         PublishError::NotFound => "That Draft was not found.".into(),
         PublishError::StorageUnavailable => "Could not save Draft after Publish.".into(),
-        PublishError::ProviderUnavailable => {
-            "Could not create the GitHub issue. Try again.".into()
-        }
+        PublishError::ProviderUnavailable => "Could not create the GitHub issue. Try again.".into(),
     }
 }
 
@@ -669,13 +670,9 @@ fn update_error_message(err: UpdateError) -> String {
         UpdateError::NotFound => "That Draft was not found.".into(),
         UpdateError::NotLinked => "Link this Draft with Publish before updating.".into(),
         UpdateError::TitleRequired => "Add a title before Update.".into(),
-        UpdateError::Conflict => {
-            "This issue changed on GitHub since you last updated it.".into()
-        }
+        UpdateError::Conflict => "This issue changed on GitHub since you last updated it.".into(),
         UpdateError::StorageUnavailable => "Could not save Draft after update.".into(),
-        UpdateError::ProviderUnavailable => {
-            "Could not update the GitHub issue. Try again.".into()
-        }
+        UpdateError::ProviderUnavailable => "Could not update the GitHub issue. Try again.".into(),
     }
 }
 

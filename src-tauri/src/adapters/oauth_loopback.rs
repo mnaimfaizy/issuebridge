@@ -134,9 +134,9 @@ pub fn wait_for_authorization_code(
     }
 }
 
-fn parse_callback_request(
-    request: &str,
-) -> Result<(Option<String>, Option<String>, Option<String>), OAuthLoopbackError> {
+type CallbackQuery = (Option<String>, Option<String>, Option<String>);
+
+fn parse_callback_request(request: &str) -> Result<CallbackQuery, OAuthLoopbackError> {
     let first_line = request.lines().next().unwrap_or("");
     let path = first_line.split_whitespace().nth(1).unwrap_or("");
     let url = Url::parse(&format!("http://127.0.0.1{path}")).map_err(|_| OAuthLoopbackError::Io)?;
@@ -159,11 +159,7 @@ fn parse_callback_request(
     Ok((code, state, error))
 }
 
-fn write_html_response(
-    stream: &mut impl Write,
-    status: u16,
-    message: &str,
-) -> std::io::Result<()> {
+fn write_html_response(stream: &mut impl Write, status: u16, message: &str) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
         _ => "Bad Request",

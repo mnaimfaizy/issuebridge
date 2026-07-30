@@ -29,11 +29,7 @@ impl FileSettingsStore {
 impl Default for FileSettingsStore {
     fn default() -> Self {
         Self::in_app_data().unwrap_or_else(|_| {
-            Self::new(
-                std::env::temp_dir()
-                    .join("issuebridge")
-                    .join(SETTINGS_FILE),
-            )
+            Self::new(std::env::temp_dir().join("issuebridge").join(SETTINGS_FILE))
         })
     }
 }
@@ -51,8 +47,8 @@ impl SettingsStore for FileSettingsStore {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|_| SettingsStoreError::Unavailable)?;
         }
-        let bytes = serde_json::to_vec_pretty(&settings)
-            .map_err(|_| SettingsStoreError::Unavailable)?;
+        let bytes =
+            serde_json::to_vec_pretty(&settings).map_err(|_| SettingsStoreError::Unavailable)?;
         fs::write(&self.path, bytes).map_err(|_| SettingsStoreError::Unavailable)
     }
 }
