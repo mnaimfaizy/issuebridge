@@ -40,16 +40,11 @@
 }
 
 .ib-brand-mark {
-  display: grid;
+  display: block;
   width: 24px;
   height: 24px;
   flex: 0 0 24px;
-  place-items: center;
-  border-radius: var(--borderRadiusMedium, 4px);
-  color: var(--colorNeutralForegroundOnBrand);
-  background: var(--colorBrandBackground);
-  font-size: 9px;
-  letter-spacing: -0.2px;
+  object-fit: contain;
 }
 
 .ib-nav-primary {
@@ -314,6 +309,26 @@
   background: var(--ib-content);
   font-family: Consolas, "Courier New", monospace;
   font-size: 12px;
+}
+
+.ib-about-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.ib-about-mark {
+  display: block;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  object-fit: contain;
+}
+
+.ib-about-brand-copy {
+  display: grid;
+  gap: 2px;
 }
 
 @media (max-width: 720px) {

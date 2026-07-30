@@ -69,6 +69,16 @@ describe("shell chrome (#36)", () => {
       /firstRunComplete/,
       "Sign in must be gated until after first-run",
     );
+    assert.match(
+      sidebar,
+      /assets\/brand\/mark\.png|ib-brand-mark/,
+      "sidebar must use the Issuebridge brand mark",
+    );
+    assert.doesNotMatch(
+      sidebar,
+      />\s*IB\s*</,
+      "sidebar must not use the text IB chip",
+    );
   });
 
   it("destination routing can replace workspace with Settings or Help", () => {
