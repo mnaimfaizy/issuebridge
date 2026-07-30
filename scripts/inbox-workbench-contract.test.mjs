@@ -135,17 +135,18 @@ describe("Inbox workbench (#37)", () => {
     );
   });
 
-  it("Tauri Inbox commands remain wired; first-run is React; conflict stays hosted", () => {
+  it("Tauri Inbox commands remain wired; first-run and conflict are React", () => {
     const workbench = readSrc("inbox", "InboxWorkbench.tsx");
     assert.match(workbench, /list_inbox/);
     assert.match(workbench, /get_draft/);
     assert.match(workbench, /show_capture/);
+    assert.match(workbench, /ConflictDialog/);
     assert.ok(
       existsSync(src("firstrun", "FirstRunWorkbench.tsx")),
       "first-run lives in React (#40)",
     );
     const mainUi = readSrc("main.ts");
-    assert.match(mainUi, /conflict-modal/);
+    assert.doesNotMatch(mainUi, /conflict-modal/);
     assert.doesNotMatch(
       mainUi,
       /function renderInbox|id=["']inbox-list["']|#inbox-list/,

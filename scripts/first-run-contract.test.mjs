@@ -122,21 +122,24 @@ describe("First-run progress strip (#40)", () => {
     assert.match(gating, /firstRunComplete/);
   });
 
-  it("vanilla first-run DOM removed; conflict modal kept for later slice; Tauri command names unchanged", () => {
+  it("vanilla first-run DOM removed; conflict owned by Fluent; Tauri command names unchanged", () => {
     const index = readRoot("index.html");
     assert.doesNotMatch(index, /id=["']sign-in-step["']/);
     assert.doesNotMatch(index, /id=["']install-step["']/);
     assert.doesNotMatch(index, /id=["']testing-set-step["']/);
     assert.doesNotMatch(index, /id=["']try-capture-step["']/);
     assert.doesNotMatch(index, /id=["']sign-in-github["']/);
-    assert.match(index, /id=["']conflict-modal["']/);
-    assert.match(index, /id=["']conflict-keep-mine["']/);
+    assert.doesNotMatch(index, /id=["']conflict-modal["']/);
     const mainUi = readSrc("main.ts");
     assert.doesNotMatch(
       mainUi,
       /sign-in-github|complete-testing-set|skip-try-capture/,
       "vanilla first-run handlers removed from main.ts",
     );
-    assert.match(mainUi, /conflict-modal/);
+    assert.doesNotMatch(mainUi, /conflict-modal/);
+    assert.ok(
+      existsSync(src("inbox", "ConflictDialog.tsx")),
+      "conflict lives in Fluent ConflictDialog (#41)",
+    );
   });
 });

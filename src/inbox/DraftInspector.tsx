@@ -18,6 +18,7 @@ type DraftInspectorProps = {
   busy: boolean;
   narrowStacked: boolean;
   editorRef: RefObject<HTMLElement | null>;
+  updateButtonRef: RefObject<HTMLButtonElement | null>;
   onTitleChange: (value: string) => void;
   onBodyChange: (value: string) => void;
   onLabelsChange: (value: string) => void;
@@ -34,6 +35,7 @@ export function DraftInspector({
   busy,
   narrowStacked,
   editorRef,
+  updateButtonRef,
   onTitleChange,
   onBodyChange,
   onLabelsChange,
@@ -118,7 +120,12 @@ export function DraftInspector({
         <Button appearance="secondary" disabled={busy} onClick={onSave}>
           Save
         </Button>
-        <Button appearance="primary" disabled={busy} onClick={onPublishOrUpdate}>
+        <Button
+          ref={updateButtonRef}
+          appearance="primary"
+          disabled={busy}
+          onClick={onPublishOrUpdate}
+        >
           {draft.linked ? "Update" : "Publish"}
         </Button>
       </div>

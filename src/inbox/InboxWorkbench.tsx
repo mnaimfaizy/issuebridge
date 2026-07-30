@@ -57,6 +57,7 @@ export function InboxWorkbench() {
 
   const listRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLElement>(null);
+  const updateButtonRef = useRef<HTMLButtonElement>(null);
   const successTimerRef = useRef<number | null>(null);
 
   const clearSuccessTimer = useCallback(() => {
@@ -275,6 +276,12 @@ export function InboxWorkbench() {
     }
   }
 
+  function restoreFocusToUpdate() {
+    window.requestAnimationFrame(() => {
+      updateButtonRef.current?.focus();
+    });
+  }
+
   async function runKeepMine() {
     if (!selectedId) return;
     setBusy(true);
@@ -285,6 +292,7 @@ export function InboxWorkbench() {
       applyDraft(next);
       await loadInbox();
       showSuccess("Kept local edits");
+      restoreFocusToUpdate();
     } catch (error) {
       showError(formatInvokeError(error));
     } finally {
@@ -302,6 +310,7 @@ export function InboxWorkbench() {
       applyDraft(next);
       await loadInbox();
       showSuccess("Used GitHub version");
+      restoreFocusToUpdate();
     } catch (error) {
       showError(formatInvokeError(error));
     } finally {
@@ -458,6 +467,7 @@ export function InboxWorkbench() {
             busy={busy}
             narrowStacked={narrow}
             editorRef={editorRef}
+            updateButtonRef={updateButtonRef}
             onTitleChange={(value) => {
               noteFieldEdit();
               setTitle(value);

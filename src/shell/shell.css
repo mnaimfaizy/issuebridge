@@ -170,15 +170,6 @@
   background: var(--ib-content);
 }
 
-.ib-legacy-host {
-  min-height: 100%;
-  box-sizing: border-box;
-}
-
-.ib-legacy-host[hidden] {
-  display: none !important;
-}
-
 .ib-destination {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

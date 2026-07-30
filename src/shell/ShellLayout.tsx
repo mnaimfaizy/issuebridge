@@ -1,6 +1,5 @@
 import { Sidebar, type AccountAuth } from "./Sidebar";
 import type { Destination } from "./destinations";
-import { LegacyWorkspaceHost } from "./LegacyWorkspaceHost";
 import { SettingsPage } from "../settings/SettingsPage";
 import type { FirstRunStep } from "../settings/gating";
 import { HelpPage } from "../help/HelpPage";
@@ -59,8 +58,6 @@ export function ShellLayout({
             onStepChange={onFirstRunChange}
           />
         ) : null}
-        {/* Conflict modal host for slice 5; Update conflicts use Inbox ConflictDialog. */}
-        <LegacyWorkspaceHost visible={false} />
         {destination === "settings" && (
           <SettingsPage
             themePreference={themePreference}
