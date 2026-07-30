@@ -141,6 +141,42 @@
   gap: 8px;
 }
 
+.ib-label-catalog,
+.ib-label-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.ib-label-chip {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  opacity: 0.88;
+}
+
+.ib-label-chip.selected {
+  outline: 2px solid var(--colorStrokeFocus2);
+  outline-offset: 1px;
+  opacity: 1;
+}
+
+.ib-label-chip:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.ib-label-assigned {
+  margin: 0 0 8px;
+}
+
 .ib-draft-link {
   margin: 0;
 }

@@ -5,7 +5,7 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, LINK};
 use serde::Deserialize;
 
 use crate::core::{
-    AppInstallSnapshot, CreatedIssue, GitHub, GitHubError, RepoId, StoredCredentials,
+    AppInstallSnapshot, CreatedIssue, GitHub, GitHubError, RepoId, RepoLabel, StoredCredentials,
 };
 
 const USER_AGENT_VALUE: &str = "Issuebridge/0.1";
@@ -115,6 +115,8 @@ struct IssueResponse {
 #[derive(Debug, Deserialize)]
 struct LabelJson {
     name: String,
+    #[serde(default)]
+    color: Option<String>,
 }
 
 impl GitHub for HttpGitHub {
@@ -354,6 +356,80 @@ impl GitHub for HttpGitHub {
 
         let issue: IssueResponse = response.json().map_err(|_| GitHubError::Unavailable)?;
         Ok(issue_from_response(issue))
+    }
+
+    fn list_labels(&self, token: &str, repo: &RepoId) -> Result<Vec<RepoLabel>, GitHubError> {
+        let mut url = Some(format!(
+            "https://api.github.com/repos/{}/{}/labels?per_page=100",
+            repo.owner, repo.name
+        ));
+        let mut labels = Vec::new();
+
+        while let Some(current) = url {
+            let response = self
+                .client
+                .get(&current)
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header(ACCEPT, "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", API_VERSION)
+                .send()
+                .map_err(|_| GitHubError::Unavailable)?;
+
+            match response.status().as_u16() {
+                200 => {}
+                401 | 403 => return Err(GitHubError::InvalidCredentials),
+                _ => return Err(GitHubError::Unavailable),
+            }
+
+            let next = next_link(response.headers().get(LINK).and_then(|v| v.to_str().ok()));
+            let page: Vec<LabelJson> = response.json().map_err(|_| GitHubError::Unavailable)?;
+            for label in page {
+                labels.push(RepoLabel {
+                    name: label.name,
+                    color: label.color.unwrap_or_else(|| "ededed".into()),
+                });
+            }
+            url = next;
+        }
+
+        Ok(labels)
+    }
+
+    fn create_label(
+        &self,
+        token: &str,
+        repo: &RepoId,
+        name: &str,
+        color: &str,
+    ) -> Result<RepoLabel, GitHubError> {
+        let url = format!(
+            "https://api.github.com/repos/{}/{}/labels",
+            repo.owner, repo.name
+        );
+        let response = self
+            .client
+            .post(&url)
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .header(ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", API_VERSION)
+            .json(&serde_json::json!({
+                "name": name,
+                "color": color,
+            }))
+            .send()
+            .map_err(|_| GitHubError::Unavailable)?;
+
+        match response.status().as_u16() {
+            201 => {}
+            401 | 403 => return Err(GitHubError::InvalidCredentials),
+            _ => return Err(GitHubError::Unavailable),
+        }
+
+        let label: LabelJson = response.json().map_err(|_| GitHubError::Unavailable)?;
+        Ok(RepoLabel {
+            name: label.name,
+            color: label.color.unwrap_or_else(|| color.to_string()),
+        })
     }
 }
 

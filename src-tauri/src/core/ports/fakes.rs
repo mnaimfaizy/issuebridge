@@ -6,12 +6,17 @@ use std::time::{Duration, SystemTime};
 
 use super::{
     AppInstallSnapshot, AppSettings, Clock, CreatedIssue, Draft, DraftStore, DraftStoreError,
-    GitHub, GitHubError, RepoId, SettingsStore, SettingsStoreError, StoredCredentials, TokenStore,
-    TokenStoreError, VoiceError, VoiceTranscriber,
+    GitHub, GitHubError, LabelCatalog, LabelCatalogStore, LabelCatalogStoreError, RepoId,
+    RepoLabel, SettingsStore, SettingsStoreError, StoredCredentials, TokenStore, TokenStoreError,
+    VoiceError, VoiceTranscriber,
 };
 
 fn issue_key(repo: &RepoId, number: u64) -> String {
     format!("{}/{}/{number}", repo.owner, repo.name)
+}
+
+fn repo_key(repo: &RepoId) -> String {
+    format!("{}/{}", repo.owner, repo.name)
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +34,10 @@ pub struct FakeGitHub {
     pub issues: Arc<Mutex<HashMap<String, CreatedIssue>>>,
     /// Bumps on each successful `update_issue` to mint a fresh `updated_at`.
     pub update_seq: Arc<Mutex<u64>>,
+    /// Labels per `owner/name` for `list_labels` / `create_label`.
+    pub repo_labels: Arc<Mutex<HashMap<String, Vec<RepoLabel>>>>,
+    /// When true, `list_labels` fails with Unavailable.
+    pub list_labels_unavailable: Arc<Mutex<bool>>,
 }
 
 impl Default for FakeGitHub {
@@ -45,6 +54,8 @@ impl Default for FakeGitHub {
             next_issue_number: Arc::new(Mutex::new(0)),
             issues: Arc::new(Mutex::new(HashMap::new())),
             update_seq: Arc::new(Mutex::new(0)),
+            repo_labels: Arc::new(Mutex::new(HashMap::new())),
+            list_labels_unavailable: Arc::new(Mutex::new(false)),
         }
     }
 }
@@ -79,6 +90,11 @@ impl FakeGitHub {
                 issue.updated_at = updated_at.to_string();
             }
         }
+    }
+
+    pub fn set_repo_labels(&self, repo: &RepoId, labels: Vec<RepoLabel>) {
+        let mut map = self.repo_labels.lock().expect("FakeGitHub repo_labels");
+        map.insert(repo_key(repo), labels);
     }
 }
 
@@ -176,6 +192,45 @@ impl GitHub for FakeGitHub {
         issue.updated_at = format!("2024-01-16T12:{:02}:00Z", *seq);
         Ok(issue.clone())
     }
+
+    fn list_labels(&self, _token: &str, repo: &RepoId) -> Result<Vec<RepoLabel>, GitHubError> {
+        if *self
+            .list_labels_unavailable
+            .lock()
+            .map_err(|_| GitHubError::Unavailable)?
+        {
+            return Err(GitHubError::Unavailable);
+        }
+        let map = self
+            .repo_labels
+            .lock()
+            .map_err(|_| GitHubError::Unavailable)?;
+        Ok(map.get(&repo_key(repo)).cloned().unwrap_or_default())
+    }
+
+    fn create_label(
+        &self,
+        _token: &str,
+        repo: &RepoId,
+        name: &str,
+        color: &str,
+    ) -> Result<RepoLabel, GitHubError> {
+        let label = RepoLabel {
+            name: name.to_string(),
+            color: color.to_string(),
+        };
+        let mut map = self
+            .repo_labels
+            .lock()
+            .map_err(|_| GitHubError::Unavailable)?;
+        let entry = map.entry(repo_key(repo)).or_default();
+        if let Some(existing) = entry.iter_mut().find(|l| l.name.eq_ignore_ascii_case(name)) {
+            *existing = label.clone();
+        } else {
+            entry.push(label.clone());
+        }
+        Ok(label)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -269,6 +324,40 @@ impl SettingsStore for FakeSettingsStore {
             .inner
             .lock()
             .map_err(|_| SettingsStoreError::Unavailable)? = settings;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FakeLabelCatalogStore {
+    inner: Arc<Mutex<HashMap<String, LabelCatalog>>>,
+}
+
+impl FakeLabelCatalogStore {
+    pub fn snapshot(&self, repo: &RepoId) -> Option<LabelCatalog> {
+        self.inner
+            .lock()
+            .expect("FakeLabelCatalogStore lock")
+            .get(&repo_key(repo))
+            .cloned()
+    }
+}
+
+impl LabelCatalogStore for FakeLabelCatalogStore {
+    fn load(&self, repo: &RepoId) -> Result<Option<LabelCatalog>, LabelCatalogStoreError> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| LabelCatalogStoreError::Unavailable)?
+            .get(&repo_key(repo))
+            .cloned())
+    }
+
+    fn save(&mut self, catalog: LabelCatalog) -> Result<(), LabelCatalogStoreError> {
+        self.inner
+            .lock()
+            .map_err(|_| LabelCatalogStoreError::Unavailable)?
+            .insert(repo_key(&catalog.repo), catalog);
         Ok(())
     }
 }

@@ -4,13 +4,17 @@
 mod error;
 mod ports;
 
+use std::time::Duration;
+
 pub use error::{
-    AuthError, CaptureError, InboxError, InstallError, PublishError, TestingSetError, UpdateError,
+    AuthError, CaptureError, InboxError, InstallError, LabelCatalogError, PublishError,
+    TestingSetError, UpdateError,
 };
 pub use ports::{
     AppInstallSnapshot, AppSettings, CaptureInput, Clock, CreatedIssue, Draft, DraftStore,
-    DraftStoreError, EditDraftInput, GitHub, GitHubError, InboxItem, LocalLink, RemoteSnapshot,
-    RepoId, SettingsStore, SettingsStoreError, StoredCredentials, TokenStore, TokenStoreError,
+    DraftStoreError, EditDraftInput, EnsuredLabelCatalog, GitHub, GitHubError, InboxItem,
+    LabelCatalog, LabelCatalogStore, LabelCatalogStoreError, LocalLink, RemoteSnapshot, RepoId,
+    RepoLabel, SettingsStore, SettingsStoreError, StoredCredentials, TokenStore, TokenStoreError,
     VoiceError, VoiceTranscriber,
 };
 
@@ -42,21 +46,28 @@ pub enum InstallContinueOutcome {
 /// Maximum repositories in the Testing set (product rule: up to 3).
 const TESTING_SET_MAX: usize = 3;
 
+/// Label catalog older than this is refreshed on ensure.
+const LABEL_CATALOG_STALE: Duration = Duration::from_secs(15 * 60);
+
+/// Default GitHub label color (no `#`) for novel Draft names created on Publish.
+const DEFAULT_NOVEL_LABEL_COLOR: &str = "ededed";
+
 /// Application core: auth session gating, Capture, Inbox, Publish, etc.
-pub struct IssuebridgeCore<G, T, D, V, C, S> {
+pub struct IssuebridgeCore<G, T, D, V, C, S, L> {
     github: G,
     token_store: T,
     draft_store: D,
     voice: V,
     clock: C,
     settings_store: S,
+    label_catalog_store: L,
     /// Process-local signed-in flag. Set on successful sign-in; cleared on sign-out.
     /// Vault remains source of truth across restarts; this avoids flaky post-store re-reads
     /// leaving the UI stuck on Sign in after a successful PAT/OAuth.
     session_signed_in: bool,
 }
 
-impl<G, T, D, V, C, S> IssuebridgeCore<G, T, D, V, C, S>
+impl<G, T, D, V, C, S, L> IssuebridgeCore<G, T, D, V, C, S, L>
 where
     G: GitHub,
     T: TokenStore,
@@ -64,6 +75,7 @@ where
     V: VoiceTranscriber,
     C: Clock,
     S: SettingsStore,
+    L: LabelCatalogStore,
 {
     pub fn new(
         github: G,
@@ -72,6 +84,7 @@ where
         voice: V,
         clock: C,
         settings_store: S,
+        label_catalog_store: L,
     ) -> Self {
         let session_signed_in = matches!(token_store.load(), Ok(Some(_)));
         Self {
@@ -81,6 +94,7 @@ where
             voice,
             clock,
             settings_store,
+            label_catalog_store,
             session_signed_in,
         }
     }
@@ -416,6 +430,87 @@ where
         Ok(draft)
     }
 
+    /// Load the Label catalog for a repo, refreshing from GitHub when missing or stale.
+    /// On refresh failure, returns the last good catalog (or empty) with `refresh_failed`.
+    pub fn ensure_label_catalog(
+        &mut self,
+        repo: &RepoId,
+    ) -> Result<EnsuredLabelCatalog, LabelCatalogError> {
+        if self.auth_state() != AuthState::SignedIn {
+            return Err(LabelCatalogError::NotSignedIn);
+        }
+
+        let cached = self
+            .label_catalog_store
+            .load(repo)
+            .map_err(|_| LabelCatalogError::StorageUnavailable)?;
+
+        let now = self.clock.now();
+        let needs_refresh = match &cached {
+            None => true,
+            Some(catalog) => now
+                .duration_since(catalog.refreshed_at)
+                .map(|age| age >= LABEL_CATALOG_STALE)
+                .unwrap_or(true),
+        };
+
+        if !needs_refresh {
+            let catalog = cached.expect("cached when not refreshing");
+            return Ok(EnsuredLabelCatalog {
+                repo: catalog.repo,
+                labels: catalog.labels,
+                refreshed_at: Some(catalog.refreshed_at),
+                refresh_failed: false,
+            });
+        }
+
+        let credentials = self
+            .token_store
+            .load()
+            .map_err(|_| LabelCatalogError::StorageUnavailable)?
+            .ok_or(LabelCatalogError::NotSignedIn)?;
+
+        match self.github.list_labels(&credentials.access_token, repo) {
+            Ok(labels) => {
+                let catalog = LabelCatalog {
+                    repo: repo.clone(),
+                    labels,
+                    refreshed_at: now,
+                };
+                self.label_catalog_store
+                    .save(catalog.clone())
+                    .map_err(|_| LabelCatalogError::StorageUnavailable)?;
+                Ok(EnsuredLabelCatalog {
+                    repo: catalog.repo,
+                    labels: catalog.labels,
+                    refreshed_at: Some(catalog.refreshed_at),
+                    refresh_failed: false,
+                })
+            }
+            Err(_) => {
+                let (labels, refreshed_at) = match cached {
+                    Some(catalog) => (catalog.labels, Some(catalog.refreshed_at)),
+                    None => (Vec::new(), None),
+                };
+                Ok(EnsuredLabelCatalog {
+                    repo: repo.clone(),
+                    labels,
+                    refreshed_at,
+                    refresh_failed: true,
+                })
+            }
+        }
+    }
+
+    /// Prefetch Label catalogs for every repo currently in the Testing set.
+    pub fn prefetch_testing_set_label_catalogs(&mut self) -> Result<(), LabelCatalogError> {
+        let repos = self.testing_set();
+        for repo in repos {
+            let _ = self.ensure_label_catalog(&repo)?;
+        }
+        Ok(())
+    }
+
     /// Publish a Draft to GitHub: create the issue, store Local link + Remote snapshot.
     pub fn publish_draft(&mut self, id: &str) -> Result<Draft, PublishError> {
         if self.auth_state() != AuthState::SignedIn {
@@ -442,6 +537,14 @@ where
             return Err(PublishError::TitleRequired);
         }
 
+        let label_names = self
+            .ensure_remote_labels(&credentials.access_token, &draft.repo, &draft.label_names)
+            .map_err(|err| match err {
+                GitHubError::InvalidCredentials | GitHubError::Unavailable => {
+                    PublishError::ProviderUnavailable
+                }
+            })?;
+
         let created = self
             .github
             .create_issue(
@@ -449,7 +552,7 @@ where
                 &draft.repo,
                 draft.title.trim(),
                 &draft.body,
-                &draft.label_names,
+                &label_names,
             )
             .map_err(|err| match err {
                 GitHubError::InvalidCredentials | GitHubError::Unavailable => {
@@ -500,6 +603,10 @@ where
             return Err(UpdateError::Conflict);
         }
 
+        let label_names = self
+            .ensure_remote_labels(&credentials.access_token, &draft.repo, &draft.label_names)
+            .map_err(map_update_github_error)?;
+
         let updated = self
             .github
             .update_issue(
@@ -508,7 +615,7 @@ where
                 number,
                 draft.title.trim(),
                 &draft.body,
-                &draft.label_names,
+                &label_names,
             )
             .map_err(map_update_github_error)?;
 
@@ -526,6 +633,10 @@ where
             return Err(UpdateError::TitleRequired);
         }
 
+        let label_names = self
+            .ensure_remote_labels(&credentials.access_token, &draft.repo, &draft.label_names)
+            .map_err(map_update_github_error)?;
+
         let updated = self
             .github
             .update_issue(
@@ -534,7 +645,7 @@ where
                 number,
                 draft.title.trim(),
                 &draft.body,
-                &draft.label_names,
+                &label_names,
             )
             .map_err(map_update_github_error)?;
 
@@ -558,6 +669,69 @@ where
             .save(draft.clone())
             .map_err(|_| UpdateError::StorageUnavailable)?;
         Ok(draft)
+    }
+
+    /// Create missing remote labels for Draft names, canonicalize casing, refresh Label catalog.
+    fn ensure_remote_labels(
+        &mut self,
+        token: &str,
+        repo: &RepoId,
+        label_names: &[String],
+    ) -> Result<Vec<String>, GitHubError> {
+        let mut catalog_labels = self.github.list_labels(token, repo).unwrap_or_else(|_| {
+            self.label_catalog_store
+                .load(repo)
+                .ok()
+                .flatten()
+                .map(|c| c.labels)
+                .unwrap_or_default()
+        });
+
+        let mut canonical = Vec::with_capacity(label_names.len());
+
+        for name in label_names {
+            let trimmed = name.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some(existing) = find_label_ci(&catalog_labels, trimmed) {
+                canonical.push(existing.name.clone());
+                continue;
+            }
+            match self
+                .github
+                .create_label(token, repo, trimmed, DEFAULT_NOVEL_LABEL_COLOR)
+            {
+                Ok(created) => {
+                    catalog_labels.push(created.clone());
+                    canonical.push(created.name);
+                }
+                Err(_) => {
+                    // Soft path: list may have failed while the label already exists remotely.
+                    canonical.push(trimmed.to_string());
+                }
+            }
+        }
+
+        let mut deduped = Vec::new();
+        for name in canonical {
+            if deduped
+                .iter()
+                .any(|existing: &String| existing.eq_ignore_ascii_case(&name))
+            {
+                continue;
+            }
+            deduped.push(name);
+        }
+
+        let catalog = LabelCatalog {
+            repo: repo.clone(),
+            labels: catalog_labels,
+            refreshed_at: self.clock.now(),
+        };
+        let _ = self.label_catalog_store.save(catalog);
+
+        Ok(deduped)
     }
 
     fn load_linked_for_update(
@@ -704,14 +878,42 @@ fn apply_remote_issue_to_draft(
     draft.updated_at = now;
 }
 
+fn find_label_ci<'a>(labels: &'a [RepoLabel], name: &str) -> Option<&'a RepoLabel> {
+    labels
+        .iter()
+        .find(|label| label.name.eq_ignore_ascii_case(name))
+}
+
+/// Resolve Draft label names against a Label catalog (case-insensitive → canonical).
+pub fn canonicalize_label_names(names: &[String], catalog: &[RepoLabel]) -> Vec<String> {
+    let mut out = Vec::new();
+    for name in names {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let canonical = find_label_ci(catalog, trimmed)
+            .map(|label| label.name.clone())
+            .unwrap_or_else(|| trimmed.to_string());
+        if out
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(&canonical))
+        {
+            continue;
+        }
+        out.push(canonical);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use super::*;
     use ports::fakes::{
-        FakeClock, FakeDraftStore, FakeGitHub, FakeSettingsStore, FakeTokenStore,
-        FakeVoiceTranscriber,
+        FakeClock, FakeDraftStore, FakeGitHub, FakeLabelCatalogStore, FakeSettingsStore,
+        FakeTokenStore, FakeVoiceTranscriber,
     };
 
     type TestCore = IssuebridgeCore<
@@ -721,6 +923,7 @@ mod tests {
         FakeVoiceTranscriber,
         FakeClock,
         FakeSettingsStore,
+        FakeLabelCatalogStore,
     >;
 
     fn fresh_core() -> TestCore {
@@ -731,6 +934,7 @@ mod tests {
             FakeVoiceTranscriber::default(),
             FakeClock::default(),
             FakeSettingsStore::default(),
+            FakeLabelCatalogStore::default(),
         )
     }
 
@@ -750,6 +954,7 @@ mod tests {
             voice,
             FakeClock::default(),
             settings,
+            FakeLabelCatalogStore::default(),
         );
         core.sign_in_with_pat("ghp_test_token_not_a_secret")
             .expect("PAT sign-in");
@@ -819,6 +1024,7 @@ mod tests {
             FakeVoiceTranscriber::default(),
             FakeClock::default(),
             FakeSettingsStore::default(),
+            FakeLabelCatalogStore::default(),
         );
 
         let err = core
@@ -843,6 +1049,7 @@ mod tests {
             FakeVoiceTranscriber::default(),
             FakeClock::default(),
             FakeSettingsStore::default(),
+            FakeLabelCatalogStore::default(),
         );
 
         assert_eq!(core.auth_state(), AuthState::SignedOut);
@@ -869,6 +1076,7 @@ mod tests {
             FakeVoiceTranscriber::default(),
             FakeClock::default(),
             FakeSettingsStore::default(),
+            FakeLabelCatalogStore::default(),
         );
 
         let err = core
@@ -969,6 +1177,7 @@ mod tests {
             FakeVoiceTranscriber::default(),
             FakeClock::default(),
             settings,
+            FakeLabelCatalogStore::default(),
         );
         assert_eq!(resumed.first_run_step(), FirstRunStep::TestingSet);
     }
@@ -1068,6 +1277,7 @@ mod tests {
             FakeVoiceTranscriber::default(),
             FakeClock::default(),
             settings,
+            FakeLabelCatalogStore::default(),
         );
         assert_eq!(resumed.first_run_step(), FirstRunStep::TryCapture);
         assert_eq!(resumed.testing_set(), vec![repo("acme", "widgets")]);
@@ -1148,6 +1358,7 @@ mod tests {
             FakeVoiceTranscriber::default(),
             FakeClock::default(),
             settings,
+            FakeLabelCatalogStore::default(),
         );
         assert_eq!(resumed.first_run_step(), FirstRunStep::Ready);
         assert!(!resumed.should_open_main_on_launch());
@@ -1280,6 +1491,7 @@ mod tests {
             FakeVoiceTranscriber::default(),
             clock.clone(),
             settings,
+            FakeLabelCatalogStore::default(),
         );
         core.sign_in_with_pat("ghp_test_token_not_a_secret")
             .expect("PAT sign-in");
@@ -1707,5 +1919,225 @@ mod tests {
         });
         let core = signed_in_core(FakeGitHub::default(), settings);
         assert_eq!(core.ptt_hotkey(), "Ctrl+Alt+Shift+P");
+    }
+
+    #[test]
+    fn ensure_label_catalog_fetches_and_persists_name_and_color() {
+        let github = FakeGitHub::default();
+        github.set_repo_labels(
+            &repo("acme", "widgets"),
+            vec![RepoLabel {
+                name: "Bug".into(),
+                color: "d73a4a".into(),
+            }],
+        );
+        let mut core = signed_in_core(github, ready_settings());
+
+        let ensured = core
+            .ensure_label_catalog(&repo("acme", "widgets"))
+            .expect("catalog");
+
+        assert!(!ensured.refresh_failed);
+        assert_eq!(
+            ensured.labels,
+            vec![RepoLabel {
+                name: "Bug".into(),
+                color: "d73a4a".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn ensure_label_catalog_skips_github_when_fresh_cache_exists() {
+        let github = FakeGitHub::default();
+        github.set_repo_labels(
+            &repo("acme", "widgets"),
+            vec![RepoLabel {
+                name: "Bug".into(),
+                color: "d73a4a".into(),
+            }],
+        );
+        let mut core = signed_in_core(github.clone(), ready_settings());
+        core.ensure_label_catalog(&repo("acme", "widgets"))
+            .expect("initial fetch");
+
+        github.set_repo_labels(&repo("acme", "widgets"), Vec::new());
+        let ensured = core
+            .ensure_label_catalog(&repo("acme", "widgets"))
+            .expect("cached");
+
+        assert_eq!(ensured.labels.len(), 1);
+        assert_eq!(ensured.labels[0].name, "Bug");
+        assert!(!ensured.refresh_failed);
+    }
+
+    #[test]
+    fn ensure_label_catalog_soft_fails_to_last_good_when_github_unavailable() {
+        let github = FakeGitHub::default();
+        github.set_repo_labels(
+            &repo("acme", "widgets"),
+            vec![RepoLabel {
+                name: "Bug".into(),
+                color: "d73a4a".into(),
+            }],
+        );
+        let clock = FakeClock::default();
+        let catalogs = FakeLabelCatalogStore::default();
+        let mut core = IssuebridgeCore::new(
+            github.clone(),
+            FakeTokenStore::default(),
+            FakeDraftStore::default(),
+            FakeVoiceTranscriber::default(),
+            clock.clone(),
+            ready_settings(),
+            catalogs.clone(),
+        );
+        core.sign_in_with_pat("ghp_test_token_not_a_secret")
+            .expect("PAT sign-in");
+        core.ensure_label_catalog(&repo("acme", "widgets"))
+            .expect("seed");
+
+        clock.advance(Duration::from_secs(15 * 60 + 1));
+        *github.list_labels_unavailable.lock().expect("flag") = true;
+
+        let ensured = core
+            .ensure_label_catalog(&repo("acme", "widgets"))
+            .expect("soft fail");
+
+        assert!(ensured.refresh_failed);
+        assert_eq!(ensured.labels[0].name, "Bug");
+        assert!(catalogs.snapshot(&repo("acme", "widgets")).is_some());
+    }
+
+    #[test]
+    fn publish_creates_novel_labels_with_default_color_and_updates_catalog() {
+        let github = FakeGitHub::default();
+        github.set_repo_labels(
+            &repo("acme", "widgets"),
+            vec![RepoLabel {
+                name: "Bug".into(),
+                color: "d73a4a".into(),
+            }],
+        );
+        let catalogs = FakeLabelCatalogStore::default();
+        let mut core = IssuebridgeCore::new(
+            github.clone(),
+            FakeTokenStore::default(),
+            FakeDraftStore::default(),
+            FakeVoiceTranscriber::default(),
+            FakeClock::default(),
+            ready_settings(),
+            catalogs.clone(),
+        );
+        core.sign_in_with_pat("ghp_test_token_not_a_secret")
+            .expect("PAT sign-in");
+
+        let draft = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "Broken button".into(),
+                body: "details".into(),
+            })
+            .expect("capture");
+
+        core.edit_draft(EditDraftInput {
+            id: draft.id.clone(),
+            title: draft.title,
+            body: draft.body,
+            label_names: vec!["bug".into(), "needs-triage".into()],
+        })
+        .expect("edit");
+
+        let published = core.publish_draft(&draft.id).expect("publish");
+
+        assert_eq!(
+            published.label_names,
+            vec!["Bug".to_string(), "needs-triage".to_string()]
+        );
+
+        let labels = github
+            .repo_labels
+            .lock()
+            .expect("labels")
+            .get("acme/widgets")
+            .cloned()
+            .unwrap_or_default();
+        assert!(labels
+            .iter()
+            .any(|l| l.name == "Bug" && l.color == "d73a4a"));
+        assert!(labels
+            .iter()
+            .any(|l| { l.name == "needs-triage" && l.color == DEFAULT_NOVEL_LABEL_COLOR }));
+
+        let catalog = catalogs
+            .snapshot(&repo("acme", "widgets"))
+            .expect("catalog after publish");
+        assert!(catalog.labels.iter().any(|l| l.name == "needs-triage"));
+    }
+
+    #[test]
+    fn canonicalize_label_names_uses_catalog_casing() {
+        let catalog = vec![RepoLabel {
+            name: "Bug".into(),
+            color: "d73a4a".into(),
+        }];
+        assert_eq!(
+            canonicalize_label_names(&["bug".into(), "novel".into()], &catalog),
+            vec!["Bug".to_string(), "novel".to_string()]
+        );
+    }
+
+    #[test]
+    fn prefetch_testing_set_label_catalogs_covers_each_testing_repo() {
+        let github = FakeGitHub::default();
+        github.set_repo_labels(
+            &repo("acme", "widgets"),
+            vec![RepoLabel {
+                name: "Bug".into(),
+                color: "d73a4a".into(),
+            }],
+        );
+        github.set_repo_labels(
+            &repo("acme", "api"),
+            vec![RepoLabel {
+                name: "docs".into(),
+                color: "0075ca".into(),
+            }],
+        );
+        let catalogs = FakeLabelCatalogStore::default();
+        let settings = FakeSettingsStore::with_settings(AppSettings {
+            install_completed: true,
+            testing_set_completed: true,
+            testing_set: vec![repo("acme", "widgets"), repo("acme", "api")],
+            app_visible_repos: vec![repo("acme", "widgets"), repo("acme", "api")],
+            ..AppSettings::default()
+        });
+        let mut core = IssuebridgeCore::new(
+            github,
+            FakeTokenStore::default(),
+            FakeDraftStore::default(),
+            FakeVoiceTranscriber::default(),
+            FakeClock::default(),
+            settings,
+            catalogs.clone(),
+        );
+        core.sign_in_with_pat("ghp_test_token_not_a_secret")
+            .expect("PAT sign-in");
+
+        core.prefetch_testing_set_label_catalogs()
+            .expect("prefetch");
+
+        assert_eq!(
+            catalogs
+                .snapshot(&repo("acme", "widgets"))
+                .expect("widgets")
+                .labels[0]
+                .name,
+            "Bug"
+        );
+        assert_eq!(
+            catalogs.snapshot(&repo("acme", "api")).expect("api").labels[0].name,
+            "docs"
+        );
     }
 }

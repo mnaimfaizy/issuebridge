@@ -8,13 +8,17 @@ import {
   Textarea,
 } from "@fluentui/react-components";
 import type { RefObject } from "react";
-import type { DraftDto } from "./types";
+import type { DraftDto, RepoLabelDto } from "./types";
+import { assignedLabelSet, parseLabelNames } from "./types";
 
 type DraftInspectorProps = {
   draft: DraftDto | null;
   title: string;
   body: string;
   labels: string;
+  catalogLabels: RepoLabelDto[];
+  catalogRefreshFailed: boolean;
+  suggestionFilter: string;
   busy: boolean;
   narrowStacked: boolean;
   editorRef: RefObject<HTMLElement | null>;
@@ -22,16 +26,32 @@ type DraftInspectorProps = {
   onTitleChange: (value: string) => void;
   onBodyChange: (value: string) => void;
   onLabelsChange: (value: string) => void;
+  onSuggestionFilterChange: (value: string) => void;
+  onToggleCatalogLabel: (name: string) => void;
   onSave: () => void;
   onPublishOrUpdate: () => void;
   onBack: () => void;
 };
+
+function contrastText(hex: string): string {
+  const cleaned = hex.replace("#", "").trim();
+  if (cleaned.length !== 6) return "#111";
+  const r = Number.parseInt(cleaned.slice(0, 2), 16);
+  const g = Number.parseInt(cleaned.slice(2, 4), 16);
+  const b = Number.parseInt(cleaned.slice(4, 6), 16);
+  if ([r, g, b].some((n) => Number.isNaN(n))) return "#111";
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? "#111" : "#fff";
+}
 
 export function DraftInspector({
   draft,
   title,
   body,
   labels,
+  catalogLabels,
+  catalogRefreshFailed,
+  suggestionFilter,
   busy,
   narrowStacked,
   editorRef,
@@ -39,6 +59,8 @@ export function DraftInspector({
   onTitleChange,
   onBodyChange,
   onLabelsChange,
+  onSuggestionFilterChange,
+  onToggleCatalogLabel,
   onSave,
   onPublishOrUpdate,
   onBack,
@@ -56,6 +78,28 @@ export function DraftInspector({
         </Text>
       </section>
     );
+  }
+
+  const assigned = assignedLabelSet(labels);
+  const filter = suggestionFilter.trim().toLowerCase();
+  const suggestions = catalogLabels.filter((label) => {
+    if (!filter) return false;
+    if (assigned.has(label.name.toLowerCase())) return false;
+    return label.name.toLowerCase().includes(filter);
+  });
+
+  function commitTypedLabel() {
+    const typed = suggestionFilter.trim();
+    if (!typed) return;
+    const next = parseLabelNames(labels);
+    if (!next.some((name) => name.toLowerCase() === typed.toLowerCase())) {
+      const hit = catalogLabels.find(
+        (label) => label.name.toLowerCase() === typed.toLowerCase(),
+      );
+      next.push(hit ? hit.name : typed);
+      onLabelsChange(next.join(", "));
+    }
+    onSuggestionFilterChange("");
   }
 
   return (
@@ -107,14 +151,77 @@ export function DraftInspector({
           onChange={(_, data) => onBodyChange(data.value)}
         />
       </Field>
-      <Field label="Labels (comma-separated names)">
+      <Field label="Labels">
         <Input
-          value={labels}
+          value={suggestionFilter}
           disabled={busy}
-          placeholder="bug, ui"
-          onChange={(_, data) => onLabelsChange(data.value)}
+          placeholder="Type to suggest or create a label"
+          aria-label="Label suggestions"
+          onChange={(_, data) => onSuggestionFilterChange(data.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === ",") {
+              event.preventDefault();
+              commitTypedLabel();
+            }
+          }}
         />
       </Field>
+      {suggestions.length > 0 ? (
+        <ul className="ib-label-suggestions" aria-label="Label suggestions">
+          {suggestions.map((label) => (
+            <li key={label.name}>
+              <button
+                type="button"
+                className="ib-label-chip"
+                style={{
+                  backgroundColor: `#${label.color.replace("#", "")}`,
+                  color: contrastText(label.color),
+                }}
+                disabled={busy}
+                onClick={() => {
+                  onToggleCatalogLabel(label.name);
+                  onSuggestionFilterChange("");
+                }}
+              >
+                {label.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {catalogRefreshFailed ? (
+        <Text as="p" size={200} className="ib-muted">
+          Label catalog may be stale or unavailable.
+        </Text>
+      ) : null}
+      <div className="ib-label-catalog" role="group" aria-label="Label catalog">
+        {catalogLabels.length === 0 ? (
+          <Text as="p" size={200} className="ib-muted">
+            Label catalog is empty for this repository. Type a name above to add
+            one on Publish.
+          </Text>
+        ) : (
+          catalogLabels.map((label) => {
+            const selected = assigned.has(label.name.toLowerCase());
+            return (
+              <button
+                key={label.name}
+                type="button"
+                className={`ib-label-chip${selected ? " selected" : ""}`}
+                style={{
+                  backgroundColor: `#${label.color.replace("#", "")}`,
+                  color: contrastText(label.color),
+                }}
+                disabled={busy}
+                aria-pressed={selected}
+                onClick={() => onToggleCatalogLabel(label.name)}
+              >
+                {label.name}
+              </button>
+            );
+          })
+        )}
+      </div>
 
       <div className="ib-draft-actions">
         <Button appearance="secondary" disabled={busy} onClick={onSave}>
