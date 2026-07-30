@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import {
   Body1,
   Button,
@@ -8,6 +7,7 @@ import {
   Subtitle2,
 } from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
 import type { AccountAuth } from "../shell/Sidebar";
 import { captureSettingsHelper, isCaptureSettingsEnabled } from "./gating";
 

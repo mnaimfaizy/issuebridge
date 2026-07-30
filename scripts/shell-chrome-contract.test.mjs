@@ -3,7 +3,7 @@
  * Asserts observable adapter contracts in source (not Fluent internals).
  */
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -41,7 +41,10 @@ describe("shell chrome (#36)", () => {
     assert.match(theme, /issuebridge\.themePreference/);
     assert.match(theme, /prefers-color-scheme/);
     const app = readSrc("App.tsx");
-    assert.match(app, /matchMedia\(\s*['"]\(prefers-color-scheme:\s*dark\)['"]\s*\)/);
+    assert.match(
+      app,
+      /matchMedia\(\s*['"]\(prefers-color-scheme:\s*dark\)['"]\s*\)/,
+    );
   });
 
   it("compact sidebar lists Inbox top and Help → Settings → account bottom", () => {

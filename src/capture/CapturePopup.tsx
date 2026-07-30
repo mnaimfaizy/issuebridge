@@ -1,33 +1,29 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
-import {
-  Button,
-  Input,
-  Textarea,
-} from "@fluentui/react-components";
+import { Button, Input, Textarea } from "@fluentui/react-components";
 import { DismissRegular, MicRegular, SaveRegular } from "@fluentui/react-icons";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  MAX_PTT_MS,
-  MIN_PTT_MS,
-  WAV_RATE,
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import {
   bytesToBase64,
   downsample,
   encodeWav,
   formatMs,
+  MAX_PTT_MS,
+  MIN_PTT_MS,
   mergeFloat32,
+  WAV_RATE,
 } from "./pttAudio";
 import {
-  VOICE_MESSAGES,
   mapMicError,
   parseVoiceKind,
+  VOICE_MESSAGES,
   type VoiceKind,
 } from "./voiceMessages";
 import "./capture.css";
@@ -123,7 +119,9 @@ export function CapturePopup() {
   }, []);
 
   const stopMicTracks = useCallback(() => {
-    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current?.getTracks().forEach((track) => {
+      track.stop();
+    });
     mediaStreamRef.current = null;
   }, []);
 
@@ -499,9 +497,7 @@ export function CapturePopup() {
               </span>
             ) : (
               <span>
-                {transcribing
-                  ? "Transcribing…"
-                  : `Ready for ${voiceTarget}`}
+                {transcribing ? "Transcribing…" : `Ready for ${voiceTarget}`}
               </span>
             )}
           </div>
@@ -532,8 +528,7 @@ export function CapturePopup() {
         >
           {testingSet.map((repo) => {
             const selected =
-              selectedRepo !== null &&
-              repoKey(repo) === repoKey(selectedRepo);
+              selectedRepo !== null && repoKey(repo) === repoKey(selectedRepo);
             return (
               <button
                 key={repoKey(repo)}

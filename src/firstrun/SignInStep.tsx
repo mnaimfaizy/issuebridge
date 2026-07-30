@@ -1,4 +1,3 @@
-import { useState, type FormEvent } from "react";
 import {
   Body1,
   Button,
@@ -9,13 +8,14 @@ import {
   Subtitle2,
 } from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  dispatchAppState,
-  formatInvokeError,
-  type AuthStateDto,
-  type FirstRunWizardStep,
-} from "./types";
+import { type FormEvent, useState } from "react";
 import type { FirstRunStep } from "../settings/gating";
+import {
+  type AuthStateDto,
+  dispatchAppState,
+  type FirstRunWizardStep,
+  formatInvokeError,
+} from "./types";
 
 type SignInStepProps = {
   onAdvanced: (auth: AuthStateDto, step: FirstRunStep) => void;
@@ -71,7 +71,10 @@ export function SignInStep({ onAdvanced }: SignInStepProps) {
       const step = await invoke<FirstRunStep>("first_run_step");
       dispatchAppState(auth, step);
       onAdvanced(auth, step);
-      if (auth !== "signed_in" || (step as FirstRunWizardStep | "ready") === "sign_in") {
+      if (
+        auth !== "signed_in" ||
+        (step as FirstRunWizardStep | "ready") === "sign_in"
+      ) {
         setError(
           "Credentials were accepted, but the app stayed on Sign in. Check the terminal for [issuebridge] keyring logs.",
         );
@@ -91,16 +94,18 @@ export function SignInStep({ onAdvanced }: SignInStepProps) {
   return (
     <div className="ib-firstrun-step">
       <Subtitle2 as="h1">Sign in</Subtitle2>
-      <Body1>
-        Sign in so Issuebridge can create and update issues as you.
-      </Body1>
+      <Body1>Sign in so Issuebridge can create and update issues as you.</Body1>
       {error ? (
         <MessageBar intent="error" aria-live="polite">
           <MessageBarBody className="ib-message-copy">{error}</MessageBarBody>
         </MessageBar>
       ) : null}
       <div className="ib-firstrun-actions">
-        <Button appearance="primary" disabled={busy} onClick={() => void runGithub()}>
+        <Button
+          appearance="primary"
+          disabled={busy}
+          onClick={() => void runGithub()}
+        >
           Sign in with GitHub
         </Button>
         <details className="ib-pat-details">

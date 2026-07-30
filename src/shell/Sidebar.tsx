@@ -1,15 +1,11 @@
-import type { ReactElement } from "react";
-import {
-  Avatar,
-  Button,
-  Tooltip,
-} from "@fluentui/react-components";
+import { Avatar, Button, Tooltip } from "@fluentui/react-components";
 import {
   MailInboxRegular,
   QuestionCircleRegular,
   SettingsRegular,
   SignOutRegular,
 } from "@fluentui/react-icons";
+import type { ReactElement } from "react";
 import type { Destination } from "./destinations";
 
 export type AccountAuth = "signed_in" | "signed_out";
@@ -51,9 +47,7 @@ export function Sidebar({
           onClick={() => onNavigate("inbox")}
           gated={!firstRunComplete}
           disabled={!firstRunComplete}
-          helper={
-            firstRunComplete ? undefined : "Available after first-run"
-          }
+          helper={firstRunComplete ? undefined : "Available after first-run"}
         />
       </div>
 
@@ -139,7 +133,11 @@ function NavItem({
   return (
     <div className="ib-nav-item-wrap">
       {helper ? (
-        <Tooltip content={helper} relationship="description" positioning="after">
+        <Tooltip
+          content={helper}
+          relationship="description"
+          positioning="after"
+        >
           {button}
         </Tooltip>
       ) : (

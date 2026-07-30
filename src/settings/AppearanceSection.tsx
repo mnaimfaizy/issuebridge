@@ -1,4 +1,10 @@
-import { Body1, Label, Radio, RadioGroup, Subtitle2 } from "@fluentui/react-components";
+import {
+  Body1,
+  Label,
+  Radio,
+  RadioGroup,
+  Subtitle2,
+} from "@fluentui/react-components";
 import type { ThemePreference } from "../theme/preference";
 
 type AppearanceSectionProps = {

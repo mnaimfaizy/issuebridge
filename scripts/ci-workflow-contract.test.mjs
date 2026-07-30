@@ -19,7 +19,7 @@ function jobBlock(yml, name) {
   const start = yml.search(new RegExp(`^  ${name}:\\s*$`, "m"));
   assert.ok(start >= 0, `expected job ${name}`);
   const rest = yml.slice(start + 1);
-  const next = rest.search(/^  [a-zA-Z0-9_-]+:\s*$/m);
+  const next = rest.search(/^ {2}[a-zA-Z0-9_-]+:\s*$/m);
   return next < 0 ? yml.slice(start) : yml.slice(start, start + 1 + next);
 }
 
@@ -41,12 +41,13 @@ describe("PR CI workflow contract (#24)", () => {
     assert.doesNotMatch(yml, /runs-on:\s*windows-latest/);
   });
 
-  it("frontend job runs typecheck, contracts, packaging, and Vite build with Node 22 npm cache", () => {
+  it("frontend job runs lint, typecheck, contracts, packaging, and Vite build with Node 22 npm cache", () => {
     const yml = readWorkflow();
     const frontend = jobBlock(yml, "frontend");
     assert.match(frontend, /node-version:\s*["']?22["']?/);
     assert.match(frontend, /cache:\s*npm/);
     assert.match(frontend, /npm ci/);
+    assert.match(frontend, /npm run lint/);
     assert.match(frontend, /npm run typecheck/);
     assert.match(frontend, /npm run test:ui-contracts/);
     assert.match(frontend, /npm run test:packaging/);
@@ -61,7 +62,10 @@ describe("PR CI workflow contract (#24)", () => {
     assert.match(rust, /libwebkit2gtk-4\.1-dev/);
     assert.match(rust, /clippy/);
     assert.match(rust, /rustfmt/);
-    assert.match(rust, /cargo fmt --all -- --check|cargo fmt --manifest-path src-tauri\/Cargo\.toml --all -- --check/);
+    assert.match(
+      rust,
+      /cargo fmt --all -- --check|cargo fmt --manifest-path src-tauri\/Cargo\.toml --all -- --check/,
+    );
     assert.match(rust, /cargo clippy[^\n]*-- -D warnings/);
     assert.match(rust, /cargo test --manifest-path src-tauri\/Cargo\.toml/);
     assert.match(rust, /TAURI_CONFIG:/);
@@ -74,10 +78,7 @@ describe("PR CI workflow contract (#24)", () => {
   it("ci gate needs frontend and rust", () => {
     const yml = readWorkflow();
     const ci = jobBlock(yml, "ci");
-    assert.match(
-      ci,
-      /needs:\s*\[[^\]]*frontend[^\]]*rust[^\]]*\]/,
-    );
+    assert.match(ci, /needs:\s*\[[^\]]*frontend[^\]]*rust[^\]]*\]/);
   });
 
   it("package.json exposes npm run ci mirroring the gate", () => {
@@ -87,11 +88,22 @@ describe("PR CI workflow contract (#24)", () => {
     assert.match(pkg.scripts.ci, /fmt/);
     assert.match(pkg.scripts.ci, /clippy/);
     assert.match(pkg.scripts.ci, /-D warnings/);
+    assert.match(pkg.scripts.ci, /\blint\b/);
     assert.match(pkg.scripts.ci, /typecheck/);
     assert.match(pkg.scripts.ci, /test:ui-contracts/);
     assert.match(pkg.scripts.ci, /test:packaging/);
     assert.match(pkg.scripts.ci, /test:ci-contract/);
     assert.match(pkg.scripts.ci, /test:core/);
     assert.match(pkg.scripts.ci, /build/);
+  });
+
+  it("package.json exposes check-only lint and local format autofix (#48)", () => {
+    const pkg = readPackageJson();
+    assert.equal(typeof pkg.scripts.lint, "string");
+    assert.equal(typeof pkg.scripts.format, "string");
+    assert.match(pkg.scripts.lint, /biome/);
+    assert.match(pkg.scripts.format, /biome/);
+    assert.match(pkg.scripts.format, /--write/);
+    assert.doesNotMatch(pkg.scripts.lint, /--write/);
   });
 });

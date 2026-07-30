@@ -3,7 +3,7 @@
  * Asserts observable adapter contracts in source (not Fluent internals).
  */
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -59,7 +59,10 @@ describe("First-run progress strip (#40)", () => {
     assert.match(install, /open_app_install/);
     assert.match(install, /continue_install/);
     assert.match(install, /MessageBar/);
-    assert.match(install, /Don.?t see an install yet|Add selected repositories/i);
+    assert.match(
+      install,
+      /Don.?t see an install yet|Add selected repositories/i,
+    );
   });
 
   it("Testing set picks 1–3 App-visible repos with search/chips; MessageBar for All-repositories warning", () => {

@@ -1,22 +1,19 @@
-import { useEffect, useState } from "react";
 import {
   FluentProvider,
   webDarkTheme,
   webLightTheme,
 } from "@fluentui/react-components";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { useEffect, useState } from "react";
 import {
-  THEME_STORAGE_KEY,
   readSystemPrefersDark,
   readThemePreference,
   resolveIsDark,
+  THEME_STORAGE_KEY,
   type ThemePreference,
 } from "../theme/preference";
 import { CapturePopup } from "./CapturePopup";
-import {
-  readCaptureWindowSize,
-  writeCaptureWindowSize,
-} from "./geometry";
+import { readCaptureWindowSize, writeCaptureWindowSize } from "./geometry";
 
 export function CaptureApp() {
   const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
@@ -55,11 +52,9 @@ export function CaptureApp() {
     let unlisten: (() => void) | undefined;
     const win = getCurrentWindow();
     const size = readCaptureWindowSize();
-    void win
-      .setSize(new LogicalSize(size.width, size.height))
-      .catch(() => {
-        // Ignore when not running under Tauri.
-      });
+    void win.setSize(new LogicalSize(size.width, size.height)).catch(() => {
+      // Ignore when not running under Tauri.
+    });
 
     void (async () => {
       try {

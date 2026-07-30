@@ -4,7 +4,7 @@ export const LAST_DRAFT_STORAGE_KEY = "issuebridge.lastInboxDraftId";
 export function readLastDraftId(): string | null {
   try {
     const raw = localStorage.getItem(LAST_DRAFT_STORAGE_KEY);
-    return raw && raw.trim() ? raw : null;
+    return raw?.trim() ? raw : null;
   } catch {
     return null;
   }

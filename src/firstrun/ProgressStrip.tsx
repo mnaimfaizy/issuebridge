@@ -1,8 +1,5 @@
 import { CheckmarkRegular } from "@fluentui/react-icons";
-import {
-  FIRST_RUN_STRIP_STEPS,
-  type FirstRunWizardStep,
-} from "./types";
+import { FIRST_RUN_STRIP_STEPS, type FirstRunWizardStep } from "./types";
 
 type ProgressStripProps = {
   current: FirstRunWizardStep;

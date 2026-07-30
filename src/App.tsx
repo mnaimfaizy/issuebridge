@@ -1,22 +1,22 @@
-import { useEffect, useState } from "react";
 import {
   FluentProvider,
   webDarkTheme,
   webLightTheme,
 } from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
-import { ShellLayout } from "./shell/ShellLayout";
-import type { Destination } from "./shell/destinations";
-import type { AccountAuth } from "./shell/Sidebar";
-import type { FirstRunStep } from "./settings/gating";
+import { useEffect, useState } from "react";
 import type { AuthStateDto } from "./firstrun/types";
 import { dispatchAppState } from "./firstrun/types";
+import type { FirstRunStep } from "./settings/gating";
+import type { Destination } from "./shell/destinations";
+import { ShellLayout } from "./shell/ShellLayout";
+import type { AccountAuth } from "./shell/Sidebar";
 import {
   readSystemPrefersDark,
   readThemePreference,
   resolveIsDark,
-  writeThemePreference,
   type ThemePreference,
+  writeThemePreference,
 } from "./theme/preference";
 
 type FirstRunStepDto = FirstRunStep;

@@ -30,7 +30,10 @@ export function downsample(
   return out;
 }
 
-export function encodeWav(samples: Float32Array, sampleRate: number): Uint8Array {
+export function encodeWav(
+  samples: Float32Array,
+  sampleRate: number,
+): Uint8Array {
   const dataLength = samples.length * 2;
   const buffer = new ArrayBuffer(44 + dataLength);
   const view = new DataView(buffer);
