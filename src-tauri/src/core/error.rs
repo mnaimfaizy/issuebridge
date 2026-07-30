@@ -68,9 +68,14 @@ pub enum TestingSetError {
     /// First-run unfinished — Settings-only Testing set max / Add all are refused.
     SettingsOnly,
     /// Add refused because the Testing set already has `max` repos.
-    LimitReached { max: usize },
+    LimitReached {
+        max: usize,
+    },
     /// Lowering max refused while the Testing set still has more than `requested` repos.
-    MaxBelowCurrentSet { current: usize, requested: usize },
+    MaxBelowCurrentSet {
+        current: usize,
+        requested: usize,
+    },
     /// Max not in 1..=App-visible count.
     MaxOutOfRange,
     NotAppVisible,

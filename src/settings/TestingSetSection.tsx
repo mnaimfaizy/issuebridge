@@ -136,7 +136,9 @@ export function TestingSetSection({
   async function commitMax(nextMax: number) {
     setBusy(true);
     try {
-      const saved = await invoke<number>("set_testing_set_max", { max: nextMax });
+      const saved = await invoke<number>("set_testing_set_max", {
+        max: nextMax,
+      });
       setMaxSlots(saved);
       setMaxDraft(String(saved));
       setError(null);
@@ -249,8 +251,8 @@ export function TestingSetSection({
       {editable ? (
         <MessageBar intent="info">
           <MessageBarBody className="ib-message-copy">
-            Max {RECOMMENDED_MAX} is the approved approach. Raising it means more
-            context switching while capturing.
+            Max {RECOMMENDED_MAX} is the approved approach. Raising it means
+            more context switching while capturing.
           </MessageBarBody>
         </MessageBar>
       ) : null}
@@ -388,7 +390,9 @@ export function TestingSetSection({
       >
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>Raise Testing set above {RECOMMENDED_MAX}?</DialogTitle>
+            <DialogTitle>
+              Raise Testing set above {RECOMMENDED_MAX}?
+            </DialogTitle>
             <DialogContent>
               Max {RECOMMENDED_MAX} is the approved approach. Going higher means
               more context switching while capturing. Continue anyway?
