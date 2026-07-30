@@ -470,10 +470,7 @@ where
             .map_err(|_| LabelCatalogError::StorageUnavailable)?
             .ok_or(LabelCatalogError::NotSignedIn)?;
 
-        match self
-            .github
-            .list_labels(&credentials.access_token, repo)
-        {
+        match self.github.list_labels(&credentials.access_token, repo) {
             Ok(labels) => {
                 let catalog = LabelCatalog {
                     repo: repo.clone(),
@@ -541,11 +538,7 @@ where
         }
 
         let label_names = self
-            .ensure_remote_labels(
-                &credentials.access_token,
-                &draft.repo,
-                &draft.label_names,
-            )
+            .ensure_remote_labels(&credentials.access_token, &draft.repo, &draft.label_names)
             .map_err(|err| match err {
                 GitHubError::InvalidCredentials | GitHubError::Unavailable => {
                     PublishError::ProviderUnavailable
@@ -611,11 +604,7 @@ where
         }
 
         let label_names = self
-            .ensure_remote_labels(
-                &credentials.access_token,
-                &draft.repo,
-                &draft.label_names,
-            )
+            .ensure_remote_labels(&credentials.access_token, &draft.repo, &draft.label_names)
             .map_err(map_update_github_error)?;
 
         let updated = self
@@ -645,11 +634,7 @@ where
         }
 
         let label_names = self
-            .ensure_remote_labels(
-                &credentials.access_token,
-                &draft.repo,
-                &draft.label_names,
-            )
+            .ensure_remote_labels(&credentials.access_token, &draft.repo, &draft.label_names)
             .map_err(map_update_github_error)?;
 
         let updated = self
@@ -693,17 +678,14 @@ where
         repo: &RepoId,
         label_names: &[String],
     ) -> Result<Vec<String>, GitHubError> {
-        let mut catalog_labels = self
-            .github
-            .list_labels(token, repo)
-            .unwrap_or_else(|_| {
-                self.label_catalog_store
-                    .load(repo)
-                    .ok()
-                    .flatten()
-                    .map(|c| c.labels)
-                    .unwrap_or_default()
-            });
+        let mut catalog_labels = self.github.list_labels(token, repo).unwrap_or_else(|_| {
+            self.label_catalog_store
+                .load(repo)
+                .ok()
+                .flatten()
+                .map(|c| c.labels)
+                .unwrap_or_default()
+        });
 
         let mut canonical = Vec::with_capacity(label_names.len());
 
@@ -716,12 +698,10 @@ where
                 canonical.push(existing.name.clone());
                 continue;
             }
-            match self.github.create_label(
-                token,
-                repo,
-                trimmed,
-                DEFAULT_NOVEL_LABEL_COLOR,
-            ) {
+            match self
+                .github
+                .create_label(token, repo, trimmed, DEFAULT_NOVEL_LABEL_COLOR)
+            {
                 Ok(created) => {
                     catalog_labels.push(created.clone());
                     canonical.push(created.name);
@@ -2082,10 +2062,12 @@ mod tests {
             .get("acme/widgets")
             .cloned()
             .unwrap_or_default();
-        assert!(labels.iter().any(|l| l.name == "Bug" && l.color == "d73a4a"));
-        assert!(labels.iter().any(|l| {
-            l.name == "needs-triage" && l.color == DEFAULT_NOVEL_LABEL_COLOR
-        }));
+        assert!(labels
+            .iter()
+            .any(|l| l.name == "Bug" && l.color == "d73a4a"));
+        assert!(labels
+            .iter()
+            .any(|l| { l.name == "needs-triage" && l.color == DEFAULT_NOVEL_LABEL_COLOR }));
 
         let catalog = catalogs
             .snapshot(&repo("acme", "widgets"))
@@ -2154,11 +2136,7 @@ mod tests {
             "Bug"
         );
         assert_eq!(
-            catalogs
-                .snapshot(&repo("acme", "api"))
-                .expect("api")
-                .labels[0]
-                .name,
+            catalogs.snapshot(&repo("acme", "api")).expect("api").labels[0].name,
             "docs"
         );
     }

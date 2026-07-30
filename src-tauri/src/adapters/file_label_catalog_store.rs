@@ -6,9 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::{
-    LabelCatalog, LabelCatalogStore, LabelCatalogStoreError, RepoId, RepoLabel,
-};
+use crate::core::{LabelCatalog, LabelCatalogStore, LabelCatalogStoreError, RepoId, RepoLabel};
 
 const CATALOG_FILE: &str = "label_catalog.json";
 
@@ -74,7 +72,8 @@ impl FileLabelCatalogStore {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|_| LabelCatalogStoreError::Unavailable)?;
         }
-        let bytes = serde_json::to_vec_pretty(file).map_err(|_| LabelCatalogStoreError::Unavailable)?;
+        let bytes =
+            serde_json::to_vec_pretty(file).map_err(|_| LabelCatalogStoreError::Unavailable)?;
         fs::write(&self.path, bytes).map_err(|_| LabelCatalogStoreError::Unavailable)
     }
 }

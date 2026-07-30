@@ -201,7 +201,10 @@ impl GitHub for FakeGitHub {
         {
             return Err(GitHubError::Unavailable);
         }
-        let map = self.repo_labels.lock().map_err(|_| GitHubError::Unavailable)?;
+        let map = self
+            .repo_labels
+            .lock()
+            .map_err(|_| GitHubError::Unavailable)?;
         Ok(map.get(&repo_key(repo)).cloned().unwrap_or_default())
     }
 
@@ -216,12 +219,12 @@ impl GitHub for FakeGitHub {
             name: name.to_string(),
             color: color.to_string(),
         };
-        let mut map = self.repo_labels.lock().map_err(|_| GitHubError::Unavailable)?;
+        let mut map = self
+            .repo_labels
+            .lock()
+            .map_err(|_| GitHubError::Unavailable)?;
         let entry = map.entry(repo_key(repo)).or_default();
-        if let Some(existing) = entry
-            .iter_mut()
-            .find(|l| l.name.eq_ignore_ascii_case(name))
-        {
+        if let Some(existing) = entry.iter_mut().find(|l| l.name.eq_ignore_ascii_case(name)) {
             *existing = label.clone();
         } else {
             entry.push(label.clone());
