@@ -19,7 +19,7 @@ type ConflictDialogProps = {
 
 /**
  * Must-choose conflict surface for Update (Keep mine / Use theirs).
- * Full Fluent polish is slice 5; this keeps Update usable after Inbox migration.
+ * Alert dialog: Escape / outside-click do not dismiss; no leave-dirty path.
  */
 export function ConflictDialog({
   open,

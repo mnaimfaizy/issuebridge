@@ -79,12 +79,12 @@ describe("shell chrome (#36)", () => {
     assert.match(shell, /inbox/);
   });
 
-  it("legacy conflict remains hosted for later slice; first-run is React", () => {
-    const host = readSrc("shell", "LegacyWorkspaceHost.tsx");
-    assert.match(host, /bootMainUi/);
+  it("vanilla conflict host removed; first-run and ConflictDialog are React", () => {
+    assert.ok(!existsSync(src("shell", "LegacyWorkspaceHost.tsx")));
+    const shell = readSrc("shell", "ShellLayout.tsx");
+    assert.doesNotMatch(shell, /LegacyWorkspaceHost/);
     const mainUi = readSrc("main.ts");
-    assert.match(mainUi, /export\s+(async\s+)?function\s+bootMainUi/);
-    assert.match(mainUi, /conflict-modal/);
+    assert.doesNotMatch(mainUi, /conflict-modal|bootMainUi/);
     assert.doesNotMatch(
       mainUi,
       /list_inbox/,
@@ -94,8 +94,11 @@ describe("shell chrome (#36)", () => {
       existsSync(src("firstrun", "FirstRunWorkbench.tsx")),
       "first-run moved to React (#40)",
     );
+    assert.ok(
+      existsSync(src("inbox", "ConflictDialog.tsx")),
+      "conflict moved to Fluent ConflictDialog (#41)",
+    );
     const index = readFileSync(join(root, "index.html"), "utf8");
-    assert.match(index, /id=["']conflict-modal["']/);
-    assert.match(index, /id=["']conflict-keep-mine["']/);
+    assert.doesNotMatch(index, /id=["']conflict-modal["']/);
   });
 });
