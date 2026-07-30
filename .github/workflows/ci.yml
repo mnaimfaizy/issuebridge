@@ -48,6 +48,10 @@ jobs:
 
   rust:
     runs-on: ubuntu-latest
+    # Whisper sidecar/resources are Windows-only and fetched outside git, so the
+    # crate's build script cannot resolve them here. This gate never bundles.
+    env:
+      TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
     steps:
       - name: Checkout
         uses: actions/checkout@v4

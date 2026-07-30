@@ -64,6 +64,9 @@ describe("PR CI workflow contract (#24)", () => {
     assert.match(rust, /cargo fmt --all -- --check|cargo fmt --manifest-path src-tauri\/Cargo\.toml --all -- --check/);
     assert.match(rust, /cargo clippy[^\n]*-- -D warnings/);
     assert.match(rust, /cargo test --manifest-path src-tauri\/Cargo\.toml/);
+    assert.match(rust, /TAURI_CONFIG:/);
+    assert.match(rust, /"externalBin":\s*\[\]/);
+    assert.match(rust, /"resources":\s*\[\]/);
     assert.doesNotMatch(rust, /upload-artifact/);
     assert.doesNotMatch(rust, /tauri build|release-build\.ps1|nsis/i);
   });
