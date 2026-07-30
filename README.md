@@ -58,6 +58,8 @@ In `npm run tauri dev` (debug builds):
 2. **Terminal** shows `[issuebridge]` logs: OAuth, keyring, installations, `whisper: …`.
 3. Webview console shows PAT / PTT lines (`target: "title" | "body"`, etc.).
 
+To re-test the first-run progress strip from scratch (Sign out does not rewind it), see [`docs/dev-first-run-reset.md`](docs/dev-first-run-reset.md). Chromium `Chrome_WidgetWin_0` / Error `1412` lines on Quit are usually harmless WebView2 teardown noise — ignore unless Quit hangs or crashes.
+
 ```bash
 npm run test:core
 npm run test:packaging
