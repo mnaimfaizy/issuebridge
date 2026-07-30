@@ -43,8 +43,8 @@ pub enum InstallContinueOutcome {
     Ready { all_repositories_warning: bool },
 }
 
-/// Maximum repositories in the Testing set (product rule: up to 3).
-const TESTING_SET_MAX: usize = 3;
+/// Recommended Testing set size (first-run hard cap; Settings default).
+const TESTING_SET_RECOMMENDED_MAX: usize = 3;
 
 /// Label catalog older than this is refreshed on ensure.
 const LABEL_CATALOG_STALE: Duration = Duration::from_secs(15 * 60);
@@ -224,6 +224,7 @@ where
         settings.install_completed = true;
         settings.app_visible_repos = snapshot.repos;
         settings.all_repositories_warning = snapshot.all_repositories;
+        reconcile_testing_set_with_app_visible(&mut settings);
         self.settings_store
             .save(settings)
             .map_err(|_| InstallError::StorageUnavailable)?;
@@ -240,6 +241,13 @@ where
             .unwrap_or_default()
     }
 
+    pub fn testing_set_max(&self) -> usize {
+        self.settings_store
+            .load()
+            .map(|s| s.testing_set_max)
+            .unwrap_or(TESTING_SET_RECOMMENDED_MAX)
+    }
+
     pub fn app_visible_repos(&self) -> Vec<RepoId> {
         self.settings_store
             .load()
@@ -254,7 +262,81 @@ where
             .unwrap_or(false)
     }
 
-    /// Add a repo to the Testing set. At most 3; must be App-visible.
+    /// Clamp Testing set membership and max to current App-visible repos. Settings load path.
+    pub fn reconcile_testing_set_with_app_visible(&mut self) -> Result<bool, TestingSetError> {
+        if self.auth_state() != AuthState::SignedIn {
+            return Err(TestingSetError::NotSignedIn);
+        }
+        let mut settings = self
+            .settings_store
+            .load()
+            .map_err(|_| TestingSetError::StorageUnavailable)?;
+        let changed = reconcile_testing_set_with_app_visible(&mut settings);
+        if changed {
+            self.settings_store
+                .save(settings)
+                .map_err(|_| TestingSetError::StorageUnavailable)?;
+        }
+        Ok(changed)
+    }
+
+    /// Settings-only: set Testing set max (1..=App-visible count). Blocked if set is larger.
+    pub fn set_testing_set_max(&mut self, max: usize) -> Result<(), TestingSetError> {
+        if self.auth_state() != AuthState::SignedIn {
+            return Err(TestingSetError::NotSignedIn);
+        }
+        let mut settings = self
+            .settings_store
+            .load()
+            .map_err(|_| TestingSetError::StorageUnavailable)?;
+        if !settings.install_completed {
+            return Err(TestingSetError::InstallIncomplete);
+        }
+        if !settings.first_run_completed {
+            return Err(TestingSetError::SettingsOnly);
+        }
+        let ceiling = settings.app_visible_repos.len();
+        if max < 1 || ceiling == 0 || max > ceiling {
+            return Err(TestingSetError::MaxOutOfRange);
+        }
+        if max < settings.testing_set.len() {
+            return Err(TestingSetError::MaxBelowCurrentSet {
+                current: settings.testing_set.len(),
+                requested: max,
+            });
+        }
+        settings.testing_set_max = max;
+        self.settings_store
+            .save(settings)
+            .map_err(|_| TestingSetError::StorageUnavailable)
+    }
+
+    /// Settings-only: set max to App-visible count and fill the Testing set with all of them.
+    pub fn add_all_app_visible_to_testing_set(&mut self) -> Result<(), TestingSetError> {
+        if self.auth_state() != AuthState::SignedIn {
+            return Err(TestingSetError::NotSignedIn);
+        }
+        let mut settings = self
+            .settings_store
+            .load()
+            .map_err(|_| TestingSetError::StorageUnavailable)?;
+        if !settings.install_completed {
+            return Err(TestingSetError::InstallIncomplete);
+        }
+        if !settings.first_run_completed {
+            return Err(TestingSetError::SettingsOnly);
+        }
+        if settings.app_visible_repos.is_empty() {
+            return Err(TestingSetError::Empty);
+        }
+        settings.testing_set_max = settings.app_visible_repos.len();
+        settings.testing_set = settings.app_visible_repos.clone();
+        self.settings_store
+            .save(settings)
+            .map_err(|_| TestingSetError::StorageUnavailable)
+    }
+
+    /// Add a repo to the Testing set. Must be App-visible. First-run hard-caps at 3; after first-run uses Settings max.
     pub fn add_testing_set_repo(&mut self, repo: RepoId) -> Result<(), TestingSetError> {
         if self.auth_state() != AuthState::SignedIn {
             return Err(TestingSetError::NotSignedIn);
@@ -273,8 +355,9 @@ where
         if settings.testing_set.contains(&repo) {
             return Ok(());
         }
-        if settings.testing_set.len() >= TESTING_SET_MAX {
-            return Err(TestingSetError::LimitReached);
+        let limit = effective_testing_set_add_limit(&settings);
+        if settings.testing_set.len() >= limit {
+            return Err(TestingSetError::LimitReached { max: limit });
         }
 
         settings.testing_set.push(repo);
@@ -314,8 +397,10 @@ where
         if settings.testing_set.is_empty() {
             return Err(TestingSetError::Empty);
         }
-        if settings.testing_set.len() > TESTING_SET_MAX {
-            return Err(TestingSetError::LimitReached);
+        if settings.testing_set.len() > TESTING_SET_RECOMMENDED_MAX {
+            return Err(TestingSetError::LimitReached {
+                max: TESTING_SET_RECOMMENDED_MAX,
+            });
         }
 
         settings.testing_set_completed = true;
@@ -820,6 +905,27 @@ fn append_transcript(current_text: &str, transcript: &str) -> String {
     }
 }
 
+fn effective_testing_set_add_limit(settings: &AppSettings) -> usize {
+    if !settings.first_run_completed {
+        TESTING_SET_RECOMMENDED_MAX
+    } else {
+        settings.testing_set_max
+    }
+}
+
+/// Drop non-App-visible Testing set repos and clamp max to App-visible count. Returns whether anything changed.
+fn reconcile_testing_set_with_app_visible(settings: &mut AppSettings) -> bool {
+    let before_set = settings.testing_set.clone();
+    let before_max = settings.testing_set_max;
+    let visible = settings.app_visible_repos.clone();
+    settings.testing_set.retain(|r| visible.contains(r));
+    let ceiling = visible.len();
+    if settings.testing_set_max > ceiling {
+        settings.testing_set_max = ceiling;
+    }
+    settings.testing_set != before_set || settings.testing_set_max != before_max
+}
+
 fn mint_draft_id(now: std::time::SystemTime) -> String {
     use std::time::UNIX_EPOCH;
     let nanos = now
@@ -1230,8 +1336,145 @@ mod tests {
         let err = core
             .add_testing_set_repo(repo("acme", "four"))
             .expect_err("4th must be refused");
-        assert_eq!(err, TestingSetError::LimitReached);
+        assert_eq!(err, TestingSetError::LimitReached { max: 3 });
         assert_eq!(core.testing_set().len(), 3);
+    }
+
+    #[test]
+    fn after_first_run_settings_max_allows_more_than_three() {
+        let mut core = signed_in_core(
+            FakeGitHub::default(),
+            FakeSettingsStore::with_settings(AppSettings {
+                install_completed: true,
+                first_run_completed: true,
+                testing_set_max: 4,
+                app_visible_repos: vec![
+                    repo("acme", "one"),
+                    repo("acme", "two"),
+                    repo("acme", "three"),
+                    repo("acme", "four"),
+                ],
+                ..AppSettings::default()
+            }),
+        );
+
+        for name in ["one", "two", "three", "four"] {
+            core.add_testing_set_repo(repo("acme", name)).expect(name);
+        }
+        assert_eq!(core.testing_set().len(), 4);
+    }
+
+    #[test]
+    fn set_testing_set_max_refuses_below_current_set_size() {
+        let mut core = signed_in_core(
+            FakeGitHub::default(),
+            FakeSettingsStore::with_settings(AppSettings {
+                install_completed: true,
+                first_run_completed: true,
+                testing_set_max: 4,
+                testing_set: vec![
+                    repo("acme", "one"),
+                    repo("acme", "two"),
+                    repo("acme", "three"),
+                    repo("acme", "four"),
+                ],
+                app_visible_repos: vec![
+                    repo("acme", "one"),
+                    repo("acme", "two"),
+                    repo("acme", "three"),
+                    repo("acme", "four"),
+                ],
+                ..AppSettings::default()
+            }),
+        );
+
+        let err = core
+            .set_testing_set_max(3)
+            .expect_err("must refuse while oversized");
+        assert_eq!(
+            err,
+            TestingSetError::MaxBelowCurrentSet {
+                current: 4,
+                requested: 3,
+            }
+        );
+        assert_eq!(core.testing_set_max(), 4);
+    }
+
+    #[test]
+    fn add_all_app_visible_fills_testing_set_and_raises_max() {
+        let mut core = signed_in_core(
+            FakeGitHub::default(),
+            FakeSettingsStore::with_settings(AppSettings {
+                install_completed: true,
+                first_run_completed: true,
+                testing_set_max: 3,
+                testing_set: vec![repo("acme", "one")],
+                app_visible_repos: vec![
+                    repo("acme", "one"),
+                    repo("acme", "two"),
+                    repo("acme", "three"),
+                    repo("acme", "four"),
+                ],
+                ..AppSettings::default()
+            }),
+        );
+
+        core.add_all_app_visible_to_testing_set().expect("add all");
+        assert_eq!(core.testing_set_max(), 4);
+        assert_eq!(core.testing_set().len(), 4);
+    }
+
+    #[test]
+    fn reconcile_clamps_max_and_prunes_non_visible_repos() {
+        let mut core = signed_in_core(
+            FakeGitHub::default(),
+            FakeSettingsStore::with_settings(AppSettings {
+                install_completed: true,
+                first_run_completed: true,
+                testing_set_max: 5,
+                testing_set: vec![
+                    repo("acme", "one"),
+                    repo("acme", "gone"),
+                    repo("acme", "two"),
+                ],
+                app_visible_repos: vec![repo("acme", "one"), repo("acme", "two")],
+                ..AppSettings::default()
+            }),
+        );
+
+        let changed = core
+            .reconcile_testing_set_with_app_visible()
+            .expect("reconcile");
+        assert!(changed);
+        assert_eq!(core.testing_set_max(), 2);
+        assert_eq!(
+            core.testing_set(),
+            vec![repo("acme", "one"), repo("acme", "two")]
+        );
+    }
+
+    #[test]
+    fn set_testing_set_max_and_add_all_refuse_before_first_run_complete() {
+        let mut core = signed_in_core(
+            FakeGitHub::default(),
+            FakeSettingsStore::with_settings(AppSettings {
+                install_completed: true,
+                first_run_completed: false,
+                app_visible_repos: vec![repo("acme", "one"), repo("acme", "two")],
+                ..AppSettings::default()
+            }),
+        );
+
+        assert_eq!(
+            core.set_testing_set_max(2).expect_err("settings only"),
+            TestingSetError::SettingsOnly
+        );
+        assert_eq!(
+            core.add_all_app_visible_to_testing_set()
+                .expect_err("settings only"),
+            TestingSetError::SettingsOnly
+        );
     }
 
     #[test]

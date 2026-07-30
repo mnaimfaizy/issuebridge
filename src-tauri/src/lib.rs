@@ -2,13 +2,14 @@ pub mod adapters;
 pub mod core;
 
 use adapters::{
-    add_testing_set_repo, all_repositories_warning, app_visible_repos, apply_ptt, auth_state,
-    build_app_core, complete_testing_set, continue_install, edit_draft, ensure_label_catalog,
-    first_run_step, get_draft, keep_mine, last_used_repo, list_inbox, open_app_install,
-    prefetch_testing_set_label_catalogs, ptt_hotkey, publish_draft, remove_testing_set_repo,
-    save_capture, setup_tray, show_capture, show_capture_window_detached, sign_in_with_github,
-    sign_in_with_pat, sign_out, skip_try_capture, testing_set, update_linked_draft, use_theirs,
-    AppState,
+    add_all_app_visible_to_testing_set, add_testing_set_repo, all_repositories_warning,
+    app_visible_repos, apply_ptt, auth_state, build_app_core, complete_testing_set, continue_install,
+    edit_draft, ensure_label_catalog, first_run_step, get_draft, keep_mine, last_used_repo,
+    list_inbox, open_app_install, prefetch_testing_set_label_catalogs, ptt_hotkey, publish_draft,
+    reconcile_testing_set_with_app_visible, remove_testing_set_repo, save_capture,
+    set_testing_set_max, setup_tray, show_capture, show_capture_window_detached,
+    sign_in_with_github, sign_in_with_pat, sign_out, skip_try_capture, testing_set, testing_set_max,
+    update_linked_draft, use_theirs, AppState,
 };
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
@@ -33,6 +34,10 @@ pub fn run() {
             app_visible_repos,
             all_repositories_warning,
             testing_set,
+            testing_set_max,
+            set_testing_set_max,
+            add_all_app_visible_to_testing_set,
+            reconcile_testing_set_with_app_visible,
             add_testing_set_repo,
             remove_testing_set_repo,
             complete_testing_set,
