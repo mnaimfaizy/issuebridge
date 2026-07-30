@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   Body1,
   Button,
@@ -7,11 +6,12 @@ import {
   Subtitle2,
 } from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
 import type { FirstRunStep } from "../settings/gating";
 import {
+  type AuthStateDto,
   dispatchAppState,
   formatInvokeError,
-  type AuthStateDto,
 } from "./types";
 
 type TryCaptureStepProps = {

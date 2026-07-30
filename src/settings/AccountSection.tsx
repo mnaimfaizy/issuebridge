@@ -1,17 +1,12 @@
-import { useState } from "react";
-import {
-  Body1,
-  Button,
-  Caption1,
-  Subtitle2,
-} from "@fluentui/react-components";
+import { Body1, Button, Caption1, Subtitle2 } from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
 import type { AccountAuth } from "../shell/Sidebar";
 import {
   accountSettingsHelper,
+  type FirstRunStep,
   isAccountSettingsEnabled,
   isAppInstalled,
-  type FirstRunStep,
 } from "./gating";
 
 type AccountSectionProps = {

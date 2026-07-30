@@ -1,4 +1,3 @@
-import type { RefObject } from "react";
 import {
   Badge,
   Button,
@@ -8,6 +7,7 @@ import {
   Text,
   Textarea,
 } from "@fluentui/react-components";
+import type { RefObject } from "react";
 import type { DraftDto } from "./types";
 
 type DraftInspectorProps = {

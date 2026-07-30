@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import {
   Body1,
   Caption1,
@@ -7,6 +6,7 @@ import {
   Title3,
 } from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
 import packageJson from "../../package.json";
 
 const OPEN_CAPTURE_HOTKEY = "Ctrl+Alt+Shift+I";
@@ -43,14 +43,16 @@ export function HelpPage() {
         </Body1>
       </header>
 
-      <section className="ib-settings-block" aria-labelledby="shortcuts-heading">
+      <section
+        className="ib-settings-block"
+        aria-labelledby="shortcuts-heading"
+      >
         <Subtitle2 as="h2" id="shortcuts-heading">
           Shortcuts
         </Subtitle2>
         <ul className="ib-help-list">
           <li>
-            <strong>Open Capture:</strong>{" "}
-            <kbd>{OPEN_CAPTURE_HOTKEY}</kbd>
+            <strong>Open Capture:</strong> <kbd>{OPEN_CAPTURE_HOTKEY}</kbd>
           </li>
           <li>
             <strong>Push-to-talk:</strong> hold <kbd>{pttHotkey}</kbd>, release
@@ -62,7 +64,10 @@ export function HelpPage() {
         </Caption1>
       </section>
 
-      <section className="ib-settings-block" aria-labelledby="how-it-works-heading">
+      <section
+        className="ib-settings-block"
+        aria-labelledby="how-it-works-heading"
+      >
         <Subtitle2 as="h2" id="how-it-works-heading">
           How it works
         </Subtitle2>

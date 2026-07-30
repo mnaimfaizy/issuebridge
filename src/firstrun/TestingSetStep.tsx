@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import {
   Body1,
   Button,
@@ -9,13 +8,14 @@ import {
   Subtitle2,
 } from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
 import type { FirstRunStep } from "../settings/gating";
 import {
+  type AuthStateDto,
   dispatchAppState,
   formatInvokeError,
-  repoKey,
-  type AuthStateDto,
   type RepoIdDto,
+  repoKey,
 } from "./types";
 
 type TestingSetStepProps = {
@@ -170,7 +170,7 @@ export function TestingSetStep({ onAdvanced }: TestingSetStepProps) {
           })
         )}
       </ul>
-      <div className="ib-testing-chips" aria-label="Testing set">
+      <div className="ib-testing-chips" role="group" aria-label="Testing set">
         {selectedRepos.map((repo) => {
           const label = `${repo.owner}/${repo.name}`;
           return (

@@ -4,8 +4,8 @@ import type { ThemePreference } from "../theme/preference";
 import { AccountSection } from "./AccountSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { CaptureSection } from "./CaptureSection";
-import { TestingSetSection } from "./TestingSetSection";
 import type { FirstRunStep } from "./gating";
+import { TestingSetSection } from "./TestingSetSection";
 
 type SettingsPageProps = {
   themePreference: ThemePreference;

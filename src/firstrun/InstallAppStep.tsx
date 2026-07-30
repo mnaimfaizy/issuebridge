@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   Body1,
   Button,
@@ -8,11 +7,12 @@ import {
 } from "@fluentui/react-components";
 import { OpenRegular } from "@fluentui/react-icons";
 import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
 import type { FirstRunStep } from "../settings/gating";
 import {
+  type AuthStateDto,
   dispatchAppState,
   formatInvokeError,
-  type AuthStateDto,
   type InstallContinueOutcomeDto,
 } from "./types";
 
@@ -42,7 +42,8 @@ export function InstallAppStep({ onAdvanced }: InstallAppStepProps) {
     setBusy(true);
     setError(null);
     try {
-      const outcome = await invoke<InstallContinueOutcomeDto>("continue_install");
+      const outcome =
+        await invoke<InstallContinueOutcomeDto>("continue_install");
       if (outcome.kind === "no_install") {
         setHint(
           "Don’t see an install yet. Install the App on selected repositories, then Continue.",

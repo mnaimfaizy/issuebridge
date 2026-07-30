@@ -1,12 +1,4 @@
 import {
-  useCallback,
-  useEffect,
-  useEffectEvent,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-} from "react";
-import {
   Button,
   MessageBar,
   MessageBarBody,
@@ -15,20 +7,28 @@ import {
 } from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+} from "react";
 import { ConflictDialog } from "./ConflictDialog";
 import { DraftInspector } from "./DraftInspector";
 import { InboxList } from "./InboxList";
 import { readLastDraftId, writeLastDraftId } from "./lastDraftId";
 import {
-  SUCCESS_CLEAR_MS,
   clearSuccessOnEdit,
   type StatusState,
+  SUCCESS_CLEAR_MS,
 } from "./statusModel";
 import {
-  formatInvokeError,
-  parseLabelNames,
   type DraftDto,
+  formatInvokeError,
   type InboxItemDto,
+  parseLabelNames,
   type UpdateLinkedOutcomeDto,
 } from "./types";
 import "./inbox.css";
@@ -88,9 +88,7 @@ export function InboxWorkbench() {
       clearSuccessTimer();
       setStatus({ kind: "success", message });
       successTimerRef.current = window.setTimeout(() => {
-        setStatus((current) =>
-          current?.kind === "success" ? null : current,
-        );
+        setStatus((current) => (current?.kind === "success" ? null : current));
         successTimerRef.current = null;
       }, SUCCESS_CLEAR_MS);
     },
@@ -321,7 +319,9 @@ export function InboxWorkbench() {
   function focusPane(pane: Pane) {
     if (pane === "sidebar") {
       document
-        .querySelector<HTMLElement>('.ib-sidebar [aria-current="page"], .ib-nav-item')
+        .querySelector<HTMLElement>(
+          '.ib-sidebar [aria-current="page"], .ib-nav-item',
+        )
         ?.focus();
       return;
     }
@@ -337,7 +337,10 @@ export function InboxWorkbench() {
     const active = document.activeElement;
     let current: Pane = "sidebar";
     if (listRef.current?.contains(active)) current = "inbox";
-    else if (editorRef.current?.contains(active) || editorRef.current === active)
+    else if (
+      editorRef.current?.contains(active) ||
+      editorRef.current === active
+    )
       current = "editor";
     else if (active?.closest(".ib-sidebar")) current = "sidebar";
     const next = order[(order.indexOf(current) + 1) % order.length];

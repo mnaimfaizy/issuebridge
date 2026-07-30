@@ -9,9 +9,7 @@ export type FirstRunStep =
 
 /** App install finished — Manage on GitHub unlocks once first-run can reach Testing set. */
 export function isAppInstalled(step: FirstRunStep): boolean {
-  return (
-    step === "testing_set" || step === "try_capture" || step === "ready"
-  );
+  return step === "testing_set" || step === "try_capture" || step === "ready";
 }
 
 /**
@@ -37,7 +35,9 @@ export function isCaptureSettingsEnabled(
   return auth === "signed_in" && firstRunComplete;
 }
 
-export function accountSettingsHelper(firstRunComplete: boolean): string | null {
+export function accountSettingsHelper(
+  firstRunComplete: boolean,
+): string | null {
   if (isAccountSettingsEnabled(firstRunComplete)) return null;
   return "Finish first-run setup to manage your account here. Sign out stays in the sidebar.";
 }

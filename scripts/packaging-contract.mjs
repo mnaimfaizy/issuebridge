@@ -23,9 +23,7 @@ export function checkPackagingContract(config) {
 
   const targets = bundle.targets;
   const nsisOnly =
-    Array.isArray(targets) &&
-    targets.length === 1 &&
-    targets[0] === "nsis";
+    Array.isArray(targets) && targets.length === 1 && targets[0] === "nsis";
   if (!nsisOnly) {
     errors.push(
       'bundle.targets must be NSIS-only (["nsis"]); "all" also emits MSI which is not a v0.1 deliverable',

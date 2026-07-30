@@ -3,7 +3,7 @@
  * Asserts observable adapter contracts in source (not Fluent internals).
  */
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -28,10 +28,7 @@ describe("Settings + Help destinations (#38)", () => {
     const shell = readSrc("shell", "ShellLayout.tsx");
     assert.match(shell, /SettingsPage/);
     assert.match(shell, /HelpPage/);
-    assert.match(
-      shell,
-      /destination\s*===\s*["']settings["']/,
-    );
+    assert.match(shell, /destination\s*===\s*["']settings["']/);
     assert.match(shell, /destination\s*===\s*["']help["']/);
     assert.ok(
       existsSync(src("settings", "SettingsPage.tsx")),
@@ -42,10 +39,9 @@ describe("Settings + Help destinations (#38)", () => {
 
   it("Appearance theme System/Light/Dark applies immediately and persists", () => {
     const settings = readSrc("settings", "SettingsPage.tsx");
-    const appearance =
-      existsSync(src("settings", "AppearanceSection.tsx"))
-        ? readSrc("settings", "AppearanceSection.tsx")
-        : settings;
+    const appearance = existsSync(src("settings", "AppearanceSection.tsx"))
+      ? readSrc("settings", "AppearanceSection.tsx")
+      : settings;
     assert.match(appearance, /System/);
     assert.match(appearance, /Light/);
     assert.match(appearance, /Dark/);
@@ -80,7 +76,9 @@ describe("Settings + Help destinations (#38)", () => {
     for (const block of ["ib-destination", "ib-settings-block"]) {
       assert.match(
         shellCss,
-        new RegExp(`\\.${block}\\s*\\{[^}]*grid-template-columns:\\s*minmax\\(0,\\s*1fr\\)`),
+        new RegExp(
+          `\\.${block}\\s*\\{[^}]*grid-template-columns:\\s*minmax\\(0,\\s*1fr\\)`,
+        ),
         `${block} must let status bars wrap instead of widening the page`,
       );
     }
@@ -140,12 +138,18 @@ describe("Settings + Help destinations (#38)", () => {
 
   it("Capture popup stays chrome-free of Settings/Help/account", () => {
     const captureHtml = readRoot("capture.html");
-    assert.doesNotMatch(captureHtml, /ShellLayout|SettingsPage|HelpPage|Sidebar/);
+    assert.doesNotMatch(
+      captureHtml,
+      /ShellLayout|SettingsPage|HelpPage|Sidebar/,
+    );
     assert.ok(
       existsSync(src("capture", "CaptureApp.tsx")),
       "expected Fluent CaptureApp",
     );
     const captureApp = readSrc("capture", "CaptureApp.tsx");
-    assert.doesNotMatch(captureApp, /SettingsPage|HelpPage|ShellLayout|Sidebar/);
+    assert.doesNotMatch(
+      captureApp,
+      /SettingsPage|HelpPage|ShellLayout|Sidebar/,
+    );
   });
 });

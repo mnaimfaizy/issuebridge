@@ -31,7 +31,10 @@ describe("Capture popup (#39)", () => {
     assert.doesNotMatch(html, /id=["']capture-save["']/);
     assert.doesNotMatch(html, /id=["']capture-title["']/);
     assert.doesNotMatch(html, /capture\.ts/);
-    assert.ok(!existsSync(src("capture.ts")), "vanilla capture.ts must be removed");
+    assert.ok(
+      !existsSync(src("capture.ts")),
+      "vanilla capture.ts must be removed",
+    );
     assert.ok(
       existsSync(src("capture", "CaptureApp.tsx")),
       "expected CaptureApp",
@@ -96,10 +99,7 @@ describe("Capture popup (#39)", () => {
       /setFocus\s*\(/,
       "hide must not steal main-window focus",
     );
-    assert.match(
-      popup,
-      /Hide only|do not focus the main window/i,
-    );
+    assert.match(popup, /Hide only|do not focus the main window/i);
   });
 
   it("PTT snapshots last title/body focus and restores after transcription; voice errors inline", () => {
@@ -107,7 +107,10 @@ describe("Capture popup (#39)", () => {
     assert.match(popup, /lastTextFieldRef|pttTargetRef|voiceTarget/);
     assert.match(popup, /ptt-pressed|ptt-released/);
     assert.match(popup, /apply_ptt/);
-    assert.match(popup, /permission_denied|no_device|sidecar_failed|empty_transcript/);
+    assert.match(
+      popup,
+      /permission_denied|no_device|sidecar_failed|empty_transcript/,
+    );
     assert.match(popup, /VOICE_MESSAGES|showVoiceKind/);
     assert.match(popup, /Save Draft/);
     const messages = readSrc("capture", "voiceMessages.ts");
@@ -128,7 +131,10 @@ describe("Capture popup (#39)", () => {
     assert.match(rust, /always_on_top\(true\)/);
     assert.match(rust, /prevent_close|hide\(\)/);
     const geometry = readSrc("capture", "geometry.ts");
-    assert.match(geometry, /issuebridge\.captureWindowSize|CAPTURE.*SIZE|writeCapture|readCapture/);
+    assert.match(
+      geometry,
+      /issuebridge\.captureWindowSize|CAPTURE.*SIZE|writeCapture|readCapture/,
+    );
   });
 
   it("field text clears after successful Save; voice status copy stays text-backed", () => {
@@ -136,9 +142,6 @@ describe("Capture popup (#39)", () => {
     assert.match(popup, /setTitle\(["']["']\)|title.*["']["']/);
     assert.match(popup, /setBody\(["']["']\)|body.*["']["']/);
     assert.match(popup, /Save Draft/);
-    assert.doesNotMatch(
-      popup,
-      /color-only|icon-only without text/i,
-    );
+    assert.doesNotMatch(popup, /color-only|icon-only without text/i);
   });
 });

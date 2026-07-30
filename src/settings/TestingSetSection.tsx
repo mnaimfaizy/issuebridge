@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import {
   Body1,
   Caption1,
@@ -9,11 +8,9 @@ import {
   Subtitle2,
 } from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
 import type { AccountAuth } from "../shell/Sidebar";
-import {
-  isTestingSetEditable,
-  testingSetHelper,
-} from "./gating";
+import { isTestingSetEditable, testingSetHelper } from "./gating";
 
 type RepoIdDto = { owner: string; name: string };
 
@@ -167,7 +164,9 @@ export function TestingSetSection({
       />
       <ul className="ib-repo-results" aria-label="App-visible repositories">
         {!editable ? (
-          <li className="ib-repo-empty">Repository search unlocks when ready.</li>
+          <li className="ib-repo-empty">
+            Repository search unlocks when ready.
+          </li>
         ) : candidates.length === 0 ? (
           <li className="ib-repo-empty">
             {filterLower
@@ -192,28 +191,28 @@ export function TestingSetSection({
           })
         )}
       </ul>
-      <div className="ib-testing-chips" aria-label="Testing set">
-        {editable
-          ? selectedRepos.map((repo) => {
-              const label = `${repo.owner}/${repo.name}`;
-              return (
-                <button
-                  key={label}
-                  type="button"
-                  className="ib-chip"
-                  title="Remove from Testing set"
-                  disabled={busy}
-                  onClick={() => void removeRepo(repo)}
-                >
-                  {label} ×
-                </button>
-              );
-            })
-          : (
-            <Caption1 className="ib-settings-helper">
-              Selected repos appear as chips here.
-            </Caption1>
-          )}
+      <div className="ib-testing-chips" role="group" aria-label="Testing set">
+        {editable ? (
+          selectedRepos.map((repo) => {
+            const label = `${repo.owner}/${repo.name}`;
+            return (
+              <button
+                key={label}
+                type="button"
+                className="ib-chip"
+                title="Remove from Testing set"
+                disabled={busy}
+                onClick={() => void removeRepo(repo)}
+              >
+                {label} ×
+              </button>
+            );
+          })
+        ) : (
+          <Caption1 className="ib-settings-helper">
+            Selected repos appear as chips here.
+          </Caption1>
+        )}
       </div>
     </section>
   );

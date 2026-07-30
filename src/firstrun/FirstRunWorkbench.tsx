@@ -1,15 +1,15 @@
-import { useEffect, useRef } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { useEffect, useRef } from "react";
 import type { FirstRunStep } from "../settings/gating";
+import { InstallAppStep } from "./InstallAppStep";
 import { ProgressStrip } from "./ProgressStrip";
 import { SignInStep } from "./SignInStep";
-import { InstallAppStep } from "./InstallAppStep";
 import { TestingSetStep } from "./TestingSetStep";
 import { TryCaptureStep } from "./TryCaptureStep";
 import {
-  dispatchAppState,
   type AuthStateDto,
+  dispatchAppState,
   type FirstRunWizardStep,
 } from "./types";
 import "./firstrun.css";

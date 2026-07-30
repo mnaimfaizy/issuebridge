@@ -1,12 +1,12 @@
-import { Sidebar, type AccountAuth } from "./Sidebar";
-import type { Destination } from "./destinations";
-import { SettingsPage } from "../settings/SettingsPage";
-import type { FirstRunStep } from "../settings/gating";
-import { HelpPage } from "../help/HelpPage";
-import { InboxWorkbench } from "../inbox/InboxWorkbench";
 import { FirstRunWorkbench } from "../firstrun/FirstRunWorkbench";
 import type { AuthStateDto } from "../firstrun/types";
+import { HelpPage } from "../help/HelpPage";
+import { InboxWorkbench } from "../inbox/InboxWorkbench";
+import type { FirstRunStep } from "../settings/gating";
+import { SettingsPage } from "../settings/SettingsPage";
 import type { ThemePreference } from "../theme/preference";
+import type { Destination } from "./destinations";
+import { type AccountAuth, Sidebar } from "./Sidebar";
 import "./shell.css";
 
 type ShellLayoutProps = {

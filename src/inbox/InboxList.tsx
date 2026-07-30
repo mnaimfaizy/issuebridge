@@ -1,5 +1,5 @@
-import type { KeyboardEvent, RefObject } from "react";
 import { Badge, Button, Text } from "@fluentui/react-components";
+import type { KeyboardEvent, RefObject } from "react";
 import type { InboxItemDto } from "./types";
 
 type InboxListProps = {
