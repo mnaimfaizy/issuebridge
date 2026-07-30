@@ -1,7 +1,7 @@
 [package]
 name = "issuebridge"
 version = "0.1.0-rc.1"
-description = "Issuebridge — capture-first GitHub issue inbox for Windows"
+description = "Desktop app to Capture GitHub issues while testing—hotkey and voice, local Drafts, then Publish."
 authors = ["Issuebridge"]
 edition = "2021"
 

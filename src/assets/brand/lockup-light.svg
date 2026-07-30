@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 180" role="img" aria-label="Issuebridge">
+  <image href="mark.png" x="16" y="16" width="148" height="148" preserveAspectRatio="xMidYMid meet"/>
+  <text
+    x="188"
+    y="112"
+    fill="#F5F8FA"
+    font-family="Segoe UI, Arial, Helvetica, sans-serif"
+    font-size="64"
+    font-weight="700"
+  >Issuebridge</text>
+</svg>

@@ -6,6 +6,7 @@ import {
   SignOutRegular,
 } from "@fluentui/react-icons";
 import type { ReactElement } from "react";
+import brandMark from "../assets/brand/mark.png";
 import type { Destination } from "./destinations";
 
 export type AccountAuth = "signed_in" | "signed_out";
@@ -33,9 +34,14 @@ export function Sidebar({
   return (
     <nav className="ib-sidebar" aria-label="Primary">
       <div className="ib-brand">
-        <span className="ib-brand-mark" aria-hidden="true">
-          IB
-        </span>
+        <img
+          className="ib-brand-mark"
+          src={brandMark}
+          alt=""
+          width={24}
+          height={24}
+          aria-hidden="true"
+        />
         <span>Issuebridge</span>
       </div>
 

@@ -1,6 +1,14 @@
-# Issuebridge
+<p align="center">
+  <img src="brand/mark.png" alt="Issuebridge" width="220" />
+</p>
 
-Windows-first Tauri app for capturing GitHub issues while testing (hotkey + voice), keeping local Drafts, then publishing them on GitHub.
+<h1 align="center">Issuebridge</h1>
+
+<p align="center">
+  Desktop app to Capture GitHub issues while testing—hotkey and voice, local Drafts, then Publish.
+</p>
+
+Windows-first Tauri shell (NSIS per-user installer for official Releases).
 
 ## Develop
 

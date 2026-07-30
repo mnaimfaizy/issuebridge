@@ -8,6 +8,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import packageJson from "../../package.json";
+import brandMark from "../assets/brand/mark.png";
 
 const OPEN_CAPTURE_HOTKEY = "Ctrl+Alt+Shift+I";
 const DEFAULT_PTT_HOTKEY = "Ctrl+Alt+Shift+V";
@@ -95,10 +96,22 @@ export function HelpPage() {
         <Subtitle2 as="h2" id="about-heading">
           About
         </Subtitle2>
-        <Body1>
-          <strong>Issuebridge</strong>
-        </Body1>
-        <Caption1>Version {packageJson.version}</Caption1>
+        <div className="ib-about-brand">
+          <img
+            className="ib-about-mark"
+            src={brandMark}
+            alt=""
+            width={40}
+            height={40}
+            aria-hidden="true"
+          />
+          <div className="ib-about-brand-copy">
+            <Body1>
+              <strong>Issuebridge</strong>
+            </Body1>
+            <Caption1>Version {packageJson.version}</Caption1>
+          </div>
+        </div>
         <div className="ib-settings-actions">
           <Link href={REPO_URL} target="_blank" rel="noopener noreferrer">
             GitHub repository

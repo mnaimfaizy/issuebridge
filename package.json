@@ -2,6 +2,17 @@
   "name": "issuebridge",
   "private": true,
   "version": "0.1.0-rc.1",
+  "description": "Desktop app to Capture GitHub issues while testing—hotkey and voice, local Drafts, then Publish.",
+  "keywords": [
+    "tauri",
+    "desktop-app",
+    "github",
+    "github-issues",
+    "github-app",
+    "whisper",
+    "hotkeys",
+    "productivity"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -117,6 +117,7 @@ describe("Settings + Help destinations (#38)", () => {
     assert.match(help, /Inbox/);
     assert.match(help, /Publish/);
     assert.match(help, /Issuebridge/);
+    assert.match(help, /assets\/brand\/mark\.png|ib-about-mark/);
     assert.match(help, /package\.json/);
     assert.match(help, /version/i);
     const pkg = JSON.parse(readRoot("package.json"));
