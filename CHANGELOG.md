@@ -2,6 +2,27 @@
 
 All notable changes to Issuebridge are documented here. Release notes are user-facing; see git history for full commit detail.
 
+## [0.1.0] - 2026-07-30
+
+### Added
+- GitHub sign-in (App OAuth + PKCE) with PAT identity fallback
+- First-run Install App and Testing set, with configurable Testing set max in Settings
+- Fluent main-window shell with Inbox Draft workbench, Settings, and Help
+- First-run as a Fluent progress strip; Inbox chrome gated until ready
+- Capture popup for text and voice-first Drafts (offline Whisper hold-to-talk)
+- Publish Drafts to GitHub with Local link; update linked issues and resolve conflicts via a must-choose Conflict dialog
+- Label catalog sync for Draft editing
+- Tray-first completion and Try capture on first run
+- Per-user Windows NSIS installer bundling the app, Whisper CLI, and base model
+- Issuebridge logo across the app, README, and repo
+
+### Fixed
+- Hardened first-run auth, Capture window behavior, and Whisper PTT after QA
+- Status MessageBars wrap instead of scrolling sideways
+
+### Changed
+- NSIS installer attaches to GitHub Releases automatically on version tags
+
 ## [0.1.0-rc.1] - 2026-07-28
 
 ### Added
