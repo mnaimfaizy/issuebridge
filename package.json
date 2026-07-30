@@ -10,7 +10,7 @@
     "tauri": "tauri",
     "test:core": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:packaging": "node --test scripts/packaging-contract.test.mjs",
-    "test:ui-contracts": "node --test scripts/pat-status-feedback.test.mjs scripts/shell-chrome-contract.test.mjs scripts/inbox-workbench-contract.test.mjs scripts/settings-help-contract.test.mjs scripts/capture-popup-contract.test.mjs",
+    "test:ui-contracts": "node --test scripts/pat-status-feedback.test.mjs scripts/shell-chrome-contract.test.mjs scripts/inbox-workbench-contract.test.mjs scripts/settings-help-contract.test.mjs scripts/capture-popup-contract.test.mjs scripts/first-run-contract.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

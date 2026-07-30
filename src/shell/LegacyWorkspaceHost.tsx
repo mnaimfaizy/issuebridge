@@ -7,8 +7,8 @@ type LegacyWorkspaceHostProps = {
 };
 
 /**
- * Hosts the existing vanilla first-run / conflict markup until later
- * slices replace those surfaces. Boot is once-per-mount.
+ * Hosts the legacy conflict modal markup until slice 5 replaces it.
+ * First-run lives in React (`FirstRunWorkbench`). Boot is once-per-mount.
  */
 export function LegacyWorkspaceHost({ visible }: LegacyWorkspaceHostProps) {
   const hostRef = useRef<HTMLDivElement>(null);

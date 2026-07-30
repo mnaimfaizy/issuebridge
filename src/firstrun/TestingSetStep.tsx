@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Body1,
-  Caption1,
+  Button,
   Input,
   Label,
   MessageBar,
@@ -9,36 +9,20 @@ import {
   Subtitle2,
 } from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
-import type { AccountAuth } from "../shell/Sidebar";
+import type { FirstRunStep } from "../settings/gating";
 import {
-  isTestingSetEditable,
-  testingSetHelper,
-} from "./gating";
+  dispatchAppState,
+  formatInvokeError,
+  repoKey,
+  type AuthStateDto,
+  type RepoIdDto,
+} from "./types";
 
-type RepoIdDto = { owner: string; name: string };
-
-type TestingSetSectionProps = {
-  auth: AccountAuth;
-  firstRunComplete: boolean;
+type TestingSetStepProps = {
+  onAdvanced: (auth: AuthStateDto, step: FirstRunStep) => void;
 };
 
-function repoKey(repo: RepoIdDto): string {
-  return `${repo.owner}/${repo.name}`.toLowerCase();
-}
-
-function formatInvokeError(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
-
-/** Settings → Testing set: edit ≤3 App-visible repos (same rules as first-run). */
-export function TestingSetSection({
-  auth,
-  firstRunComplete,
-}: TestingSetSectionProps) {
-  const editable = isTestingSetEditable(auth, firstRunComplete);
-  const helper = testingSetHelper(auth, firstRunComplete);
+export function TestingSetStep({ onAdvanced }: TestingSetStepProps) {
   const [visibleRepos, setVisibleRepos] = useState<RepoIdDto[]>([]);
   const [selectedRepos, setSelectedRepos] = useState<RepoIdDto[]>([]);
   const [filter, setFilter] = useState("");
@@ -47,13 +31,6 @@ export function TestingSetSection({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!editable) {
-      setVisibleRepos([]);
-      setSelectedRepos([]);
-      setAllReposWarning(false);
-      setError(null);
-      return;
-    }
     let cancelled = false;
     async function load() {
       try {
@@ -75,7 +52,7 @@ export function TestingSetSection({
     return () => {
       cancelled = true;
     };
-  }, [editable]);
+  }, []);
 
   const selectedKeys = new Set(selectedRepos.map(repoKey));
   const filterLower = filter.trim().toLowerCase();
@@ -87,10 +64,8 @@ export function TestingSetSection({
   });
 
   async function addRepo(repo: RepoIdDto) {
-    if (!editable || selectedRepos.length >= 3) {
-      if (selectedRepos.length >= 3) {
-        setError("You can pick up to 3 repositories.");
-      }
+    if (selectedRepos.length >= 3) {
+      setError("You can pick up to 3 repositories.");
       return;
     }
     setBusy(true);
@@ -106,7 +81,6 @@ export function TestingSetSection({
   }
 
   async function removeRepo(repo: RepoIdDto) {
-    if (!editable) return;
     setBusy(true);
     try {
       const next = await invoke<RepoIdDto[]>("remove_testing_set_repo", {
@@ -121,54 +95,58 @@ export function TestingSetSection({
     }
   }
 
-  return (
-    <section
-      className={`ib-settings-block${editable ? "" : " ib-settings-block--gated"}`}
-      aria-labelledby="testing-set-settings-heading"
-      aria-disabled={!editable}
-    >
-      <Subtitle2 as="h2" id="testing-set-settings-heading">
-        Testing set
-      </Subtitle2>
-      {helper ? (
-        <Caption1 className="ib-settings-helper">{helper}</Caption1>
-      ) : (
-        <Body1>
-          Pick up to 3 App-visible repos. These become fast chips in the Capture
-          popup.
-        </Body1>
-      )}
+  async function complete() {
+    setBusy(true);
+    setError(null);
+    try {
+      await invoke<FirstRunStep>("complete_testing_set");
+      const [auth, step] = await Promise.all([
+        invoke<AuthStateDto>("auth_state"),
+        invoke<FirstRunStep>("first_run_step"),
+      ]);
+      dispatchAppState(auth, step);
+      onAdvanced(auth, step);
+    } catch (err) {
+      setError(formatInvokeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
-      {allReposWarning && editable ? (
-        <MessageBar intent="info">
+  return (
+    <div className="ib-firstrun-step">
+      <Subtitle2 as="h1">Testing set</Subtitle2>
+      <Body1>
+        Pick 1–3 App-visible repos. These become fast chips when you capture.
+      </Body1>
+      {allReposWarning ? (
+        <MessageBar intent="info" aria-live="polite">
           <MessageBarBody className="ib-message-copy">
             You chose All repositories. That&apos;s allowed — you can narrow
             this to selected repos on GitHub later.
           </MessageBarBody>
         </MessageBar>
       ) : null}
-      {error && editable ? (
-        <MessageBar intent="error">
+      {error ? (
+        <MessageBar intent="error" aria-live="polite">
           <MessageBarBody className="ib-message-copy">{error}</MessageBarBody>
         </MessageBar>
       ) : null}
-      <Label weight="semibold" htmlFor="settings-repo-filter">
+      <Label weight="semibold" htmlFor="firstrun-repo-filter">
         Search repositories
       </Label>
       <Input
-        id="settings-repo-filter"
+        id="firstrun-repo-filter"
         type="search"
         autoComplete="off"
         spellCheck={false}
         placeholder="owner/name"
         value={filter}
-        disabled={!editable || busy}
+        disabled={busy}
         onChange={(_, data) => setFilter(data.value)}
       />
       <ul className="ib-repo-results" aria-label="App-visible repositories">
-        {!editable ? (
-          <li className="ib-repo-empty">Repository search unlocks when ready.</li>
-        ) : candidates.length === 0 ? (
+        {candidates.length === 0 ? (
           <li className="ib-repo-empty">
             {filterLower
               ? "No matching App-visible repositories."
@@ -193,28 +171,31 @@ export function TestingSetSection({
         )}
       </ul>
       <div className="ib-testing-chips" aria-label="Testing set">
-        {editable
-          ? selectedRepos.map((repo) => {
-              const label = `${repo.owner}/${repo.name}`;
-              return (
-                <button
-                  key={label}
-                  type="button"
-                  className="ib-chip"
-                  title="Remove from Testing set"
-                  disabled={busy}
-                  onClick={() => void removeRepo(repo)}
-                >
-                  {label} ×
-                </button>
-              );
-            })
-          : (
-            <Caption1 className="ib-settings-helper">
-              Selected repos appear as chips here.
-            </Caption1>
-          )}
+        {selectedRepos.map((repo) => {
+          const label = `${repo.owner}/${repo.name}`;
+          return (
+            <button
+              key={label}
+              type="button"
+              className="ib-chip"
+              title="Remove from Testing set"
+              disabled={busy}
+              onClick={() => void removeRepo(repo)}
+            >
+              {label} ×
+            </button>
+          );
+        })}
       </div>
-    </section>
+      <div className="ib-firstrun-actions">
+        <Button
+          appearance="primary"
+          disabled={busy || selectedRepos.length < 1}
+          onClick={() => void complete()}
+        >
+          Continue
+        </Button>
+      </div>
+    </div>
   );
 }

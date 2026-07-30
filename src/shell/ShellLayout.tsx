@@ -5,6 +5,8 @@ import { SettingsPage } from "../settings/SettingsPage";
 import type { FirstRunStep } from "../settings/gating";
 import { HelpPage } from "../help/HelpPage";
 import { InboxWorkbench } from "../inbox/InboxWorkbench";
+import { FirstRunWorkbench } from "../firstrun/FirstRunWorkbench";
+import type { AuthStateDto } from "../firstrun/types";
 import type { ThemePreference } from "../theme/preference";
 import "./shell.css";
 
@@ -17,6 +19,7 @@ type ShellLayoutProps = {
   accountBusy: boolean;
   onSignOut: () => void;
   onSignIn: () => void;
+  onFirstRunChange: (auth: AuthStateDto, step: FirstRunStep) => void;
   themePreference: ThemePreference;
   onThemePreferenceChange: (preference: ThemePreference) => void;
 };
@@ -30,6 +33,7 @@ export function ShellLayout({
   accountBusy,
   onSignOut,
   onSignIn,
+  onFirstRunChange,
   themePreference,
   onThemePreferenceChange,
 }: ShellLayoutProps) {
@@ -49,7 +53,14 @@ export function ShellLayout({
       />
       <div className="ib-content" role="main">
         {showInboxWorkbench ? <InboxWorkbench /> : null}
-        <LegacyWorkspaceHost visible={showFirstRun} />
+        {showFirstRun ? (
+          <FirstRunWorkbench
+            step={firstRunStep}
+            onStepChange={onFirstRunChange}
+          />
+        ) : null}
+        {/* Conflict modal host for slice 5; Update conflicts use Inbox ConflictDialog. */}
+        <LegacyWorkspaceHost visible={false} />
         {destination === "settings" && (
           <SettingsPage
             themePreference={themePreference}

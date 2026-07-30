@@ -9,6 +9,8 @@ import { ShellLayout } from "./shell/ShellLayout";
 import type { Destination } from "./shell/destinations";
 import type { AccountAuth } from "./shell/Sidebar";
 import type { FirstRunStep } from "./settings/gating";
+import type { AuthStateDto } from "./firstrun/types";
+import { dispatchAppState } from "./firstrun/types";
 import {
   readSystemPrefersDark,
   readThemePreference,
@@ -16,9 +18,7 @@ import {
   writeThemePreference,
   type ThemePreference,
 } from "./theme/preference";
-import { refreshMainUi } from "./main";
 
-type AuthStateDto = "signed_out" | "signed_in";
 type FirstRunStepDto = FirstRunStep;
 
 export function App() {
@@ -76,6 +76,14 @@ export function App() {
     setThemePreference(preference);
   }
 
+  function handleFirstRunChange(nextAuth: AuthStateDto, step: FirstRunStep) {
+    setAuth(nextAuth === "signed_in" ? "signed_in" : "signed_out");
+    setFirstRunStep(step);
+    if (step === "ready") {
+      setDestination("inbox");
+    }
+  }
+
   async function refreshShellAccount() {
     try {
       const [state, step] = await Promise.all([
@@ -93,12 +101,13 @@ export function App() {
   async function handleSignOut() {
     setAccountBusy(true);
     try {
-      await invoke<AuthStateDto>("sign_out");
-      setAuth("signed_out");
-      await refreshMainUi();
+      const state = await invoke<AuthStateDto>("sign_out");
+      const step = await invoke<FirstRunStepDto>("first_run_step");
+      setAuth(state === "signed_in" ? "signed_in" : "signed_out");
+      setFirstRunStep(step);
+      dispatchAppState(state, step);
     } catch (error) {
       console.error("[issuebridge] sign_out failed", error);
-      await refreshMainUi();
       await refreshShellAccount();
     } finally {
       setAccountBusy(false);
@@ -109,12 +118,13 @@ export function App() {
     setDestination("inbox");
     setAccountBusy(true);
     try {
-      await invoke<AuthStateDto>("sign_in_with_github");
-      setAuth("signed_in");
-      await refreshMainUi();
+      const state = await invoke<AuthStateDto>("sign_in_with_github");
+      const step = await invoke<FirstRunStepDto>("first_run_step");
+      setAuth(state === "signed_in" ? "signed_in" : "signed_out");
+      setFirstRunStep(step);
+      dispatchAppState(state, step);
     } catch (error) {
       console.error("[issuebridge] sign_in_with_github failed", error);
-      await refreshMainUi();
       await refreshShellAccount();
     } finally {
       setAccountBusy(false);
@@ -132,6 +142,7 @@ export function App() {
         accountBusy={accountBusy}
         onSignOut={() => void handleSignOut()}
         onSignIn={() => void handleSignIn()}
+        onFirstRunChange={handleFirstRunChange}
         themePreference={themePreference}
         onThemePreferenceChange={handleThemePreferenceChange}
       />
