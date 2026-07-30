@@ -100,11 +100,12 @@ fn register_open_hotkey(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error
     let shortcut = open_shortcut_from_setting(&configured);
 
     let handle = app.clone();
-    app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            show_capture_window_detached(&handle);
-        }
-    })?;
+    app.global_shortcut()
+        .on_shortcut(shortcut, move |_app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                show_capture_window_detached(&handle);
+            }
+        })?;
 
     Ok(())
 }
@@ -133,20 +134,21 @@ fn register_ptt_hotkey(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error:
     let shortcut = ptt_shortcut_from_setting(&configured);
 
     let handle = app.clone();
-    app.global_shortcut().on_shortcut(shortcut, move |app, _shortcut, event| {
-        let capture_visible = app
-            .get_webview_window("capture")
-            .and_then(|w| w.is_visible().ok())
-            .unwrap_or(false);
-        if !capture_visible {
-            return;
-        }
-        let event_name = match event.state {
-            ShortcutState::Pressed => "ptt-pressed",
-            ShortcutState::Released => "ptt-released",
-        };
-        let _ = handle.emit(event_name, ());
-    })?;
+    app.global_shortcut()
+        .on_shortcut(shortcut, move |app, _shortcut, event| {
+            let capture_visible = app
+                .get_webview_window("capture")
+                .and_then(|w| w.is_visible().ok())
+                .unwrap_or(false);
+            if !capture_visible {
+                return;
+            }
+            let event_name = match event.state {
+                ShortcutState::Pressed => "ptt-pressed",
+                ShortcutState::Released => "ptt-released",
+            };
+            let _ = handle.emit(event_name, ());
+        })?;
 
     Ok(())
 }

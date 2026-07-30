@@ -178,9 +178,9 @@ mod tests {
             .set_password(password)
             .expect("set_password must succeed with a real platform store");
 
-        let loaded = entry
-            .get_password()
-            .expect("get_password must find the credential just stored (enable keyring windows-native)");
+        let loaded = entry.get_password().expect(
+            "get_password must find the credential just stored (enable keyring windows-native)",
+        );
         assert_eq!(loaded, password);
 
         entry
