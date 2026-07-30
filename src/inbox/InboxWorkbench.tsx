@@ -25,10 +25,13 @@ import {
   SUCCESS_CLEAR_MS,
 } from "./statusModel";
 import {
+  canonicalizeLabelNames,
   type DraftDto,
+  type EnsuredLabelCatalogDto,
   formatInvokeError,
   type InboxItemDto,
   parseLabelNames,
+  type RepoLabelDto,
   type UpdateLinkedOutcomeDto,
 } from "./types";
 import "./inbox.css";
@@ -46,6 +49,9 @@ export function InboxWorkbench() {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [labels, setLabels] = useState("");
+  const [catalogLabels, setCatalogLabels] = useState<RepoLabelDto[]>([]);
+  const [catalogRefreshFailed, setCatalogRefreshFailed] = useState(false);
+  const [suggestionFilter, setSuggestionFilter] = useState("");
   const [status, setStatus] = useState<StatusState>(null);
   const [busy, setBusy] = useState(false);
   const [narrow, setNarrow] = useState(
@@ -107,7 +113,31 @@ export function InboxWorkbench() {
     setTitle(next.title);
     setBody(next.body);
     setLabels(next.label_names.join(", "));
+    setSuggestionFilter("");
   }, []);
+
+  const loadLabelCatalog = useCallback(
+    async (owner: string, name: string) => {
+      try {
+        const ensured = await invoke<EnsuredLabelCatalogDto>(
+          "ensure_label_catalog",
+          { repo: { owner, name } },
+        );
+        setCatalogLabels(ensured.labels);
+        setCatalogRefreshFailed(ensured.refresh_failed);
+        setLabels((current) =>
+          canonicalizeLabelNames(parseLabelNames(current), ensured.labels).join(
+            ", ",
+          ),
+        );
+      } catch (error) {
+        setCatalogLabels([]);
+        setCatalogRefreshFailed(true);
+        showError(formatInvokeError(error));
+      }
+    },
+    [showError],
+  );
 
   const loadInbox = useCallback(async () => {
     try {
@@ -129,12 +159,13 @@ export function InboxWorkbench() {
           setShowEditorPane(true);
         }
         clearStatus();
+        await loadLabelCatalog(next.owner, next.name);
         await loadInbox();
       } catch (error) {
         showError(formatInvokeError(error));
       }
     },
-    [applyDraft, clearStatus, loadInbox, showError],
+    [applyDraft, clearStatus, loadInbox, loadLabelCatalog, showError],
   );
 
   const restoreSelection = useEffectEvent(async (nextItems: InboxItemDto[]) => {
@@ -168,6 +199,11 @@ export function InboxWorkbench() {
     void (async () => {
       const next = await loadInbox();
       if (next) await restoreSelection(next);
+      try {
+        await invoke("prefetch_testing_set_label_catalogs");
+      } catch {
+        // Soft: Inbox still works without Testing set prefetch.
+      }
     })();
 
     let unlisten: (() => void) | undefined;
@@ -195,6 +231,20 @@ export function InboxWorkbench() {
     setStatus((current) => clearSuccessOnEdit(current));
   }
 
+  function toggleCatalogLabel(name: string) {
+    noteFieldEdit();
+    const current = parseLabelNames(labels);
+    const idx = current.findIndex(
+      (label) => label.toLowerCase() === name.toLowerCase(),
+    );
+    if (idx >= 0) {
+      current.splice(idx, 1);
+    } else {
+      current.push(name);
+    }
+    setLabels(canonicalizeLabelNames(current, catalogLabels).join(", "));
+  }
+
   async function runCapture() {
     setBusy(true);
     showBusy("Opening Capture…");
@@ -213,12 +263,16 @@ export function InboxWorkbench() {
     setBusy(true);
     showBusy("Saving…");
     try {
+      const label_names = canonicalizeLabelNames(
+        parseLabelNames(labels),
+        catalogLabels,
+      );
       const next = await invoke<DraftDto>("edit_draft", {
         input: {
           id: selectedId,
           title,
           body,
-          label_names: parseLabelNames(labels),
+          label_names,
         },
       });
       applyDraft(next);
@@ -236,12 +290,16 @@ export function InboxWorkbench() {
     setBusy(true);
     showBusy(draft.linked ? "Updating…" : "Publishing…");
     try {
+      const label_names = canonicalizeLabelNames(
+        parseLabelNames(labels),
+        catalogLabels,
+      );
       await invoke<DraftDto>("edit_draft", {
         input: {
           id: selectedId,
           title,
           body,
-          label_names: parseLabelNames(labels),
+          label_names,
         },
       });
       if (!draft.linked) {
@@ -249,6 +307,7 @@ export function InboxWorkbench() {
           id: selectedId,
         });
         applyDraft(next);
+        await loadLabelCatalog(next.owner, next.name);
         await loadInbox();
         showSuccess("Published");
         return;
@@ -264,6 +323,7 @@ export function InboxWorkbench() {
         return;
       }
       applyDraft(outcome.draft);
+      await loadLabelCatalog(outcome.draft.owner, outcome.draft.name);
       await loadInbox();
       showSuccess("Updated");
     } catch (error) {
@@ -467,6 +527,9 @@ export function InboxWorkbench() {
             title={title}
             body={body}
             labels={labels}
+            catalogLabels={catalogLabels}
+            catalogRefreshFailed={catalogRefreshFailed}
+            suggestionFilter={suggestionFilter}
             busy={busy}
             narrowStacked={narrow}
             editorRef={editorRef}
@@ -483,6 +546,11 @@ export function InboxWorkbench() {
               noteFieldEdit();
               setLabels(value);
             }}
+            onSuggestionFilterChange={(value) => {
+              noteFieldEdit();
+              setSuggestionFilter(value);
+            }}
+            onToggleCatalogLabel={toggleCatalogLabel}
             onSave={() => void runSave()}
             onPublishOrUpdate={() => void runPublishOrUpdate()}
             onBack={() => setShowEditorPane(false)}

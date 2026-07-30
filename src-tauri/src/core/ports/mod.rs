@@ -95,6 +95,32 @@ pub struct CreatedIssue {
     pub updated_at: String,
 }
 
+/// One entry in a repository Label catalog (canonical name + color).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoLabel {
+    pub name: String,
+    /// GitHub label color hex without leading `#`.
+    pub color: String,
+}
+
+/// Persisted Label catalog for one repository.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LabelCatalog {
+    pub repo: RepoId,
+    pub labels: Vec<RepoLabel>,
+    pub refreshed_at: SystemTime,
+}
+
+/// Inbox-facing Label catalog load: may be stale/empty after a soft-failed refresh.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnsuredLabelCatalog {
+    pub repo: RepoId,
+    pub labels: Vec<RepoLabel>,
+    pub refreshed_at: Option<SystemTime>,
+    /// True when GitHub refresh failed and the caller is seeing last-good or empty.
+    pub refresh_failed: bool,
+}
+
 /// One Inbox row — display fields derived from a Draft.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InboxItem {
@@ -192,6 +218,18 @@ pub trait GitHub: Send + Sync {
         body: &str,
         label_names: &[String],
     ) -> Result<CreatedIssue, GitHubError>;
+
+    /// List labels that exist on a repository (Label catalog source).
+    fn list_labels(&self, token: &str, repo: &RepoId) -> Result<Vec<RepoLabel>, GitHubError>;
+
+    /// Create a label on a repository (used when Publish needs a novel Draft name).
+    fn create_label(
+        &self,
+        token: &str,
+        repo: &RepoId,
+        name: &str,
+        color: &str,
+    ) -> Result<RepoLabel, GitHubError>;
 }
 
 pub trait TokenStore: Send + Sync {
@@ -223,6 +261,16 @@ pub trait SettingsStore: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsStoreError {
+    Unavailable,
+}
+
+pub trait LabelCatalogStore: Send + Sync {
+    fn load(&self, repo: &RepoId) -> Result<Option<LabelCatalog>, LabelCatalogStoreError>;
+    fn save(&mut self, catalog: LabelCatalog) -> Result<(), LabelCatalogStoreError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LabelCatalogStoreError {
     Unavailable,
 }
 

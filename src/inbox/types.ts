@@ -20,6 +20,18 @@ export type DraftDto = {
   html_url: string | null;
 };
 
+export type RepoLabelDto = {
+  name: string;
+  color: string;
+};
+
+export type EnsuredLabelCatalogDto = {
+  owner: string;
+  name: string;
+  labels: RepoLabelDto[];
+  refresh_failed: boolean;
+};
+
 export type UpdateLinkedOutcomeDto =
   | { kind: "updated"; draft: DraftDto }
   | { kind: "conflict"; html_url: string | null; issue_number: number | null };
@@ -42,4 +54,28 @@ export function parseLabelNames(raw: string): string[] {
     .split(",")
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
+}
+
+/** Case-insensitive resolve against Label catalog; keeps novel names; dedupes. */
+export function canonicalizeLabelNames(
+  names: string[],
+  catalog: RepoLabelDto[],
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const name of names) {
+    const hit = catalog.find(
+      (label) => label.name.toLowerCase() === name.toLowerCase(),
+    );
+    const canonical = hit ? hit.name : name;
+    const key = canonical.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(canonical);
+  }
+  return out;
+}
+
+export function assignedLabelSet(labelsCsv: string): Set<string> {
+  return new Set(parseLabelNames(labelsCsv).map((name) => name.toLowerCase()));
 }

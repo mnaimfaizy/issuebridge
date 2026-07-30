@@ -90,6 +90,33 @@ describe("Inbox workbench (#37)", () => {
     assert.match(workbench, /update_linked_draft/);
   });
 
+  it("Inbox Label catalog: ensure/prefetch, colored strip, free-form novel names (#23)", () => {
+    const workbench = readSrc("inbox", "InboxWorkbench.tsx");
+    assert.match(workbench, /ensure_label_catalog/);
+    assert.match(workbench, /prefetch_testing_set_label_catalogs/);
+    const inspector = readSrc("inbox", "DraftInspector.tsx");
+    assert.match(inspector, /Label catalog/);
+    assert.match(inspector, /ib-label-catalog/);
+    assert.match(inspector, /ib-label-chip/);
+    assert.match(inspector, /Type to suggest or create/);
+    assert.doesNotMatch(
+      inspector,
+      /Labels \(comma-separated names\)/,
+      "comma-only Labels field replaced by catalog UX",
+    );
+    assert.doesNotMatch(
+      inspector,
+      /Available labels/,
+      "prefer Label catalog terminology",
+    );
+    const types = readSrc("inbox", "types.ts");
+    assert.match(types, /RepoLabelDto/);
+    assert.match(types, /canonicalizeLabelNames/);
+    const css = readSrc("inbox", "inbox.css");
+    assert.match(css, /\.ib-label-catalog/);
+    assert.match(css, /\.ib-label-chip/);
+  });
+
   it("MessageBar handles busy, error, and success soft-clear (~3s or next edit); no toasts", () => {
     const workbench = readSrc("inbox", "InboxWorkbench.tsx");
     assert.match(workbench, /MessageBar/);

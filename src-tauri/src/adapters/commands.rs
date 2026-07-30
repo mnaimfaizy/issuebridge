@@ -17,8 +17,8 @@ use crate::adapters::oauth_loopback::{
 use crate::adapters::whisper_voice::write_temp_wav;
 use crate::core::{
     AuthError, AuthState, CaptureError, CaptureInput, EditDraftInput, FirstRunStep, InboxError,
-    InstallContinueOutcome, InstallError, PublishError, RepoId, TestingSetError, UpdateError,
-    VoiceError,
+    InstallContinueOutcome, InstallError, LabelCatalogError, PublishError, RepoId, TestingSetError,
+    UpdateError, VoiceError,
 };
 
 pub struct AppState {
@@ -406,6 +406,57 @@ pub fn get_draft(state: State<'_, AppState>, id: String) -> Result<DraftDto, Str
         .map_err(inbox_error_message)
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoLabelDto {
+    pub name: String,
+    pub color: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EnsuredLabelCatalogDto {
+    pub owner: String,
+    pub name: String,
+    pub labels: Vec<RepoLabelDto>,
+    pub refresh_failed: bool,
+}
+
+#[tauri::command]
+pub fn ensure_label_catalog(
+    state: State<'_, AppState>,
+    repo: RepoIdDto,
+) -> Result<EnsuredLabelCatalogDto, String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    let ensured = core
+        .ensure_label_catalog(&RepoId::from(repo))
+        .map_err(label_catalog_error_message)?;
+    Ok(EnsuredLabelCatalogDto {
+        owner: ensured.repo.owner,
+        name: ensured.repo.name,
+        labels: ensured
+            .labels
+            .into_iter()
+            .map(|l| RepoLabelDto {
+                name: l.name,
+                color: l.color,
+            })
+            .collect(),
+        refresh_failed: ensured.refresh_failed,
+    })
+}
+
+#[tauri::command]
+pub fn prefetch_testing_set_label_catalogs(state: State<'_, AppState>) -> Result<(), String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    core.prefetch_testing_set_label_catalogs()
+        .map_err(label_catalog_error_message)
+}
+
 #[tauri::command]
 pub fn edit_draft(
     app: tauri::AppHandle,
@@ -648,6 +699,13 @@ fn inbox_error_message(err: InboxError) -> String {
         InboxError::NotSignedIn => "Sign in to view the Inbox.".into(),
         InboxError::NotFound => "That Draft was not found.".into(),
         InboxError::StorageUnavailable => "Could not load Drafts.".into(),
+    }
+}
+
+fn label_catalog_error_message(err: LabelCatalogError) -> String {
+    match err {
+        LabelCatalogError::NotSignedIn => "Sign in to load labels.".into(),
+        LabelCatalogError::StorageUnavailable => "Could not load Label catalog.".into(),
     }
 }
 

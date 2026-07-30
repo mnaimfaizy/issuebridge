@@ -36,6 +36,10 @@ _Avoid_: Unsynced, pending, modified (unqualified)
 Up to three repositories the user marks as currently under test; shown as fast repo chips in the capture popup. Not the same as the GitHub App’s installed-repo list.
 _Avoid_: Watch list, favorites, pinned repos
 
+**Label catalog**:
+The per-repository set of known GitHub labels (name and color) kept locally and refreshed from upstream when stale. Used in the Inbox to suggest and show the full available set for a Draft’s target repository (assigned names stay distinct). Prefetched for the Testing set and always covered for the open Draft’s target repo. Names match case-insensitively; assigning a catalog hit uses that entry’s canonical name and color. Not the Draft’s assigned label names, and not Remote snapshot labels.
+_Avoid_: Label cache, synced labels, available labels (unqualified), repo labels (unqualified)
+
 **Inbox**:
 The main-window list of Drafts the user reviews, edits, labels, and Publishes from.
 _Avoid_: Board, backlog, issue list (when meaning local drafts)

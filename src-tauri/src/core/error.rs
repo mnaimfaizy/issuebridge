@@ -70,3 +70,10 @@ pub enum TestingSetError {
     Empty,
     StorageUnavailable,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LabelCatalogError {
+    NotSignedIn,
+    StorageUnavailable,
+}
