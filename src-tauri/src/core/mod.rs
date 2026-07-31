@@ -3,20 +3,23 @@
 
 mod error;
 mod ports;
+mod rewrite;
 
 use std::time::Duration;
 
 pub use error::{
     AuthError, CaptureError, InboxError, InstallError, LabelCatalogError, PublishError,
-    TestingSetError, UpdateError,
+    RewriteError, TestingSetError, UpdateError,
 };
 pub use ports::{
-    AppInstallSnapshot, AppSettings, CaptureInput, Clock, CreatedIssue, Draft, DraftStore,
-    DraftStoreError, EditDraftInput, EnsuredLabelCatalog, GitHub, GitHubError, InboxItem,
-    LabelCatalog, LabelCatalogStore, LabelCatalogStoreError, LocalLink, RemoteSnapshot, RepoId,
-    RepoLabel, SettingsStore, SettingsStoreError, StoredCredentials, TokenStore, TokenStoreError,
-    VoiceError, VoiceTranscriber,
+    AppInstallSnapshot, AppSettings, CaptureInput, Clock, CreatedIssue, CustomRewriteStyle, Draft,
+    DraftStore, DraftStoreError, EditDraftInput, EnsuredLabelCatalog, GitHub, GitHubError,
+    InboxItem, LabelCatalog, LabelCatalogStore, LabelCatalogStoreError, LocalLink, RemoteSnapshot,
+    RepoId, RepoLabel, RewriteEngine, RewriteEngineError, RewriteInput, RewriteProposal,
+    RewriteStyleInfo, RewriteStylesSnapshot, SettingsStore, SettingsStoreError, StoredCredentials,
+    StubRewriteEngine, TokenStore, TokenStoreError, VoiceError, VoiceTranscriber,
 };
+pub use rewrite::{is_too_thin_for_rewrite, CLEAR_STYLE_ID};
 
 /// Auth state visible to callers (never includes raw tokens).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +64,7 @@ pub struct IssuebridgeCore<G, T, D, V, C, S, L> {
     clock: C,
     settings_store: S,
     label_catalog_store: L,
+    rewrite: Box<dyn RewriteEngine>,
     /// Process-local signed-in flag. Set on successful sign-in; cleared on sign-out.
     /// Vault remains source of truth across restarts; this avoids flaky post-store re-reads
     /// leaving the UI stuck on Sign in after a successful PAT/OAuth.
@@ -95,8 +99,15 @@ where
             clock,
             settings_store,
             label_catalog_store,
+            rewrite: Box::new(StubRewriteEngine),
             session_signed_in,
         }
+    }
+
+    /// Replace the Rewrite engine (tests / future llama.cpp sidecar).
+    pub fn with_rewrite_engine(mut self, engine: Box<dyn RewriteEngine>) -> Self {
+        self.rewrite = engine;
+        self
     }
 
     pub fn auth_state(&self) -> AuthState {
@@ -884,6 +895,140 @@ where
             return Err(VoiceError::EmptyTranscript);
         }
         Ok(append_transcript(current_text, transcript))
+    }
+
+    /// Built-in + user-defined Rewrite styles and the resolved last-used id (Clear fallback).
+    pub fn list_rewrite_styles(&self) -> Result<RewriteStylesSnapshot, RewriteError> {
+        self.require_signed_in_for_rewrite()?;
+        let settings = self
+            .settings_store
+            .load()
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        let last_used_id = rewrite::resolve_last_used_style_id(
+            settings.last_used_rewrite_style_id.as_deref(),
+            &settings.custom_rewrite_styles,
+        );
+        Ok(RewriteStylesSnapshot {
+            styles: rewrite::all_rewrite_styles(&settings.custom_rewrite_styles),
+            last_used_id,
+        })
+    }
+
+    /// Add a user-defined Rewrite style (name + instruction).
+    pub fn add_custom_rewrite_style(
+        &mut self,
+        name: &str,
+        instruction: &str,
+    ) -> Result<RewriteStyleInfo, RewriteError> {
+        self.require_signed_in_for_rewrite()?;
+        let name = name.trim();
+        let instruction = instruction.trim();
+        if name.is_empty() || instruction.is_empty() {
+            return Err(RewriteError::EmptyFields);
+        }
+        let mut settings = self
+            .settings_store
+            .load()
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        let id = format!(
+            "custom-{}",
+            self.clock
+                .now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        );
+        let custom = CustomRewriteStyle {
+            id: id.clone(),
+            name: name.to_string(),
+            instruction: instruction.to_string(),
+        };
+        settings.custom_rewrite_styles.push(custom);
+        self.settings_store
+            .save(settings)
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        Ok(RewriteStyleInfo {
+            id,
+            name: name.to_string(),
+            instruction: instruction.to_string(),
+            builtin: false,
+        })
+    }
+
+    /// Remove a user-defined Rewrite style. Built-ins cannot be removed.
+    pub fn remove_custom_rewrite_style(&mut self, style_id: &str) -> Result<(), RewriteError> {
+        self.require_signed_in_for_rewrite()?;
+        let mut settings = self
+            .settings_store
+            .load()
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        let before = settings.custom_rewrite_styles.len();
+        settings.custom_rewrite_styles.retain(|s| s.id != style_id);
+        if settings.custom_rewrite_styles.len() == before {
+            return Err(RewriteError::NotFound);
+        }
+        if settings.last_used_rewrite_style_id.as_deref() == Some(style_id) {
+            settings.last_used_rewrite_style_id = Some(CLEAR_STYLE_ID.into());
+        }
+        self.settings_store
+            .save(settings)
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        Ok(())
+    }
+
+    /// Run Rewrite via the engine port. Does **not** persist last-used — call
+    /// `remember_last_rewrite_style` only after the UI accepts the Generate result
+    /// (so Cancel / close mid-generate does not change last-used).
+    pub fn generate_rewrite(
+        &mut self,
+        title: &str,
+        body: &str,
+        style_id: &str,
+    ) -> Result<RewriteProposal, RewriteError> {
+        self.require_signed_in_for_rewrite()?;
+        if is_too_thin_for_rewrite(title, body) {
+            return Err(RewriteError::TooThin);
+        }
+        let settings = self
+            .settings_store
+            .load()
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        let resolved_id = rewrite::find_rewrite_style(style_id, &settings.custom_rewrite_styles)
+            .map(|s| s.id)
+            .unwrap_or_else(|| CLEAR_STYLE_ID.to_string());
+        let style = rewrite::find_rewrite_style(&resolved_id, &settings.custom_rewrite_styles)
+            .expect("Clear is always present");
+        self.rewrite
+            .rewrite(&RewriteInput {
+                title: title.to_string(),
+                body: body.to_string(),
+                style,
+            })
+            .map_err(|_| RewriteError::EngineFailed)
+    }
+
+    /// Persist global last-used Rewrite style after a successful, non-cancelled Generate.
+    pub fn remember_last_rewrite_style(&mut self, style_id: &str) -> Result<(), RewriteError> {
+        self.require_signed_in_for_rewrite()?;
+        let mut settings = self
+            .settings_store
+            .load()
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        let resolved_id = rewrite::find_rewrite_style(style_id, &settings.custom_rewrite_styles)
+            .map(|s| s.id)
+            .unwrap_or_else(|| CLEAR_STYLE_ID.to_string());
+        settings.last_used_rewrite_style_id = Some(resolved_id);
+        self.settings_store
+            .save(settings)
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        Ok(())
+    }
+
+    fn require_signed_in_for_rewrite(&self) -> Result<(), RewriteError> {
+        if self.auth_state() != AuthState::SignedIn {
+            return Err(RewriteError::NotSignedIn);
+        }
+        Ok(())
     }
 }
 
@@ -2381,6 +2526,144 @@ mod tests {
         assert_eq!(
             catalogs.snapshot(&repo("acme", "api")).expect("api").labels[0].name,
             "docs"
+        );
+    }
+
+    #[test]
+    fn draft_is_too_thin_for_rewrite_when_title_and_body_below_thresholds() {
+        assert!(is_too_thin_for_rewrite("short", "tiny"));
+        assert!(is_too_thin_for_rewrite("  ab  ", "   "));
+        assert!(!is_too_thin_for_rewrite("long enough title", "short body",));
+        assert!(!is_too_thin_for_rewrite(
+            "short",
+            "this body is definitely longer than forty characters total",
+        ));
+        assert!(!is_too_thin_for_rewrite(
+            "long enough title here",
+            "this body is definitely longer than forty characters total",
+        ));
+    }
+
+    #[test]
+    fn list_rewrite_styles_includes_builtins_and_defaults_last_used_to_clear() {
+        let core = signed_in_core(FakeGitHub::default(), FakeSettingsStore::default());
+        let snap = core.list_rewrite_styles().expect("styles");
+        assert_eq!(snap.last_used_id, CLEAR_STYLE_ID);
+        let names: Vec<_> = snap.styles.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "Clear",
+                "Bug report",
+                "Feature request",
+                "Question",
+                "Concise"
+            ]
+        );
+        assert!(snap.styles.iter().all(|s| s.builtin));
+    }
+
+    #[test]
+    fn generate_rewrite_rejects_too_thin_and_does_not_persist_last_used() {
+        let settings = FakeSettingsStore::default();
+        let mut core = signed_in_core(FakeGitHub::default(), settings.clone());
+        let err = core
+            .generate_rewrite("short", "tiny", CLEAR_STYLE_ID)
+            .expect_err("too thin");
+        assert_eq!(err, RewriteError::TooThin);
+        assert!(settings.snapshot().last_used_rewrite_style_id.is_none());
+    }
+
+    #[test]
+    fn generate_rewrite_uses_stub_engine_without_persisting_last_used() {
+        let settings = FakeSettingsStore::default();
+        let mut core = signed_in_core(FakeGitHub::default(), settings.clone());
+        let title = "login btn broke on staging";
+        let body = "clicked login on staging after deploy, spinner forever. chrome. saw 500.";
+        let proposal = core
+            .generate_rewrite(title, body, "bug_report")
+            .expect("generate");
+        assert!(proposal.title.contains("bug report"));
+        assert!(proposal.body.contains("## Problem"));
+        assert!(settings.snapshot().last_used_rewrite_style_id.is_none());
+    }
+
+    #[test]
+    fn remember_last_rewrite_style_persists_globally_after_successful_generate() {
+        let settings = FakeSettingsStore::default();
+        let mut core = signed_in_core(FakeGitHub::default(), settings.clone());
+        core.remember_last_rewrite_style("bug_report")
+            .expect("remember");
+        assert_eq!(
+            settings.snapshot().last_used_rewrite_style_id.as_deref(),
+            Some("bug_report")
+        );
+        let snap = core.list_rewrite_styles().expect("styles");
+        assert_eq!(snap.last_used_id, "bug_report");
+    }
+
+    #[test]
+    fn missing_custom_rewrite_last_used_falls_back_to_clear() {
+        let settings = FakeSettingsStore::with_settings(AppSettings {
+            last_used_rewrite_style_id: Some("custom-gone".into()),
+            ..AppSettings::default()
+        });
+        let core = signed_in_core(FakeGitHub::default(), settings);
+        let snap = core.list_rewrite_styles().expect("styles");
+        assert_eq!(snap.last_used_id, CLEAR_STYLE_ID);
+    }
+
+    #[test]
+    fn user_defined_rewrite_styles_can_be_added_and_removed() {
+        let settings = FakeSettingsStore::default();
+        let mut core = signed_in_core(FakeGitHub::default(), settings.clone());
+        let custom = core
+            .add_custom_rewrite_style("Release notes", "Make it sound like release notes.")
+            .expect("add");
+        assert!(!custom.builtin);
+        assert_eq!(custom.name, "Release notes");
+        let snap = core.list_rewrite_styles().expect("styles");
+        assert_eq!(snap.styles.len(), 6);
+        assert!(snap.styles.iter().any(|s| s.id == custom.id));
+
+        core.generate_rewrite(
+            "login btn broke on staging",
+            "clicked login on staging after deploy, spinner forever. chrome.",
+            &custom.id,
+        )
+        .expect("generate with custom");
+        core.remember_last_rewrite_style(&custom.id)
+            .expect("remember custom");
+        assert_eq!(
+            settings.snapshot().last_used_rewrite_style_id.as_deref(),
+            Some(custom.id.as_str())
+        );
+
+        core.remove_custom_rewrite_style(&custom.id)
+            .expect("remove");
+        let snap = core.list_rewrite_styles().expect("styles");
+        assert_eq!(snap.styles.len(), 5);
+        assert_eq!(snap.last_used_id, CLEAR_STYLE_ID);
+        assert!(core.remove_custom_rewrite_style(CLEAR_STYLE_ID).is_err());
+    }
+
+    #[test]
+    fn generate_rewrite_with_unknown_style_id_uses_clear_engine_path() {
+        let settings = FakeSettingsStore::default();
+        let mut core = signed_in_core(FakeGitHub::default(), settings.clone());
+        let proposal = core
+            .generate_rewrite(
+                "login btn broke on staging",
+                "clicked login on staging after deploy, spinner forever. chrome.",
+                "custom-missing",
+            )
+            .expect("fallback generate");
+        assert!(proposal.body.contains("Clear") || proposal.body.contains("skimability"));
+        core.remember_last_rewrite_style("custom-missing")
+            .expect("remember falls back");
+        assert_eq!(
+            settings.snapshot().last_used_rewrite_style_id.as_deref(),
+            Some(CLEAR_STYLE_ID)
         );
     }
 }

@@ -189,6 +189,47 @@
   margin: 8px 0 0;
 }
 
+.ib-rewrite-dialog {
+  max-width: min(560px, 92vw);
+}
+
+.ib-rewrite-style-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+
+.ib-rewrite-add {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ib-rewrite-add-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ib-rewrite-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.ib-rewrite-proposal {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.ib-rewrite-error {
+  color: var(--colorStatusDangerForeground1);
+  margin: 8px 0 0;
+}
+
 @media (max-width: 720px) {
   .ib-workbench-panes {
     grid-template-columns: minmax(0, 1fr);

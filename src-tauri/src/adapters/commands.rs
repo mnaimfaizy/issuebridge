@@ -17,8 +17,8 @@ use crate::adapters::oauth_loopback::{
 use crate::adapters::whisper_voice::write_temp_wav;
 use crate::core::{
     AuthError, AuthState, CaptureError, CaptureInput, EditDraftInput, FirstRunStep, InboxError,
-    InstallContinueOutcome, InstallError, LabelCatalogError, PublishError, RepoId, TestingSetError,
-    UpdateError, VoiceError,
+    InstallContinueOutcome, InstallError, LabelCatalogError, PublishError, RepoId, RewriteError,
+    TestingSetError, UpdateError, VoiceError,
 };
 
 pub struct AppState {
@@ -705,6 +705,136 @@ pub fn ptt_hotkey(state: State<'_, AppState>) -> Result<String, String> {
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
     Ok(core.ptt_hotkey())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RewriteStyleDto {
+    pub id: String,
+    pub name: String,
+    pub instruction: String,
+    pub builtin: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RewriteStylesSnapshotDto {
+    pub styles: Vec<RewriteStyleDto>,
+    pub last_used_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RewriteProposalDto {
+    pub title: String,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GenerateRewriteDto {
+    pub title: String,
+    pub body: String,
+    pub style_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AddRewriteStyleDto {
+    pub name: String,
+    pub instruction: String,
+}
+
+#[tauri::command]
+pub fn list_rewrite_styles(state: State<'_, AppState>) -> Result<RewriteStylesSnapshotDto, String> {
+    let core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    let snap = core.list_rewrite_styles().map_err(rewrite_error_message)?;
+    Ok(RewriteStylesSnapshotDto {
+        styles: snap
+            .styles
+            .into_iter()
+            .map(|s| RewriteStyleDto {
+                id: s.id,
+                name: s.name,
+                instruction: s.instruction,
+                builtin: s.builtin,
+            })
+            .collect(),
+        last_used_id: snap.last_used_id,
+    })
+}
+
+#[tauri::command]
+pub fn add_custom_rewrite_style(
+    state: State<'_, AppState>,
+    input: AddRewriteStyleDto,
+) -> Result<RewriteStyleDto, String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    let style = core
+        .add_custom_rewrite_style(&input.name, &input.instruction)
+        .map_err(rewrite_error_message)?;
+    Ok(RewriteStyleDto {
+        id: style.id,
+        name: style.name,
+        instruction: style.instruction,
+        builtin: style.builtin,
+    })
+}
+
+#[tauri::command]
+pub fn remove_custom_rewrite_style(
+    state: State<'_, AppState>,
+    style_id: String,
+) -> Result<(), String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    core.remove_custom_rewrite_style(&style_id)
+        .map_err(rewrite_error_message)
+}
+
+#[tauri::command]
+pub fn generate_rewrite(
+    state: State<'_, AppState>,
+    input: GenerateRewriteDto,
+) -> Result<RewriteProposalDto, String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    let proposal = core
+        .generate_rewrite(&input.title, &input.body, &input.style_id)
+        .map_err(rewrite_error_message)?;
+    Ok(RewriteProposalDto {
+        title: proposal.title,
+        body: proposal.body,
+    })
+}
+
+#[tauri::command]
+pub fn remember_last_rewrite_style(
+    state: State<'_, AppState>,
+    style_id: String,
+) -> Result<(), String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    core.remember_last_rewrite_style(&style_id)
+        .map_err(rewrite_error_message)
+}
+
+fn rewrite_error_message(err: RewriteError) -> String {
+    match err {
+        RewriteError::NotSignedIn => "Sign in to Rewrite a Draft.".into(),
+        RewriteError::TooThin => "Draft is too thin to Rewrite — add more title or body.".into(),
+        RewriteError::EmptyFields => "Name and instruction are required.".into(),
+        RewriteError::NotFound => "That Rewrite style was not found.".into(),
+        RewriteError::StorageUnavailable => "Could not update Rewrite styles.".into(),
+        RewriteError::EngineFailed => "Rewrite failed. Try again.".into(),
+    }
 }
 
 fn voice_error_message(err: VoiceError) -> String {

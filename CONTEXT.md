@@ -67,3 +67,11 @@ _Avoid_: Final beta, near-stable (unqualified)
 **Release notes**:
 The user-facing summary of what changed in a Release, kept in the repo changelog and used as the published Release description. Not a raw commit list. For a stable Release, notes cover changes since the previous stable Release; bump suggestions use the latest tag (any), except promoting an RC with no new work to the same target version.
 _Avoid_: Changelog dump, commit log (when meaning Release notes)
+
+**Rewrite**:
+An explicit Inbox-only action that proposes a clearer title and body for a Draft, steered by a Rewrite style, without silent-overwrite — the user Accepts or Discards the proposal.
+_Avoid_: AI edit, polish, improve writing (when meaning this product action), Capture rewrite
+
+**Rewrite style**:
+A named steering preset (built-in or user-defined) that shapes how Rewrite proposes title and body. Last-used is remembered globally after a successful Generate.
+_Avoid_: Prompt template, tone, persona, rewrite preset (unqualified)
