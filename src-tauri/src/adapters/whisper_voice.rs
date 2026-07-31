@@ -409,10 +409,8 @@ more words
 
     #[test]
     fn resolve_dll_dir_prefers_colocated_with_sidecar() {
-        let root = std::env::temp_dir().join(format!(
-            "ib-whisper-dll-colocated-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("ib-whisper-dll-colocated-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         let cli = root.join("whisper-cli.exe");
@@ -428,10 +426,8 @@ more words
 
     #[test]
     fn resolve_dll_dir_falls_back_to_nested_binaries() {
-        let root = std::env::temp_dir().join(format!(
-            "ib-whisper-dll-nested-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("ib-whisper-dll-nested-{}", std::process::id()));
         let binaries = root.join("binaries");
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&binaries).unwrap();
@@ -448,10 +444,8 @@ more words
 
     #[test]
     fn resolve_dll_dir_near_sidecar_none_when_missing() {
-        let root = std::env::temp_dir().join(format!(
-            "ib-whisper-dll-missing-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("ib-whisper-dll-missing-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         let cli = root.join("whisper-cli.exe");

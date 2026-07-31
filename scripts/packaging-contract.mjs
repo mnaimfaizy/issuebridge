@@ -141,7 +141,7 @@ export function checkPackagingContract(config) {
   });
   if (nestedDllTarget) {
     errors.push(
-      'bundle.resources must not nest whisper.dll under binaries/ (Windows loads it next to whisper-cli; see #55)',
+      "bundle.resources must not nest whisper.dll under binaries/ (Windows loads it next to whisper-cli; see #55)",
     );
   }
 
