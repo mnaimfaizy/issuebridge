@@ -154,6 +154,14 @@ fn default_testing_set_max() -> usize {
     3
 }
 
+/// User-defined Rewrite style (name + instruction text).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomRewriteStyle {
+    pub id: String,
+    pub name: String,
+    pub instruction: String,
+}
+
 /// Persisted first-run / Testing-set preferences (not credentials).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -175,6 +183,12 @@ pub struct AppSettings {
     /// Push-to-talk hotkey (default `Ctrl+Alt+Shift+V`).
     #[serde(default)]
     pub ptt_hotkey: Option<String>,
+    /// User-defined Rewrite styles.
+    #[serde(default)]
+    pub custom_rewrite_styles: Vec<CustomRewriteStyle>,
+    /// Global last-used Rewrite style id (persisted on successful Generate).
+    #[serde(default)]
+    pub last_used_rewrite_style_id: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -190,8 +204,107 @@ impl Default for AppSettings {
             last_used_repo: None,
             open_hotkey: None,
             ptt_hotkey: None,
+            custom_rewrite_styles: Vec::new(),
+            last_used_rewrite_style_id: None,
         }
     }
+}
+
+/// Rewrite style as surfaced to Inbox (built-in or user-defined).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RewriteStyleInfo {
+    pub id: String,
+    pub name: String,
+    pub instruction: String,
+    pub builtin: bool,
+}
+
+/// Snapshot of available Rewrite styles plus the resolved last-used id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewriteStylesSnapshot {
+    pub styles: Vec<RewriteStyleInfo>,
+    pub last_used_id: String,
+}
+
+/// Input to the Rewrite engine (working title/body + resolved style).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewriteInput {
+    pub title: String,
+    pub body: String,
+    pub style: RewriteStyleInfo,
+}
+
+/// Proposed title + body from Rewrite (not yet Accept-ed into the Draft).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewriteProposal {
+    pub title: String,
+    pub body: String,
+}
+
+/// On-device Rewrite inference boundary (stub today; llama.cpp sidecar later).
+pub trait RewriteEngine: Send + Sync {
+    fn rewrite(&self, input: &RewriteInput) -> Result<RewriteProposal, RewriteEngineError>;
+}
+
+/// Failures from the Rewrite engine port (distinct from eligibility / settings).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RewriteEngineError {
+    EngineFailed,
+}
+
+/// Deterministic stub Rewrite engine for UX / domain demos until real inference lands.
+#[derive(Debug, Default, Clone)]
+pub struct StubRewriteEngine;
+
+impl RewriteEngine for StubRewriteEngine {
+    fn rewrite(&self, input: &RewriteInput) -> Result<RewriteProposal, RewriteEngineError> {
+        let title = input.title.trim();
+        let body = input.body.trim();
+        let style_name = input.style.name.as_str();
+        let proposal = match input.style.id.as_str() {
+            "bug_report" => RewriteProposal {
+                title: format!("{title} (bug report)"),
+                body: format!(
+                    "## Problem\n{body}\n\n## Steps to reproduce\n\n## Expected\n\n## Actual\n\n## Environment\n\n_(Stub Rewrite — {style_name})_"
+                ),
+            },
+            "feature_request" => RewriteProposal {
+                title: format!("{title} (feature request)"),
+                body: format!(
+                    "## Problem\n{body}\n\n## Proposal\n\n## Why it matters\n\n_(Stub Rewrite — {style_name})_"
+                ),
+            },
+            "question" => RewriteProposal {
+                title: format!("{title}?"),
+                body: format!(
+                    "## Question\n{body}\n\n## Context\n\n_(Stub Rewrite — {style_name})_"
+                ),
+            },
+            "concise" => RewriteProposal {
+                title: truncate_chars(title, 72),
+                body: format!("{body}\n\n_(Stub Rewrite — Concise)_"),
+            },
+            _ => RewriteProposal {
+                title: if title.is_empty() {
+                    format!("Clear rewrite ({style_name})")
+                } else {
+                    title.to_string()
+                },
+                body: format!(
+                    "{body}\n\n_(Stub Rewrite — {style_name}: cleaned for skimability; facts preserved.)_"
+                ),
+            },
+        };
+        Ok(proposal)
+    }
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    s.chars().take(max).collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

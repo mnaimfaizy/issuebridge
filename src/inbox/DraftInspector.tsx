@@ -30,6 +30,9 @@ type DraftInspectorProps = {
   onToggleCatalogLabel: (name: string) => void;
   onSave: () => void;
   onPublishOrUpdate: () => void;
+  onRewrite: () => void;
+  rewriteDisabled: boolean;
+  rewriteHint: string | null;
   onBack: () => void;
 };
 
@@ -63,6 +66,9 @@ export function DraftInspector({
   onToggleCatalogLabel,
   onSave,
   onPublishOrUpdate,
+  onRewrite,
+  rewriteDisabled,
+  rewriteHint,
   onBack,
 }: DraftInspectorProps) {
   if (!draft) {
@@ -235,7 +241,20 @@ export function DraftInspector({
         >
           {draft.linked ? "Update" : "Publish"}
         </Button>
+        <Button
+          appearance="secondary"
+          disabled={busy || rewriteDisabled}
+          title={rewriteHint ?? undefined}
+          onClick={onRewrite}
+        >
+          Rewrite…
+        </Button>
       </div>
+      {rewriteHint ? (
+        <Text as="p" size={200} className="ib-muted">
+          {rewriteHint}
+        </Text>
+      ) : null}
 
       {draft.html_url && draft.issue_number != null ? (
         <p className="ib-draft-link">

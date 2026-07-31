@@ -89,3 +89,17 @@ pub enum LabelCatalogError {
     NotSignedIn,
     StorageUnavailable,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RewriteError {
+    NotSignedIn,
+    /// Trimmed title < 8 and trimmed body < 40.
+    TooThin,
+    /// Name or instruction was empty when adding a user-defined Rewrite style.
+    EmptyFields,
+    /// User-defined Rewrite style id was not found (or was a built-in remove attempt).
+    NotFound,
+    StorageUnavailable,
+    EngineFailed,
+}

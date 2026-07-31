@@ -19,6 +19,11 @@ import { ConflictDialog } from "./ConflictDialog";
 import { DraftInspector } from "./DraftInspector";
 import { InboxList } from "./InboxList";
 import { readLastDraftId, writeLastDraftId } from "./lastDraftId";
+import { RewriteDialog } from "./RewriteDialog";
+import {
+  isTooThinForRewrite,
+  REWRITE_TOO_THIN_HINT,
+} from "./rewriteEligibility";
 import {
   clearSuccessOnEdit,
   type StatusState,
@@ -60,6 +65,7 @@ export function InboxWorkbench() {
   const [showEditorPane, setShowEditorPane] = useState(false);
   const [conflictOpen, setConflictOpen] = useState(false);
   const [conflictUrl, setConflictUrl] = useState<string | null>(null);
+  const [rewriteOpen, setRewriteOpen] = useState(false);
 
   const listRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLElement>(null);
@@ -434,8 +440,8 @@ export function InboxWorkbench() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (conflictOpen) {
-        if (event.key === "Escape") {
+      if (conflictOpen || rewriteOpen) {
+        if (event.key === "Escape" && conflictOpen) {
           event.preventDefault();
           event.stopPropagation();
         }
@@ -463,6 +469,8 @@ export function InboxWorkbench() {
 
   const stackedEditorVisible = !narrow || showEditorPane;
   const stackedListVisible = !narrow || !showEditorPane;
+  const rewriteDisabled = isTooThinForRewrite(title, body);
+  const rewriteHint = rewriteDisabled ? REWRITE_TOO_THIN_HINT : null;
 
   return (
     <div className="ib-workbench">
@@ -553,6 +561,9 @@ export function InboxWorkbench() {
             onToggleCatalogLabel={toggleCatalogLabel}
             onSave={() => void runSave()}
             onPublishOrUpdate={() => void runPublishOrUpdate()}
+            onRewrite={() => setRewriteOpen(true)}
+            rewriteDisabled={rewriteDisabled}
+            rewriteHint={rewriteHint}
             onBack={() => setShowEditorPane(false)}
           />
         ) : null}
@@ -564,6 +575,17 @@ export function InboxWorkbench() {
         busy={busy}
         onKeepMine={() => void runKeepMine()}
         onUseTheirs={() => void runUseTheirs()}
+      />
+      <RewriteDialog
+        open={rewriteOpen}
+        sourceTitle={title}
+        sourceBody={body}
+        onAccept={(nextTitle, nextBody) => {
+          noteFieldEdit();
+          setTitle(nextTitle);
+          setBody(nextBody);
+        }}
+        onClose={() => setRewriteOpen(false)}
       />
     </div>
   );
