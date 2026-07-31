@@ -1,7 +1,7 @@
 {
   "name": "issuebridge",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Desktop app to Capture GitHub issues while testing—hotkey and voice, local Drafts, then Publish.",
   "keywords": [
     "tauri",
