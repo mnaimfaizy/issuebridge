@@ -6,9 +6,15 @@ import { fileURLToPath } from "node:url";
 import {
   checkPackagingContract,
   checkReleaseCredentials,
+  whisperDllsColocatedWithSidecar,
 } from "./packaging-contract.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+const validResourcesMap = {
+  "resources/models/ggml-base.bin": "resources/models/ggml-base.bin",
+  "binaries/*.dll": "./",
+};
 
 describe("packaging contract", () => {
   it("requires NSIS-only targets and currentUser installMode with whisper assets", () => {
@@ -16,7 +22,7 @@ describe("packaging contract", () => {
       bundle: {
         targets: ["nsis"],
         externalBin: ["binaries/whisper-cli"],
-        resources: ["resources/models/ggml-base.bin"],
+        resources: validResourcesMap,
         windows: {
           nsis: { installMode: "currentUser" },
         },
@@ -31,7 +37,7 @@ describe("packaging contract", () => {
       bundle: {
         targets: "all",
         externalBin: ["binaries/whisper-cli"],
-        resources: ["resources/models/ggml-base.bin"],
+        resources: validResourcesMap,
         windows: {
           nsis: { installMode: "currentUser" },
         },
@@ -46,7 +52,7 @@ describe("packaging contract", () => {
       bundle: {
         targets: ["nsis"],
         externalBin: ["binaries/whisper-cli"],
-        resources: ["resources/models/ggml-base.bin"],
+        resources: validResourcesMap,
         windows: {
           nsis: { installMode: "perMachine" },
         },
@@ -72,12 +78,71 @@ describe("packaging contract", () => {
     assert.match(result.errors.join("\n"), /ggml-base\.bin/);
   });
 
+  it("rejects nested binaries/whisper.dll layout that breaks installed PTT (#55)", () => {
+    const result = checkPackagingContract({
+      bundle: {
+        targets: ["nsis"],
+        externalBin: ["binaries/whisper-cli"],
+        resources: [
+          "resources/models/ggml-base.bin",
+          "binaries/ggml.dll",
+          "binaries/whisper.dll",
+          "binaries/ggml-cpu-*.dll",
+        ],
+        windows: {
+          nsis: { installMode: "currentUser" },
+        },
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join("\n"), /install root|binaries\//i);
+  });
+
+  it("accepts explicit root DLL targets", () => {
+    const result = checkPackagingContract({
+      bundle: {
+        targets: ["nsis"],
+        externalBin: ["binaries/whisper-cli"],
+        resources: {
+          "resources/models/ggml-base.bin": "resources/models/ggml-base.bin",
+          "binaries/whisper.dll": "whisper.dll",
+          "binaries/ggml.dll": "ggml.dll",
+        },
+        windows: {
+          nsis: { installMode: "currentUser" },
+        },
+      },
+    });
+    assert.equal(result.ok, true, result.errors.join("\n"));
+  });
+
   it("holds for the repo tauri.conf.json", () => {
     const config = JSON.parse(
       readFileSync(join(root, "src-tauri", "tauri.conf.json"), "utf8"),
     );
     const result = checkPackagingContract(config);
     assert.equal(result.ok, true, result.errors.join("\n"));
+  });
+});
+
+describe("whisperDllsColocatedWithSidecar", () => {
+  it("accepts binaries/*.dll mapped to ./", () => {
+    assert.equal(
+      whisperDllsColocatedWithSidecar([
+        { source: "binaries/*.dll", target: "./" },
+      ]),
+      true,
+    );
+  });
+
+  it("rejects nested binaries/ targets", () => {
+    assert.equal(
+      whisperDllsColocatedWithSidecar([
+        { source: "binaries/whisper.dll", target: "binaries/whisper.dll" },
+        { source: "binaries/ggml.dll", target: "binaries/ggml.dll" },
+      ]),
+      false,
+    );
   });
 });
 
