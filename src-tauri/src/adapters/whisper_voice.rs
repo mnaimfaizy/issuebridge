@@ -460,24 +460,25 @@ more words
 
     #[test]
     fn prepend_path_dirs_joins_all_prefixes() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let first = PathBuf::from("first");
+        let second = PathBuf::from("second");
         let mut command = Command::new("echo");
         prepend_path_dirs(
             &mut command,
-            &[
-                PathBuf::from("C:\\first"),
-                PathBuf::from("C:\\second"),
-                PathBuf::from("C:\\first"),
-            ],
+            &[first.clone(), second.clone(), first.clone()],
         );
         let envs: Vec<_> = command.get_envs().collect();
+        let key = if cfg!(windows) { "Path" } else { "PATH" };
         let path = envs
             .iter()
-            .find(|(k, _)| k.to_string_lossy().eq_ignore_ascii_case("Path"))
+            .find(|(k, _)| k.to_string_lossy() == key)
             .and_then(|(_, v)| v.as_ref())
-            .expect("Path set");
+            .expect("PATH/Path set");
         let path = path.to_string_lossy();
+        let expected_prefix = format!("first{sep}second");
         assert!(
-            path.starts_with("C:\\first;C:\\second;") || path.starts_with("C:\\first;C:\\second"),
+            path == expected_prefix || path.starts_with(&format!("{expected_prefix}{sep}")),
             "path={path}"
         );
     }
