@@ -2,6 +2,12 @@
 
 All notable changes to Issuebridge are documented here. Release notes are user-facing; see git history for full commit detail.
 
+## [0.1.1] - 2026-07-31
+
+### Fixed
+- Voice Capture (hold-to-talk) on installed Windows builds: Whisper DLLs are installed next to whisper-cli so transcription can find them (#55)
+- No console window flash when Whisper runs after releasing the mic
+
 ## [0.1.0] - 2026-07-30
 
 ### Added
