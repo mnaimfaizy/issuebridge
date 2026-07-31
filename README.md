@@ -52,7 +52,7 @@ Fully quit Issuebridge first if Windows reports `ggml-base.bin` is locked.
 
 3. Offline Whisper **base** is approximate (English forced via `-l en` by default; override with `ISSUEBRIDGE_WHISPER_LANGUAGE`). Edit the text afterward. Text **Save Draft** always works if voice fails.
 
-Windows needs companion DLLs next to `whisper-cli` (`ggml.dll`, `whisper.dll`, `ggml-cpu-*.dll`, …). The fetch script copies them; spawn sets cwd/`PATH` accordingly and passes **absolute** model/audio paths.
+Windows needs companion DLLs next to `whisper-cli` (`ggml.dll`, `whisper.dll`, `ggml-cpu-*.dll`, …). The fetch script copies them into `src-tauri/binaries/`; the NSIS bundle maps those DLLs to the install root beside `whisper-cli.exe`. At runtime, spawn sets cwd to the directory that contains the DLLs and passes **absolute** model/audio paths.
 
 ### Capture window (Windows)
 

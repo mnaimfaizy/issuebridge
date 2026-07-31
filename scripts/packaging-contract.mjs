@@ -5,6 +5,58 @@
 
 const WHISPER_SIDECAR = "binaries/whisper-cli";
 const WHISPER_MODEL = "resources/models/ggml-base.bin";
+const WHISPER_DLL_NAMES = ["whisper.dll", "ggml.dll"];
+
+/**
+ * Normalize bundle.resources (array or map) to { source, target } entries.
+ * @param {unknown} resources
+ * @returns {{ source: string, target: string }[]}
+ */
+export function resourceEntries(resources) {
+  if (Array.isArray(resources)) {
+    return resources.map((path) => {
+      const s = String(path);
+      return { source: s, target: s };
+    });
+  }
+  if (resources && typeof resources === "object") {
+    return Object.entries(resources).map(([source, target]) => ({
+      source: String(source),
+      target: String(target),
+    }));
+  }
+  return [];
+}
+
+/**
+ * True when Whisper companion DLLs are bundled at the install/resource root
+ * (next to externalBin whisper-cli), not nested under binaries/.
+ * @param {{ source: string, target: string }[]} entries
+ */
+export function whisperDllsColocatedWithSidecar(entries) {
+  const norm = (p) => p.replace(/\\/g, "/");
+
+  // Map form: binaries/*.dll (or explicit dll sources) → install root.
+  const mappedToRoot = entries.some(({ source, target }) => {
+    const s = norm(source);
+    const t = norm(target);
+    if (!s.includes("binaries/") || !s.includes(".dll")) {
+      return false;
+    }
+    return t === "./" || t === "." || t === "" || t === "/";
+  });
+  if (mappedToRoot) {
+    return true;
+  }
+
+  // Explicit bare filenames at install root (not binaries/whisper.dll).
+  return WHISPER_DLL_NAMES.every((name) =>
+    entries.some(({ target }) => {
+      const t = norm(target);
+      return t === name || t === `./${name}`;
+    }),
+  );
+}
 
 /**
  * @param {unknown} config
@@ -53,10 +105,43 @@ export function checkPackagingContract(config) {
     );
   }
 
-  const resources = Array.isArray(bundle.resources) ? bundle.resources : [];
-  if (!resources.includes(WHISPER_MODEL)) {
+  const entries = resourceEntries(bundle.resources);
+  const hasModel = entries.some(({ source, target }) => {
+    const s = source.replace(/\\/g, "/");
+    const t = target.replace(/\\/g, "/");
+    return (
+      s === WHISPER_MODEL ||
+      t === WHISPER_MODEL ||
+      s.endsWith("/ggml-base.bin") ||
+      t.endsWith("/ggml-base.bin") ||
+      t === "ggml-base.bin"
+    );
+  });
+  if (!hasModel) {
     errors.push(
       `bundle.resources must include "${WHISPER_MODEL}" for offline PTT`,
+    );
+  }
+
+  if (!whisperDllsColocatedWithSidecar(entries)) {
+    errors.push(
+      'bundle.resources must place Whisper DLLs at the install root next to whisper-cli (e.g. "binaries/*.dll": "./"), not under binaries/',
+    );
+  }
+
+  // Guard against the 0.1.0 layout that put DLLs under binaries/ and broke PTT (#55).
+  const nestedDllTarget = entries.some(({ source, target }) => {
+    const s = source.replace(/\\/g, "/");
+    const t = target.replace(/\\/g, "/");
+    return (
+      (s === "binaries/whisper.dll" && t === "binaries/whisper.dll") ||
+      t === "binaries/whisper.dll" ||
+      t.endsWith("/binaries/whisper.dll")
+    );
+  });
+  if (nestedDllTarget) {
+    errors.push(
+      'bundle.resources must not nest whisper.dll under binaries/ (Windows loads it next to whisper-cli; see #55)',
     );
   }
 

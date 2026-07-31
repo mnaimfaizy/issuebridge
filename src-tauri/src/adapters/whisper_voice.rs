@@ -46,14 +46,19 @@ impl VoiceTranscriber for WhisperVoiceTranscriber {
             VoiceError::SidecarFailed
         })?;
 
-        // Absolute paths: we set cwd to the sidecar dir so Windows finds ggml/whisper DLLs.
+        // Absolute model/audio paths: cwd is the DLL directory (see apply_dll_search).
         let audio_abs = absolute_path(audio);
         let model_abs = absolute_path(&model);
+        let dll_dir = resolve_dll_dir(&sidecar);
 
         eprintln!(
-            "[issuebridge] whisper: cli={} model={}",
+            "[issuebridge] whisper: cli={} model={} dll_dir={}",
             sidecar.display(),
-            model_abs.display()
+            model_abs.display(),
+            dll_dir
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "(none)".into())
         );
 
         let mut command = Command::new(&sidecar);
@@ -68,14 +73,7 @@ impl VoiceTranscriber for WhisperVoiceTranscriber {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        // Windows loads ggml/whisper DLLs from the exe dir, then PATH.
-        if let Some(dir) = sidecar.parent() {
-            command.current_dir(dir);
-            prepend_path_env(&mut command, dir);
-        }
-        for dll_dir in dll_search_dirs() {
-            prepend_path_env(&mut command, &dll_dir);
-        }
+        apply_dll_search(&mut command, &sidecar, dll_dir.as_deref());
 
         let output = run_with_timeout(command, self.timeout)?;
         if !output.status.success() {
@@ -102,15 +100,69 @@ impl VoiceTranscriber for WhisperVoiceTranscriber {
     }
 }
 
-fn prepend_path_env(command: &mut Command, dir: &Path) {
+/// Windows loads `whisper.dll` / `ggml.dll` from the exe dir, cwd, then PATH.
+/// ggml also loads `ggml-cpu-*.dll` backends from exe dir / cwd (not PATH).
+/// Prefer cwd = directory that actually contains those DLLs (#55).
+fn apply_dll_search(command: &mut Command, sidecar: &Path, dll_dir: Option<&Path>) {
+    let cwd = dll_dir
+        .map(|p| p.to_path_buf())
+        .or_else(|| sidecar.parent().map(|p| p.to_path_buf()));
+    if let Some(ref dir) = cwd {
+        command.current_dir(dir);
+    }
+
+    let mut dirs = Vec::new();
+    if let Some(dir) = dll_dir {
+        dirs.push(dir.to_path_buf());
+    }
+    if let Some(parent) = sidecar.parent() {
+        dirs.push(parent.to_path_buf());
+    }
+    dirs.extend(dll_search_dirs());
+    prepend_path_dirs(command, &dirs);
+}
+
+/// Prepend all dirs to Path in one write so later calls cannot overwrite earlier ones.
+fn prepend_path_dirs(command: &mut Command, dirs: &[PathBuf]) {
     let key = if cfg!(windows) { "Path" } else { "PATH" };
     let sep = if cfg!(windows) { ";" } else { ":" };
-    let dir = dir.to_string_lossy();
+    let mut prefixes = Vec::new();
+    for dir in dirs {
+        let s = dir.to_string_lossy().into_owned();
+        if !s.is_empty() && !prefixes.iter().any(|p: &String| p == &s) {
+            prefixes.push(s);
+        }
+    }
+    if prefixes.is_empty() {
+        return;
+    }
+    let prefix = prefixes.join(sep);
     let joined = match std::env::var_os(key) {
-        Some(existing) => format!("{dir}{sep}{}", existing.to_string_lossy()),
-        None => dir.into_owned(),
+        Some(existing) => format!("{prefix}{sep}{}", existing.to_string_lossy()),
+        None => prefix,
     };
     command.env(key, joined);
+}
+
+/// Directory containing `whisper.dll` + `ggml.dll` for this sidecar (colocated or `binaries/`).
+fn resolve_dll_dir(sidecar: &Path) -> Option<PathBuf> {
+    resolve_dll_dir_near_sidecar(sidecar).or_else(|| {
+        dll_search_dirs()
+            .into_iter()
+            .find(|d| dir_has_whisper_dlls(d))
+    })
+}
+
+/// Sidecar-adjacent only: install root, or legacy `binaries/` next to the exe (#55).
+fn resolve_dll_dir_near_sidecar(sidecar: &Path) -> Option<PathBuf> {
+    let parent = sidecar.parent()?;
+    [parent.to_path_buf(), parent.join("binaries")]
+        .into_iter()
+        .find(|d| dir_has_whisper_dlls(d))
+}
+
+fn dir_has_whisper_dlls(dir: &Path) -> bool {
+    dir.join("ggml.dll").is_file() && dir.join("whisper.dll").is_file()
 }
 
 fn run_with_timeout(
@@ -201,10 +253,7 @@ fn resolve_sidecar_path() -> Option<PathBuf> {
 }
 
 fn sidecar_has_dlls(exe: &Path) -> bool {
-    let Some(dir) = exe.parent() else {
-        return false;
-    };
-    dir.join("ggml.dll").is_file() && dir.join("whisper.dll").is_file()
+    resolve_dll_dir(exe).is_some()
 }
 
 fn resolve_model_path() -> Option<PathBuf> {
@@ -260,9 +309,10 @@ fn dll_search_dirs() -> Vec<PathBuf> {
     out.push(PathBuf::from("binaries"));
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
+            // Install root first (DLLs colocated with whisper-cli after #55),
+            // then legacy nested binaries/ from 0.1.0.
             out.push(dir.to_path_buf());
             out.push(dir.join("binaries"));
-            out.push(dir.join("resources"));
         }
     }
     out.into_iter().filter(|p| p.is_dir()).collect()
@@ -323,6 +373,7 @@ pub fn write_temp_wav(dir: &Path, wav_bytes: &[u8]) -> Result<PathBuf, VoiceErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn extract_transcript_joins_spoken_lines() {
@@ -333,5 +384,86 @@ hello from the mic
 more words
 ";
         assert_eq!(extract_transcript(stdout), "hello from the mic more words");
+    }
+
+    #[test]
+    fn resolve_dll_dir_prefers_colocated_with_sidecar() {
+        let root = std::env::temp_dir().join(format!(
+            "ib-whisper-dll-colocated-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let cli = root.join("whisper-cli.exe");
+        fs::write(&cli, b"x").unwrap();
+        fs::write(root.join("whisper.dll"), b"x").unwrap();
+        fs::write(root.join("ggml.dll"), b"x").unwrap();
+
+        let resolved = resolve_dll_dir(&cli).expect("dll dir");
+        assert_eq!(resolved, root);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_dll_dir_falls_back_to_nested_binaries() {
+        let root = std::env::temp_dir().join(format!(
+            "ib-whisper-dll-nested-{}",
+            std::process::id()
+        ));
+        let binaries = root.join("binaries");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&binaries).unwrap();
+        let cli = root.join("whisper-cli.exe");
+        fs::write(&cli, b"x").unwrap();
+        fs::write(binaries.join("whisper.dll"), b"x").unwrap();
+        fs::write(binaries.join("ggml.dll"), b"x").unwrap();
+
+        let resolved = resolve_dll_dir(&cli).expect("dll dir");
+        assert_eq!(resolved, binaries);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_dll_dir_near_sidecar_none_when_missing() {
+        let root = std::env::temp_dir().join(format!(
+            "ib-whisper-dll-missing-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let cli = root.join("whisper-cli.exe");
+        fs::write(&cli, b"x").unwrap();
+
+        // Do not use resolve_dll_dir: from the repo cwd it can still find
+        // src-tauri/binaries via dll_search_dirs().
+        assert!(resolve_dll_dir_near_sidecar(&cli).is_none());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn prepend_path_dirs_joins_all_prefixes() {
+        let mut command = Command::new("echo");
+        prepend_path_dirs(
+            &mut command,
+            &[
+                PathBuf::from("C:\\first"),
+                PathBuf::from("C:\\second"),
+                PathBuf::from("C:\\first"),
+            ],
+        );
+        let envs: Vec<_> = command.get_envs().collect();
+        let path = envs
+            .iter()
+            .find(|(k, _)| k.to_string_lossy().eq_ignore_ascii_case("Path"))
+            .and_then(|(_, v)| v.as_ref())
+            .expect("Path set");
+        let path = path.to_string_lossy();
+        assert!(
+            path.starts_with("C:\\first;C:\\second;") || path.starts_with("C:\\first;C:\\second"),
+            "path={path}"
+        );
     }
 }
