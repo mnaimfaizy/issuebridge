@@ -4,8 +4,10 @@
  */
 
 const WHISPER_SIDECAR = "binaries/whisper-cli";
+const LLAMA_SIDECAR = "binaries/llama-cli";
 const WHISPER_MODEL = "resources/models/ggml-base.bin";
 const WHISPER_DLL_NAMES = ["whisper.dll", "ggml.dll"];
+const LLAMA_DLL_NAMES = ["llama.dll", "ggml.dll"];
 
 /**
  * Normalize bundle.resources (array or map) to { source, target } entries.
@@ -29,11 +31,12 @@ export function resourceEntries(resources) {
 }
 
 /**
- * True when Whisper companion DLLs are bundled at the install/resource root
- * (next to externalBin whisper-cli), not nested under binaries/.
+ * True when companion DLLs from binaries/ are mapped to the install/resource root
+ * (next to externalBin sidecars), not nested under binaries/.
  * @param {{ source: string, target: string }[]} entries
+ * @param {string[]} dllNames fallback explicit root filenames
  */
-export function whisperDllsColocatedWithSidecar(entries) {
+export function sidecarDllsColocatedAtInstallRoot(entries, dllNames) {
   const norm = (p) => p.replace(/\\/g, "/");
 
   // Map form: binaries/*.dll (or explicit dll sources) → install root.
@@ -49,13 +52,43 @@ export function whisperDllsColocatedWithSidecar(entries) {
     return true;
   }
 
-  // Explicit bare filenames at install root (not binaries/whisper.dll).
-  return WHISPER_DLL_NAMES.every((name) =>
+  // Explicit bare filenames at install root (not binaries/foo.dll).
+  return dllNames.every((name) =>
     entries.some(({ target }) => {
       const t = norm(target);
       return t === name || t === `./${name}`;
     }),
   );
+}
+
+/**
+ * True when Whisper companion DLLs are bundled at the install/resource root
+ * (next to externalBin whisper-cli), not nested under binaries/.
+ * @param {{ source: string, target: string }[]} entries
+ */
+export function whisperDllsColocatedWithSidecar(entries) {
+  return sidecarDllsColocatedAtInstallRoot(entries, WHISPER_DLL_NAMES);
+}
+
+/**
+ * True when llama.cpp companion DLLs (CPU + optional Vulkan) land at install root
+ * next to llama-cli — same layout as Whisper (#68).
+ * @param {{ source: string, target: string }[]} entries
+ */
+export function llamaDllsColocatedWithSidecar(entries) {
+  return sidecarDllsColocatedAtInstallRoot(entries, LLAMA_DLL_NAMES);
+}
+
+/**
+ * True when any GGUF model is listed in bundle.resources (must stay out of NSIS).
+ * @param {{ source: string, target: string }[]} entries
+ */
+export function resourcesIncludeGguf(entries) {
+  return entries.some(({ source, target }) => {
+    const s = source.replace(/\\/g, "/").toLowerCase();
+    const t = target.replace(/\\/g, "/").toLowerCase();
+    return s.endsWith(".gguf") || t.endsWith(".gguf");
+  });
 }
 
 /**
@@ -104,6 +137,11 @@ export function checkPackagingContract(config) {
       `bundle.externalBin must include "${WHISPER_SIDECAR}" for offline PTT`,
     );
   }
+  if (!externalBin.includes(LLAMA_SIDECAR)) {
+    errors.push(
+      `bundle.externalBin must include "${LLAMA_SIDECAR}" for offline Rewrite`,
+    );
+  }
 
   const entries = resourceEntries(bundle.resources);
   const hasModel = entries.some(({ source, target }) => {
@@ -129,6 +167,18 @@ export function checkPackagingContract(config) {
     );
   }
 
+  if (!llamaDllsColocatedWithSidecar(entries)) {
+    errors.push(
+      'bundle.resources must place llama.cpp DLLs (CPU/Vulkan) at the install root next to llama-cli (e.g. "binaries/*.dll": "./"), not under binaries/',
+    );
+  }
+
+  if (resourcesIncludeGguf(entries)) {
+    errors.push(
+      "bundle.resources must not include GGUF models — Rewrite models download on demand, not in NSIS (#68)",
+    );
+  }
+
   // Guard against the 0.1.0 layout that put DLLs under binaries/ and broke PTT (#55).
   const nestedDllTarget = entries.some(({ source, target }) => {
     const s = source.replace(/\\/g, "/");
@@ -136,12 +186,15 @@ export function checkPackagingContract(config) {
     return (
       (s === "binaries/whisper.dll" && t === "binaries/whisper.dll") ||
       t === "binaries/whisper.dll" ||
-      t.endsWith("/binaries/whisper.dll")
+      t.endsWith("/binaries/whisper.dll") ||
+      (s === "binaries/llama.dll" && t === "binaries/llama.dll") ||
+      t === "binaries/llama.dll" ||
+      t.endsWith("/binaries/llama.dll")
     );
   });
   if (nestedDllTarget) {
     errors.push(
-      "bundle.resources must not nest whisper.dll under binaries/ (Windows loads it next to whisper-cli; see #55)",
+      "bundle.resources must not nest whisper.dll/llama.dll under binaries/ (Windows loads them next to sidecars; see #55/#68)",
     );
   }
 

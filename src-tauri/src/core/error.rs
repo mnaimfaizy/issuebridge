@@ -102,4 +102,8 @@ pub enum RewriteError {
     NotFound,
     StorageUnavailable,
     EngineFailed,
+    /// Soft ~60s Generate timeout (no auto-retry).
+    TimedOut,
+    /// In-flight Generate was cancelled.
+    Cancelled,
 }

@@ -7,9 +7,11 @@
 #
 # Optional:
 #   -SkipWhisperFetch  skip scripts/fetch-whisper-assets.ps1 when assets already present
+#   -SkipLlamaFetch    skip scripts/fetch-llama-assets.ps1 when assets already present
 
 param(
-    [switch]$SkipWhisperFetch
+    [switch]$SkipWhisperFetch,
+    [switch]$SkipLlamaFetch
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,6 +33,12 @@ if (-not $SkipWhisperFetch) {
     Write-Host "Fetching Whisper sidecar + base model..."
     & (Join-Path $PSScriptRoot "fetch-whisper-assets.ps1")
     Assert-LastExitCode "Whisper asset fetch"
+}
+
+if (-not $SkipLlamaFetch) {
+    Write-Host "Fetching llama.cpp Rewrite sidecar (CPU/Vulkan DLLs; no GGUF)..."
+    & (Join-Path $PSScriptRoot "fetch-llama-assets.ps1")
+    Assert-LastExitCode "llama.cpp asset fetch"
 }
 
 Write-Host "Building NSIS per-user installer (*-setup.exe)..."

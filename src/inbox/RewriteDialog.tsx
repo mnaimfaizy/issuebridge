@@ -37,6 +37,8 @@ type RewriteDialogProps = {
  * Variant B Rewrite modal: style chips → Generate → editable proposal → Accept / Discard.
  * Closing mid-generate cancels; never silent-overwrites the Draft underneath.
  */
+const GENERATE_SOFT_TIMEOUT_MS = 60_000;
+
 export function RewriteDialog({
   open,
   sourceTitle,
@@ -57,6 +59,12 @@ export function RewriteDialog({
   const generateTokenRef = useRef(0);
   const selectedStyle = styles.find((s) => s.id === styleId);
 
+  function stopInFlightGenerate() {
+    void invoke("cancel_rewrite").catch(() => {
+      // Soft: ignore if sidecar was not running.
+    });
+  }
+
   useEffect(() => {
     if (!open) return;
     setPhase("idle");
@@ -67,6 +75,7 @@ export function RewriteDialog({
     setNewName("");
     setNewInstruction("");
     generateTokenRef.current += 1;
+    stopInFlightGenerate();
     void (async () => {
       setBusyStyles(true);
       try {
@@ -86,6 +95,7 @@ export function RewriteDialog({
 
   function requestClose() {
     generateTokenRef.current += 1;
+    stopInFlightGenerate();
     setPhase("idle");
     onClose();
   }
@@ -94,6 +104,13 @@ export function RewriteDialog({
     setError(null);
     setPhase("generating");
     const token = ++generateTokenRef.current;
+    const timeoutId = window.setTimeout(() => {
+      if (token !== generateTokenRef.current) return;
+      generateTokenRef.current += 1;
+      stopInFlightGenerate();
+      setError("Rewrite timed out. Try again.");
+      setPhase("idle");
+    }, GENERATE_SOFT_TIMEOUT_MS);
     try {
       const proposal = await invoke<{ title: string; body: string }>(
         "generate_rewrite",
@@ -118,11 +135,14 @@ export function RewriteDialog({
       if (token !== generateTokenRef.current) return;
       setError(formatInvokeError(err));
       setPhase("idle");
+    } finally {
+      window.clearTimeout(timeoutId);
     }
   }
 
   function cancelGenerate() {
     generateTokenRef.current += 1;
+    stopInFlightGenerate();
     setPhase("idle");
   }
 

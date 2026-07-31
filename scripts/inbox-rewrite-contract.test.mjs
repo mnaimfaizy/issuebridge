@@ -79,6 +79,9 @@ describe("Inbox Rewrite modal (#67)", () => {
     assert.match(dialog, /generateTokenRef/);
     assert.match(dialog, /requestClose/);
     assert.match(dialog, /cancelGenerate/);
+    assert.match(dialog, /cancel_rewrite/);
+    assert.match(dialog, /GENERATE_SOFT_TIMEOUT_MS|60_000/);
+    assert.match(dialog, /Rewrite timed out/);
     assert.match(dialog, /onAccept/);
     assert.doesNotMatch(dialog, /edit_draft/);
     assert.doesNotMatch(dialog, /publish_draft/);
@@ -99,9 +102,11 @@ describe("Inbox Rewrite modal (#67)", () => {
     assert.match(ports, /struct StubRewriteEngine/);
     assert.match(ports, /custom_rewrite_styles/);
     assert.match(ports, /last_used_rewrite_style_id/);
+    assert.match(ports, /fn cancel/);
 
     const core = readTauri("core", "mod.rs");
     assert.match(core, /fn generate_rewrite/);
+    assert.doesNotMatch(core, /fn cancel_rewrite/);
     assert.match(core, /fn remember_last_rewrite_style/);
     assert.match(core, /fn list_rewrite_styles/);
     assert.match(core, /fn add_custom_rewrite_style/);
@@ -110,13 +115,38 @@ describe("Inbox Rewrite modal (#67)", () => {
 
     const commands = readTauri("adapters", "commands.rs");
     assert.match(commands, /generate_rewrite/);
+    assert.match(commands, /cancel_rewrite/);
     assert.match(commands, /list_rewrite_styles/);
     assert.match(commands, /add_custom_rewrite_style/);
     assert.match(commands, /remove_custom_rewrite_style/);
 
     const lib = readTauri("lib.rs");
     assert.match(lib, /generate_rewrite/);
+    assert.match(lib, /cancel_rewrite/);
     assert.match(lib, /list_rewrite_styles/);
+  });
+
+  it("llama.cpp Rewrite sidecar adapter exists with env/dev GGUF override (#68)", () => {
+    const llama = readTauri("adapters", "llama_rewrite.rs");
+    assert.match(llama, /struct LlamaRewriteEngine/);
+    assert.match(llama, /PreferLlamaRewriteEngine/);
+    assert.match(llama, /ISSUEBRIDGE_REWRITE_GGUF/);
+    assert.match(llama, /ISSUEBRIDGE_REWRITE_CLI/);
+    assert.match(llama, /TimedOut/);
+    assert.match(llama, /Cancelled/);
+    assert.match(llama, /llama-cli/);
+
+    const appCore = readTauri("adapters", "app_core.rs");
+    assert.match(appCore, /PreferLlamaRewriteEngine/);
+
+    const fetch = readFileSync(
+      join(root, "scripts", "fetch-llama-assets.ps1"),
+      "utf8",
+    );
+    assert.match(fetch, /vulkan/i);
+    assert.match(fetch, /ggml-vulkan\.dll/);
+    assert.match(fetch, /ggml-cpu-/);
+    assert.match(fetch, /NOT fetched|not bundled/i);
   });
 
   it("CONTEXT.md defines Rewrite and Rewrite style", () => {

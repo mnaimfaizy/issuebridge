@@ -26,3 +26,8 @@ dist-ssr
 # Whisper assets from scripts/fetch-whisper-assets.ps1 (large; fetch locally / in CI)
 src-tauri/binaries/*.dll
 src-tauri/resources/models/ggml-base.bin
+
+# llama.cpp Rewrite sidecar from scripts/fetch-llama-assets.ps1 (large; no GGUF in repo)
+src-tauri/binaries/llama-cli-x86_64-pc-windows-msvc.exe
+# GGUF models stay out of git / NSIS — download-on-demand or ISSUEBRIDGE_REWRITE_GGUF
+*.gguf
