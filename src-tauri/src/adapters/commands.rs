@@ -20,8 +20,8 @@ use crate::adapters::oauth_loopback::{
 use crate::adapters::whisper_voice::write_temp_wav;
 use crate::core::{
     find_rewrite_model, AuthError, AuthState, CaptureError, CaptureInput, EditDraftInput,
-    FirstRunStep, InboxError, InstallContinueOutcome, InstallError, LabelCatalogError, PublishError,
-    RepoId, RewriteError, TestingSetError, UpdateError, VoiceError,
+    FirstRunStep, InboxError, InstallContinueOutcome, InstallError, LabelCatalogError,
+    PublishError, RepoId, RewriteError, TestingSetError, UpdateError, VoiceError,
 };
 
 /// Cancel flag for in-flight Rewrite model downloads (lock-free vs core mutex).
@@ -913,9 +913,7 @@ pub fn get_rewrite_model_status(
     state: State<'_, AppState>,
 ) -> Result<RewriteModelStatusDto, String> {
     let core = state.core.lock().map_err(|e| e.to_string())?;
-    let snap = core
-        .rewrite_model_status()
-        .map_err(rewrite_error_message)?;
+    let snap = core.rewrite_model_status().map_err(rewrite_error_message)?;
     Ok(RewriteModelStatusDto {
         models: snap
             .models
@@ -943,9 +941,8 @@ pub fn start_rewrite_model_download(
     state: State<'_, AppState>,
     input: RewriteModelIdDto,
 ) -> Result<(), String> {
-    let entry = find_rewrite_model(&input.model_id).ok_or_else(|| {
-        rewrite_error_message(RewriteError::NotFound)
-    })?;
+    let entry = find_rewrite_model(&input.model_id)
+        .ok_or_else(|| rewrite_error_message(RewriteError::NotFound))?;
     {
         let mut core = state.core.lock().map_err(|e| e.to_string())?;
         if core.auth_state() != AuthState::SignedIn {
@@ -953,11 +950,7 @@ pub fn start_rewrite_model_download(
         }
         // Already verified on disk — set active without re-downloading (R30).
         let status = core.rewrite_model_status().map_err(rewrite_error_message)?;
-        if status
-            .models
-            .iter()
-            .any(|m| m.id == entry.id && m.verified)
-        {
+        if status.models.iter().any(|m| m.id == entry.id && m.verified) {
             core.set_active_rewrite_model(entry.id)
                 .map_err(rewrite_error_message)?;
             return Ok(());
@@ -1052,9 +1045,7 @@ fn rewrite_error_message(err: RewriteError) -> String {
         RewriteError::EngineFailed => "Rewrite failed. Try again.".into(),
         RewriteError::TimedOut => "Rewrite timed out. Try again.".into(),
         RewriteError::Cancelled => "Rewrite cancelled.".into(),
-        RewriteError::ModelNotReady => {
-            "That Rewrite model is not ready. Download it first.".into()
-        }
+        RewriteError::ModelNotReady => "That Rewrite model is not ready. Download it first.".into(),
         RewriteError::DownloadFailed => "Rewrite model download failed. Try again.".into(),
         RewriteError::DownloadCancelled => "Rewrite model download cancelled.".into(),
     }

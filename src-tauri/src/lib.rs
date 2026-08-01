@@ -8,12 +8,12 @@ use adapters::{
     edit_draft, ensure_label_catalog, first_run_step, generate_rewrite, get_draft,
     get_rewrite_model_status, keep_mine, last_used_repo, list_inbox, list_rewrite_styles,
     open_app_install, prefetch_testing_set_label_catalogs, ptt_hotkey, publish_draft,
-    reconcile_testing_set_with_app_visible, remember_last_rewrite_style, remove_custom_rewrite_style,
-    remove_rewrite_model, remove_testing_set_repo, save_capture, set_active_rewrite_model,
-    set_testing_set_max, setup_tray, show_capture, show_capture_window_detached,
-    sign_in_with_github, sign_in_with_pat, sign_out, skip_try_capture, start_rewrite_model_download,
-    testing_set, testing_set_max, update_linked_draft, use_theirs, AppState, ModelDownloadHandle,
-    RewriteJobHandle,
+    reconcile_testing_set_with_app_visible, remember_last_rewrite_style,
+    remove_custom_rewrite_style, remove_rewrite_model, remove_testing_set_repo, save_capture,
+    set_active_rewrite_model, set_testing_set_max, setup_tray, show_capture,
+    show_capture_window_detached, sign_in_with_github, sign_in_with_pat, sign_out,
+    skip_try_capture, start_rewrite_model_download, testing_set, testing_set_max,
+    update_linked_draft, use_theirs, AppState, ModelDownloadHandle, RewriteJobHandle,
 };
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};

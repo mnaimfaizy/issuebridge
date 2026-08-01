@@ -13,8 +13,8 @@ import {
   Text,
   Textarea,
 } from "@fluentui/react-components";
-import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import { formatInvokeError } from "./types";
 
@@ -47,7 +47,12 @@ type DownloadProgressDto = {
   total_bytes: number;
 };
 
-type RewritePhase = "setup" | "downloading" | "idle" | "generating" | "proposal";
+type RewritePhase =
+  | "setup"
+  | "downloading"
+  | "idle"
+  | "generating"
+  | "proposal";
 
 type RewriteDialogProps = {
   open: boolean;

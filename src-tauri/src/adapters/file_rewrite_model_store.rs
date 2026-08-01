@@ -63,7 +63,10 @@ impl FileRewriteModelStore {
                 .connect_timeout(std::time::Duration::from_secs(30))
                 .build()
                 .map_err(|_| ModelDownloadError::Network)?;
-            let mut response = client.get(url).send().map_err(|_| ModelDownloadError::Network)?;
+            let mut response = client
+                .get(url)
+                .send()
+                .map_err(|_| ModelDownloadError::Network)?;
             if !response.status().is_success() {
                 return Err(ModelDownloadError::Network);
             }
@@ -79,11 +82,14 @@ impl FileRewriteModelStore {
                 if cancel.load(Ordering::SeqCst) {
                     return Err(ModelDownloadError::Cancelled);
                 }
-                let n = response.read(&mut buf).map_err(|_| ModelDownloadError::Network)?;
+                let n = response
+                    .read(&mut buf)
+                    .map_err(|_| ModelDownloadError::Network)?;
                 if n == 0 {
                     break;
                 }
-                file.write_all(&buf[..n]).map_err(|_| ModelDownloadError::Io)?;
+                file.write_all(&buf[..n])
+                    .map_err(|_| ModelDownloadError::Io)?;
                 hasher.update(&buf[..n]);
                 received += n as u64;
                 on_progress(received, total);

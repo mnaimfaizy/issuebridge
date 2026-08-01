@@ -19,7 +19,8 @@ pub use ports::{
     LocalLink, RemoteSnapshot, RepoId, RepoLabel, RewriteEngine, RewriteEngineError, RewriteInput,
     RewriteModelDiskStatus, RewriteModelFileError, RewriteModelFiles, RewriteModelStatusSnapshot,
     RewriteProposal, RewriteStyleInfo, RewriteStylesSnapshot, SettingsStore, SettingsStoreError,
-    StoredCredentials, StubRewriteEngine, TokenStore, TokenStoreError, VoiceError, VoiceTranscriber,
+    StoredCredentials, StubRewriteEngine, TokenStore, TokenStoreError, VoiceError,
+    VoiceTranscriber,
 };
 pub use rewrite::{is_too_thin_for_rewrite, CLEAR_STYLE_ID};
 pub use rewrite_model_catalog::{
@@ -1057,11 +1058,9 @@ where
             .iter()
             .map(|entry| {
                 let on_disk = self.rewrite_models.on_disk_len(entry.filename).is_some();
-                let verified = self.rewrite_models.is_verified(
-                    entry.filename,
-                    entry.size_bytes,
-                    entry.sha256,
-                );
+                let verified =
+                    self.rewrite_models
+                        .is_verified(entry.filename, entry.size_bytes, entry.sha256);
                 let is_active = active.as_deref() == Some(entry.id) && verified;
                 RewriteModelDiskStatus {
                     id: entry.id.into(),
@@ -1074,11 +1073,9 @@ where
                 }
             })
             .collect();
-        let active_verified = active.as_ref().is_some_and(|id| {
-            models
-                .iter()
-                .any(|m| m.id == *id && m.verified && m.active)
-        });
+        let active_verified = active
+            .as_ref()
+            .is_some_and(|id| models.iter().any(|m| m.id == *id && m.verified && m.active));
         Ok(RewriteModelStatusSnapshot {
             models,
             active_model_id: if active_verified { active } else { None },
@@ -2900,13 +2897,15 @@ mod tests {
             Err(RewriteError::NotFound)
         );
         core.set_active_rewrite_model("phi4-mini").expect("phi");
-        core.set_active_rewrite_model("qwen25-1.5b").expect("switch");
+        core.set_active_rewrite_model("qwen25-1.5b")
+            .expect("switch");
         assert_eq!(
             settings.snapshot().active_rewrite_model_id.as_deref(),
             Some("qwen25-1.5b")
         );
         assert!(RewriteModelFiles::on_disk_len(&files, phi.filename).is_some());
-        core.remove_rewrite_model("phi4-mini").expect("remove prior");
+        core.remove_rewrite_model("phi4-mini")
+            .expect("remove prior");
         assert!(RewriteModelFiles::on_disk_len(&files, phi.filename).is_none());
         assert_eq!(
             settings.snapshot().active_rewrite_model_id.as_deref(),

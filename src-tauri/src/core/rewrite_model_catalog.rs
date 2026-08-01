@@ -121,7 +121,9 @@ mod tests {
                 "qwen3-4b",
             ]
         );
-        assert!(!ids.iter().any(|id| id.contains("3b") && id.contains("qwen25")));
+        assert!(!ids
+            .iter()
+            .any(|id| id.contains("3b") && id.contains("qwen25")));
         assert!(rewrite_model_catalog()
             .iter()
             .all(|e| !e.id.contains("qwen25-3") && !e.display_name.contains("Qwen2.5 3B")));

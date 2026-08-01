@@ -207,7 +207,10 @@ describe("Inbox Rewrite modal (#67)", () => {
       const path = join(captureDir, name);
       if (!existsSync(path)) continue;
       const text = readFileSync(path, "utf8");
-      assert.doesNotMatch(text, /start_rewrite_model_download|get_rewrite_model_status/);
+      assert.doesNotMatch(
+        text,
+        /start_rewrite_model_download|get_rewrite_model_status/,
+      );
     }
   });
 });
