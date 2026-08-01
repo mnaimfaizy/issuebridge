@@ -210,6 +210,49 @@
   align-items: center;
 }
 
+.ib-rewrite-model-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ib-rewrite-model-row {
+  display: grid;
+  gap: 8px;
+  padding: 10px 0;
+  border-top: 1px solid var(--ib-border);
+}
+
+.ib-rewrite-model-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.ib-rewrite-model-meta {
+  display: grid;
+  gap: 2px;
+}
+
+.ib-rewrite-hardware-prompt {
+  display: grid;
+  gap: 8px;
+  padding: 10px 0;
+  border-top: 1px solid var(--ib-border);
+  border-bottom: 1px solid var(--ib-border);
+}
+
+.ib-rewrite-download {
+  display: grid;
+  gap: 10px;
+}
+
+.ib-rewrite-error {
+  color: var(--colorStatusDangerForeground1);
+  margin: 0;
+}
+
 .ib-repo-results {
   display: grid;
   gap: 4px;

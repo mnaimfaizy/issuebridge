@@ -14,8 +14,8 @@ export function isAppInstalled(step: FirstRunStep): boolean {
 
 /**
  * Settings categories other than Appearance stay gated until first-run is
- * complete (#28 progressive Settings). Post first-run, Testing set / Capture
- * also require signed-in.
+ * complete (#28 progressive Settings). Post first-run, Testing set / Capture /
+ * Rewrite models also require signed-in.
  */
 export function isAccountSettingsEnabled(firstRunComplete: boolean): boolean {
   return firstRunComplete;
@@ -29,6 +29,13 @@ export function isTestingSetEditable(
 }
 
 export function isCaptureSettingsEnabled(
+  auth: AccountAuth,
+  firstRunComplete: boolean,
+): boolean {
+  return auth === "signed_in" && firstRunComplete;
+}
+
+export function isRewriteModelsSettingsEnabled(
   auth: AccountAuth,
   firstRunComplete: boolean,
 ): boolean {
@@ -62,4 +69,15 @@ export function captureSettingsHelper(
     return "Finish first-run setup to view Capture settings.";
   }
   return "Sign in to view Capture settings.";
+}
+
+export function rewriteModelsSettingsHelper(
+  auth: AccountAuth,
+  firstRunComplete: boolean,
+): string | null {
+  if (isRewriteModelsSettingsEnabled(auth, firstRunComplete)) return null;
+  if (!firstRunComplete) {
+    return "Finish first-run setup to manage Rewrite models here.";
+  }
+  return "Sign in to manage Rewrite models.";
 }
