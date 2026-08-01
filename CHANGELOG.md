@@ -2,6 +2,18 @@
 
 All notable changes to Issuebridge are documented here. Release notes are user-facing; see git history for full commit detail.
 
+## [0.2.0-rc.1] - 2026-08-01
+
+### Added
+- Rewrite in Inbox: propose a clearer Draft title and body, then Accept or Discard
+- Real Rewrite Generate via a bundled llama.cpp sidecar (Windows-hardened)
+- Rewrite model catalog with download lifecycle
+- Hardware-tier recommendations for Rewrite models
+- Rewrite model settings section
+
+### Fixed
+- Hardened llama.cpp Rewrite Generate on Windows
+
 ## [0.1.1] - 2026-07-31
 
 ### Fixed
