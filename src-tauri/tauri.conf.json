@@ -34,7 +34,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/whisper-cli"],
+    "externalBin": ["binaries/whisper-cli", "binaries/llama-cli"],
     "resources": {
       "resources/models/ggml-base.bin": "resources/models/ggml-base.bin",
       "binaries/*.dll": "./"

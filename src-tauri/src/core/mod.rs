@@ -1004,7 +1004,11 @@ where
                 body: body.to_string(),
                 style,
             })
-            .map_err(|_| RewriteError::EngineFailed)
+            .map_err(|err| match err {
+                RewriteEngineError::TimedOut => RewriteError::TimedOut,
+                RewriteEngineError::Cancelled => RewriteError::Cancelled,
+                RewriteEngineError::EngineFailed => RewriteError::EngineFailed,
+            })
     }
 
     /// Persist global last-used Rewrite style after a successful, non-cancelled Generate.

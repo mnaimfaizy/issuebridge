@@ -4,14 +4,14 @@ pub mod core;
 use adapters::{
     add_all_app_visible_to_testing_set, add_custom_rewrite_style, add_testing_set_repo,
     all_repositories_warning, app_visible_repos, apply_ptt, auth_state, build_app_core,
-    complete_testing_set, continue_install, edit_draft, ensure_label_catalog, first_run_step,
-    generate_rewrite, get_draft, keep_mine, last_used_repo, list_inbox, list_rewrite_styles,
-    open_app_install, prefetch_testing_set_label_catalogs, ptt_hotkey, publish_draft,
-    reconcile_testing_set_with_app_visible, remember_last_rewrite_style,
+    cancel_rewrite, complete_testing_set, continue_install, edit_draft, ensure_label_catalog,
+    first_run_step, generate_rewrite, get_draft, keep_mine, last_used_repo, list_inbox,
+    list_rewrite_styles, open_app_install, prefetch_testing_set_label_catalogs, ptt_hotkey,
+    publish_draft, reconcile_testing_set_with_app_visible, remember_last_rewrite_style,
     remove_custom_rewrite_style, remove_testing_set_repo, save_capture, set_testing_set_max,
     setup_tray, show_capture, show_capture_window_detached, sign_in_with_github, sign_in_with_pat,
     sign_out, skip_try_capture, testing_set, testing_set_max, update_linked_draft, use_theirs,
-    AppState,
+    AppState, RewriteJobHandle,
 };
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
@@ -19,11 +19,13 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let rewrite_job = RewriteJobHandle::new();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState {
-            core: Arc::new(Mutex::new(build_app_core())),
+            core: Arc::new(Mutex::new(build_app_core(Arc::clone(&rewrite_job)))),
+            rewrite_job,
         })
         .invoke_handler(tauri::generate_handler![
             auth_state,
@@ -61,6 +63,7 @@ pub fn run() {
             add_custom_rewrite_style,
             remove_custom_rewrite_style,
             generate_rewrite,
+            cancel_rewrite,
             remember_last_rewrite_style,
             show_capture
         ])

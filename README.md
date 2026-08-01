@@ -54,6 +54,25 @@ Fully quit Issuebridge first if Windows reports `ggml-base.bin` is locked.
 
 Windows needs companion DLLs next to `whisper-cli` (`ggml.dll`, `whisper.dll`, `ggml-cpu-*.dll`, …). The fetch script copies them into `src-tauri/binaries/`; the NSIS bundle maps those DLLs to the install root beside `whisper-cli.exe`. At runtime, spawn sets cwd to the directory that contains the DLLs and passes **absolute** model/audio paths.
 
+### Inbox Rewrite (local llama.cpp)
+
+1. Fetch the llama.cpp Rewrite sidecar (CPU + Vulkan DLLs; **no GGUF** in the installer):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/fetch-llama-assets.ps1
+```
+
+2. Point at a local GGUF until download-on-demand lands (#69):
+
+```powershell
+$env:ISSUEBRIDGE_REWRITE_GGUF = "D:\models\phi-4-mini.Q4_K_M.gguf"
+# optional: $env:ISSUEBRIDGE_REWRITE_CLI = "D:\path\to\llama-cli.exe"
+```
+
+3. In Inbox, open a Draft that is not too thin → **Rewrite…** → **Generate**. Cancel stops the sidecar; soft timeout is ~60s. Without a GGUF path, Generate still uses the stub engine from #67.
+
+Fully quit Issuebridge before re-fetching if DLLs are locked.
+
 ### Capture window (Windows)
 
 Creating the Capture webview from a **sync** Tauri command or tray/hotkey handler can deadlock WebView2 and leave a blank white window. The app opens Capture via an **async** command (and a detached thread from tray/hotkey). If you ever see a frozen white Capture, Quit fully and reopen.
@@ -75,7 +94,7 @@ npm run test:packaging
 
 ## Release (Windows NSIS)
 
-v0.1 ships a **per-user NSIS** installer (`*-setup.exe`) only — `installMode: currentUser` (no Admin). **MSI is not a v0.1 deliverable.** The installer bundles the app, `whisper-cli` (+ DLLs), and `ggml-base.bin` so offline PTT works after install without a separate model download.
+v0.1 ships a **per-user NSIS** installer (`*-setup.exe`) only — `installMode: currentUser` (no Admin). **MSI is not a v0.1 deliverable.** The installer bundles the app, `whisper-cli` (+ DLLs), `ggml-base.bin`, and the llama.cpp Rewrite sidecar (+ CPU/Vulkan DLLs). **GGUF Rewrite models are not in the NSIS package** — they download on demand (or use `ISSUEBRIDGE_REWRITE_GGUF` in dev).
 
 The build is **unsigned** for v0.1. Browser downloads may show a Windows SmartScreen warning; that is expected until code signing is added. Users can proceed via “More info → Run anyway.”
 
@@ -87,7 +106,7 @@ $env:ISSUEBRIDGE_GITHUB_CLIENT_SECRET = "<client-secret>"
 powershell -ExecutionPolicy Bypass -File scripts/release-build.ps1
 ```
 
-`scripts/release-build.ps1` checks the packaging contract, refuses to build without both env vars, fetches Whisper assets (unless `-SkipWhisperFetch`), and runs `npm run tauri -- build`. CI: `.github/workflows/release-windows.yml` (tag `v*` or workflow_dispatch).
+`scripts/release-build.ps1` checks the packaging contract, refuses to build without both env vars, fetches Whisper + llama.cpp assets (unless `-SkipWhisperFetch` / `-SkipLlamaFetch`), and runs `npm run tauri -- build`. CI: `.github/workflows/release-windows.yml` (tag `v*` or workflow_dispatch).
 
 Dev/`tauri build` without those env vars still packages; OAuth secret can also be supplied at **runtime** via `ISSUEBRIDGE_GITHUB_CLIENT_SECRET` for local `tauri dev` (compile-time `option_env!` remains for release injection).
 

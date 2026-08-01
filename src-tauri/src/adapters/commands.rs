@@ -10,6 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::adapters::app_core::AppCore;
 use crate::adapters::github_http::APP_INSTALL_URL;
+use crate::adapters::llama_rewrite::RewriteJobHandle;
 use crate::adapters::oauth_loopback::{
     authorize_url, bind_loopback, generate_pkce, generate_state, wait_for_authorization_code,
     OAuthLoopbackError,
@@ -23,6 +24,8 @@ use crate::core::{
 
 pub struct AppState {
     pub core: Arc<Mutex<AppCore>>,
+    /// Shared with the llama Rewrite engine so Cancel can kill without the core lock.
+    pub rewrite_job: Arc<RewriteJobHandle>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -814,6 +817,13 @@ pub fn generate_rewrite(
 }
 
 #[tauri::command]
+pub fn cancel_rewrite(state: State<'_, AppState>) -> Result<(), String> {
+    // Do not take the core lock — Generate may already hold it while the sidecar runs.
+    state.rewrite_job.cancel();
+    Ok(())
+}
+
+#[tauri::command]
 pub fn remember_last_rewrite_style(
     state: State<'_, AppState>,
     style_id: String,
@@ -834,6 +844,8 @@ fn rewrite_error_message(err: RewriteError) -> String {
         RewriteError::NotFound => "That Rewrite style was not found.".into(),
         RewriteError::StorageUnavailable => "Could not update Rewrite styles.".into(),
         RewriteError::EngineFailed => "Rewrite failed. Try again.".into(),
+        RewriteError::TimedOut => "Rewrite timed out. Try again.".into(),
+        RewriteError::Cancelled => "Rewrite cancelled.".into(),
     }
 }
 

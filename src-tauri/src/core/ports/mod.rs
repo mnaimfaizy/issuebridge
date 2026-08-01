@@ -241,9 +241,12 @@ pub struct RewriteProposal {
     pub body: String,
 }
 
-/// On-device Rewrite inference boundary (stub today; llama.cpp sidecar later).
+/// On-device Rewrite inference boundary (stub or llama.cpp sidecar).
 pub trait RewriteEngine: Send + Sync {
     fn rewrite(&self, input: &RewriteInput) -> Result<RewriteProposal, RewriteEngineError>;
+
+    /// Stop an in-flight Generate when the engine supports process cancel.
+    fn cancel(&self) {}
 }
 
 /// Failures from the Rewrite engine port (distinct from eligibility / settings).
@@ -251,6 +254,10 @@ pub trait RewriteEngine: Send + Sync {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RewriteEngineError {
     EngineFailed,
+    /// Soft ~60s Generate timeout (no auto-retry).
+    TimedOut,
+    /// In-flight Generate was cancelled.
+    Cancelled,
 }
 
 /// Deterministic stub Rewrite engine for UX / domain demos until real inference lands.

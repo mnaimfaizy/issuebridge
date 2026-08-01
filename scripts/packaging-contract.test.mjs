@@ -6,10 +6,14 @@ import { fileURLToPath } from "node:url";
 import {
   checkPackagingContract,
   checkReleaseCredentials,
+  llamaDllsColocatedWithSidecar,
+  resourcesIncludeGguf,
   whisperDllsColocatedWithSidecar,
 } from "./packaging-contract.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+const validExternalBin = ["binaries/whisper-cli", "binaries/llama-cli"];
 
 const validResourcesMap = {
   "resources/models/ggml-base.bin": "resources/models/ggml-base.bin",
@@ -17,11 +21,11 @@ const validResourcesMap = {
 };
 
 describe("packaging contract", () => {
-  it("requires NSIS-only targets and currentUser installMode with whisper assets", () => {
+  it("requires NSIS-only targets and currentUser installMode with whisper + llama assets", () => {
     const result = checkPackagingContract({
       bundle: {
         targets: ["nsis"],
-        externalBin: ["binaries/whisper-cli"],
+        externalBin: validExternalBin,
         resources: validResourcesMap,
         windows: {
           nsis: { installMode: "currentUser" },
@@ -36,7 +40,7 @@ describe("packaging contract", () => {
     const result = checkPackagingContract({
       bundle: {
         targets: "all",
-        externalBin: ["binaries/whisper-cli"],
+        externalBin: validExternalBin,
         resources: validResourcesMap,
         windows: {
           nsis: { installMode: "currentUser" },
@@ -51,7 +55,7 @@ describe("packaging contract", () => {
     const result = checkPackagingContract({
       bundle: {
         targets: ["nsis"],
-        externalBin: ["binaries/whisper-cli"],
+        externalBin: validExternalBin,
         resources: validResourcesMap,
         windows: {
           nsis: { installMode: "perMachine" },
@@ -78,11 +82,44 @@ describe("packaging contract", () => {
     assert.match(result.errors.join("\n"), /ggml-base\.bin/);
   });
 
-  it("rejects nested binaries/whisper.dll layout that breaks installed PTT (#55)", () => {
+  it("rejects missing llama-cli Rewrite sidecar (#68)", () => {
     const result = checkPackagingContract({
       bundle: {
         targets: ["nsis"],
         externalBin: ["binaries/whisper-cli"],
+        resources: validResourcesMap,
+        windows: {
+          nsis: { installMode: "currentUser" },
+        },
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join("\n"), /llama-cli/);
+  });
+
+  it("rejects GGUF models in NSIS resources (#68)", () => {
+    const result = checkPackagingContract({
+      bundle: {
+        targets: ["nsis"],
+        externalBin: validExternalBin,
+        resources: {
+          ...validResourcesMap,
+          "resources/models/phi.gguf": "resources/models/phi.gguf",
+        },
+        windows: {
+          nsis: { installMode: "currentUser" },
+        },
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join("\n"), /GGUF/i);
+  });
+
+  it("rejects nested binaries/whisper.dll layout that breaks installed PTT (#55)", () => {
+    const result = checkPackagingContract({
+      bundle: {
+        targets: ["nsis"],
+        externalBin: validExternalBin,
         resources: [
           "resources/models/ggml-base.bin",
           "binaries/ggml.dll",
@@ -102,11 +139,12 @@ describe("packaging contract", () => {
     const result = checkPackagingContract({
       bundle: {
         targets: ["nsis"],
-        externalBin: ["binaries/whisper-cli"],
+        externalBin: validExternalBin,
         resources: {
           "resources/models/ggml-base.bin": "resources/models/ggml-base.bin",
           "binaries/whisper.dll": "whisper.dll",
           "binaries/ggml.dll": "ggml.dll",
+          "binaries/llama.dll": "llama.dll",
         },
         windows: {
           nsis: { installMode: "currentUser" },
@@ -140,6 +178,47 @@ describe("whisperDllsColocatedWithSidecar", () => {
       whisperDllsColocatedWithSidecar([
         { source: "binaries/whisper.dll", target: "binaries/whisper.dll" },
         { source: "binaries/ggml.dll", target: "binaries/ggml.dll" },
+      ]),
+      false,
+    );
+  });
+});
+
+describe("llamaDllsColocatedWithSidecar", () => {
+  it("accepts binaries/*.dll mapped to ./ (CPU/Vulkan layout)", () => {
+    assert.equal(
+      llamaDllsColocatedWithSidecar([
+        { source: "binaries/*.dll", target: "./" },
+      ]),
+      true,
+    );
+  });
+
+  it("rejects nested binaries/llama.dll targets", () => {
+    assert.equal(
+      llamaDllsColocatedWithSidecar([
+        { source: "binaries/llama.dll", target: "binaries/llama.dll" },
+        { source: "binaries/ggml.dll", target: "binaries/ggml.dll" },
+      ]),
+      false,
+    );
+  });
+});
+
+describe("resourcesIncludeGguf", () => {
+  it("detects .gguf paths", () => {
+    assert.equal(
+      resourcesIncludeGguf([
+        { source: "models/x.gguf", target: "models/x.gguf" },
+      ]),
+      true,
+    );
+    assert.equal(
+      resourcesIncludeGguf([
+        {
+          source: "resources/models/ggml-base.bin",
+          target: "resources/models/ggml-base.bin",
+        },
       ]),
       false,
     );
