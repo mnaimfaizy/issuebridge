@@ -1086,6 +1086,7 @@ where
                     on_disk,
                     verified,
                     active: is_active,
+                    update_available: on_disk && !verified,
                 }
             })
             .collect();
@@ -2933,6 +2934,30 @@ mod tests {
             .expect("remove active");
         assert!(settings.snapshot().active_rewrite_model_id.is_none());
         assert!(core.rewrite_model_status().expect("again").needs_setup);
+    }
+
+    #[test]
+    fn rewrite_model_status_marks_update_available_when_on_disk_but_unverified() {
+        let files = FakeRewriteModelFiles::default();
+        let entry = find_rewrite_model(DEFAULT_REWRITE_MODEL_ID).unwrap();
+        // Wrong bytes → on disk but not verified against catalog SHA/size.
+        files.put(entry.filename, b"stale-gguf-bytes".to_vec());
+        let core = signed_in_core(FakeGitHub::default(), FakeSettingsStore::default())
+            .with_rewrite_model_files(Box::new(files));
+        let snap = core.rewrite_model_status().expect("status");
+        let model = snap
+            .models
+            .iter()
+            .find(|m| m.id == DEFAULT_REWRITE_MODEL_ID)
+            .expect("default model");
+        assert!(model.on_disk);
+        assert!(!model.verified);
+        assert!(model.update_available);
+        assert!(snap
+            .models
+            .iter()
+            .filter(|m| m.id != DEFAULT_REWRITE_MODEL_ID)
+            .all(|m| !m.update_available));
     }
 
     #[test]

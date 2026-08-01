@@ -104,6 +104,57 @@ describe("Settings + Help destinations (#38)", () => {
     );
   });
 
+  it("Rewrite models settings expose catalog, disk use, active, download/switch/Remove, Update available, Keep/Switch (#71)", () => {
+    const settings = readSrc("settings", "SettingsPage.tsx");
+    assert.match(settings, /RewriteModelsSection/);
+    assert.ok(
+      existsSync(src("settings", "RewriteModelsSection.tsx")),
+      "expected RewriteModelsSection",
+    );
+    const section = readSrc("settings", "RewriteModelsSection.tsx");
+    assert.match(section, /Rewrite models/);
+    assert.match(section, /get_rewrite_model_status/);
+    assert.match(section, /start_rewrite_model_download/);
+    assert.match(section, /cancel_rewrite_model_download/);
+    assert.match(section, /set_active_rewrite_model/);
+    assert.match(section, /remove_rewrite_model/);
+    assert.match(section, /respond_rewrite_hardware_prompt/);
+    assert.match(section, /rewrite-model-download-progress/);
+    assert.match(section, /Download/);
+    assert.match(section, /Switch|Use/);
+    assert.match(section, /Remove/);
+    assert.match(section, /window\.confirm/);
+    assert.match(section, /active|Active/);
+    assert.match(section, /recommended|Recommended/);
+    assert.match(section, /size_bytes|formatBytes|GB|MB/);
+    assert.match(section, /Update available/);
+    assert.match(section, /update_available/);
+    assert.match(section, /Download .*set it as the active|window\.confirm/);
+    assert.match(section, /Keep/);
+    assert.match(section, /Switch/);
+    assert.match(section, /Hardware changed|hardware_switch_prompt/);
+    assert.doesNotMatch(
+      section,
+      /auto.?update|silent.?overwrite/i,
+      "no auto-update or silent overwrite of Rewrite models",
+    );
+    const ports = readFileSync(
+      join(root, "src-tauri", "src", "core", "ports", "mod.rs"),
+      "utf8",
+    );
+    assert.match(ports, /update_available/);
+    const gating = readSrc("settings", "gating.ts");
+    assert.match(
+      gating,
+      /isRewriteModelsSettingsEnabled|rewriteModelsSettingsHelper/,
+    );
+    assert.match(
+      section,
+      /isRewriteModelsSettingsEnabled|rewriteModelsSettingsHelper/,
+    );
+    assert.match(section, /ib-settings-helper|helper/);
+  });
+
   it("Help includes Shortcuts, How it works, and About with domain language", () => {
     const help = readSrc("help", "HelpPage.tsx");
     assert.match(help, /Shortcuts/);
@@ -131,15 +182,19 @@ describe("Settings + Help destinations (#38)", () => {
     assert.match(gating, /signed_out|signed_in/);
     assert.match(gating, /firstRun|first_run|ready|install/i);
     assert.match(gating, /testingSetHelper|captureSettingsHelper/);
+    assert.match(gating, /rewriteModelsSettingsHelper/);
     const settings = readSrc("settings", "SettingsPage.tsx");
     assert.match(settings, /AppearanceSection/);
     assert.match(settings, /AccountSection/);
     assert.match(settings, /TestingSetSection/);
     assert.match(settings, /CaptureSection/);
+    assert.match(settings, /RewriteModelsSection/);
     const testing = readSrc("settings", "TestingSetSection.tsx");
     const capture = readSrc("settings", "CaptureSection.tsx");
+    const rewriteModels = readSrc("settings", "RewriteModelsSection.tsx");
     assert.match(testing, /ib-settings-helper|helper/);
     assert.match(capture, /ib-settings-helper|Coming soon/);
+    assert.match(rewriteModels, /ib-settings-helper|helper/);
   });
 
   it("Capture popup stays chrome-free of Settings/Help/account", () => {

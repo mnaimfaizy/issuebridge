@@ -228,6 +228,8 @@ pub struct RewriteModelDiskStatus {
     pub on_disk: bool,
     pub verified: bool,
     pub active: bool,
+    /// On disk but not verified against the current catalog SHA/size (R32 Update available).
+    pub update_available: bool,
 }
 
 /// Soft Keep/Switch when hardware recommendation diverges from the active model.

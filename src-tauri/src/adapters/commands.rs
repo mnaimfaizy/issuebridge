@@ -885,6 +885,7 @@ pub struct RewriteModelEntryDto {
     pub on_disk: bool,
     pub verified: bool,
     pub active: bool,
+    pub update_available: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -961,6 +962,7 @@ fn rewrite_model_status_dto(
                 on_disk: m.on_disk,
                 verified: m.verified,
                 active: m.active,
+                update_available: m.update_available,
             })
             .collect(),
         active_model_id: snap.active_model_id,

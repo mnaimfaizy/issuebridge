@@ -5,6 +5,7 @@ import { AccountSection } from "./AccountSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { CaptureSection } from "./CaptureSection";
 import type { FirstRunStep } from "./gating";
+import { RewriteModelsSection } from "./RewriteModelsSection";
 import { TestingSetSection } from "./TestingSetSection";
 
 type SettingsPageProps = {
@@ -18,7 +19,7 @@ type SettingsPageProps = {
   onSignIn: () => void;
 };
 
-/** Full-page Settings destination: Appearance, Account, Testing set, Capture. */
+/** Full-page Settings destination: Appearance, Account, Testing set, Capture, Rewrite models. */
 export function SettingsPage({
   themePreference,
   onThemePreferenceChange,
@@ -52,6 +53,7 @@ export function SettingsPage({
       />
       <TestingSetSection auth={auth} firstRunComplete={firstRunComplete} />
       <CaptureSection auth={auth} firstRunComplete={firstRunComplete} />
+      <RewriteModelsSection auth={auth} firstRunComplete={firstRunComplete} />
     </section>
   );
 }

@@ -238,6 +238,12 @@ describe("Inbox Rewrite modal (#67)", () => {
     assert.match(dialog, /recommended_reason/);
     assert.match(dialog, /verified/);
 
+    // Settings (#71) shares the same catalog lifecycle commands when opened.
+    const settingsModels = readSrc("settings", "RewriteModelsSection.tsx");
+    assert.match(settingsModels, /get_rewrite_model_status/);
+    assert.match(settingsModels, /start_rewrite_model_download/);
+    assert.match(settingsModels, /Update available/);
+
     const captureDir = src("capture");
     for (const name of ["CapturePopup.tsx", "CaptureApp.tsx"]) {
       const path = join(captureDir, name);
