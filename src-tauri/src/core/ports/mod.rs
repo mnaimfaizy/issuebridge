@@ -192,6 +192,9 @@ pub struct AppSettings {
     /// Active Rewrite catalog model id (GGUF on disk). Cleared when Remove active.
     #[serde(default)]
     pub active_rewrite_model_id: Option<String>,
+    /// Hardware fingerprint the user last Keep/Switch'd for (at most once per change).
+    #[serde(default)]
+    pub rewrite_hardware_prompt_acked_fingerprint: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -210,6 +213,7 @@ impl Default for AppSettings {
             custom_rewrite_styles: Vec::new(),
             last_used_rewrite_style_id: None,
             active_rewrite_model_id: None,
+            rewrite_hardware_prompt_acked_fingerprint: None,
         }
     }
 }
@@ -226,6 +230,15 @@ pub struct RewriteModelDiskStatus {
     pub active: bool,
 }
 
+/// Soft Keep/Switch when hardware recommendation diverges from the active model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewriteHardwareSwitchPrompt {
+    pub current_model_id: String,
+    pub recommended_model_id: String,
+    pub reason: String,
+    pub fingerprint: String,
+}
+
 /// Snapshot for Rewrite setup / model settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RewriteModelStatusSnapshot {
@@ -233,7 +246,42 @@ pub struct RewriteModelStatusSnapshot {
     pub active_model_id: Option<String>,
     pub recommended_model_id: String,
     pub recommended_reason: String,
+    /// Tier letter for UI/debug (`A`–`D`).
+    pub hardware_tier: String,
+    /// Tier D quality alternative catalog id when applicable.
+    pub quality_alt_model_id: Option<String>,
+    /// Present at most once per hardware fingerprint when recommendation diverges.
+    pub hardware_switch_prompt: Option<RewriteHardwareSwitchPrompt>,
     pub needs_setup: bool,
+}
+
+/// Detects system RAM + usable Vulkan (+ VRAM when listed) for Rewrite recommendation.
+pub trait HardwareProbe: Send + Sync {
+    fn probe(&self) -> crate::core::rewrite_hardware::HardwareProfile;
+}
+
+/// Fixed profile for tests / default core wiring (tier C: Vulkan, VRAM unknown → Phi-4 mini).
+#[derive(Debug, Clone)]
+pub struct FixedHardwareProbe {
+    pub profile: crate::core::rewrite_hardware::HardwareProfile,
+}
+
+impl Default for FixedHardwareProbe {
+    fn default() -> Self {
+        Self {
+            profile: crate::core::rewrite_hardware::HardwareProfile {
+                ram_gb: 16,
+                vulkan_usable: true,
+                vram_mb: None,
+            },
+        }
+    }
+}
+
+impl HardwareProbe for FixedHardwareProbe {
+    fn probe(&self) -> crate::core::rewrite_hardware::HardwareProfile {
+        self.profile.clone()
+    }
 }
 
 /// Local GGUF files for curated Rewrite models (download-on-demand).

@@ -888,12 +888,29 @@ pub struct RewriteModelEntryDto {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct RewriteHardwareSwitchPromptDto {
+    pub current_model_id: String,
+    pub recommended_model_id: String,
+    pub reason: String,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct RewriteModelStatusDto {
     pub models: Vec<RewriteModelEntryDto>,
     pub active_model_id: Option<String>,
     pub recommended_model_id: String,
     pub recommended_reason: String,
+    pub hardware_tier: String,
+    pub quality_alt_model_id: Option<String>,
+    pub hardware_switch_prompt: Option<RewriteHardwareSwitchPromptDto>,
     pub needs_setup: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RespondRewriteHardwarePromptDto {
+    /// `true` = Switch to recommended (no auto-download); `false` = Keep current.
+    pub switch: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -914,7 +931,25 @@ pub fn get_rewrite_model_status(
 ) -> Result<RewriteModelStatusDto, String> {
     let core = state.core.lock().map_err(|e| e.to_string())?;
     let snap = core.rewrite_model_status().map_err(rewrite_error_message)?;
-    Ok(RewriteModelStatusDto {
+    Ok(rewrite_model_status_dto(snap))
+}
+
+#[tauri::command]
+pub fn respond_rewrite_hardware_prompt(
+    state: State<'_, AppState>,
+    input: RespondRewriteHardwarePromptDto,
+) -> Result<RewriteModelStatusDto, String> {
+    let mut core = state.core.lock().map_err(|e| e.to_string())?;
+    let snap = core
+        .respond_rewrite_hardware_prompt(input.switch)
+        .map_err(rewrite_error_message)?;
+    Ok(rewrite_model_status_dto(snap))
+}
+
+fn rewrite_model_status_dto(
+    snap: crate::core::RewriteModelStatusSnapshot,
+) -> RewriteModelStatusDto {
+    RewriteModelStatusDto {
         models: snap
             .models
             .into_iter()
@@ -931,8 +966,18 @@ pub fn get_rewrite_model_status(
         active_model_id: snap.active_model_id,
         recommended_model_id: snap.recommended_model_id,
         recommended_reason: snap.recommended_reason,
+        hardware_tier: snap.hardware_tier,
+        quality_alt_model_id: snap.quality_alt_model_id,
+        hardware_switch_prompt: snap.hardware_switch_prompt.map(|p| {
+            RewriteHardwareSwitchPromptDto {
+                current_model_id: p.current_model_id,
+                recommended_model_id: p.recommended_model_id,
+                reason: p.reason,
+                fingerprint: p.fingerprint,
+            }
+        }),
         needs_setup: snap.needs_setup,
-    })
+    }
 }
 
 #[tauri::command]

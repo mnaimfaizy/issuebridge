@@ -25,6 +25,13 @@ export type RewriteStyleDto = {
   builtin: boolean;
 };
 
+type RewriteHardwareSwitchPromptDto = {
+  current_model_id: string;
+  recommended_model_id: string;
+  reason: string;
+  fingerprint: string;
+};
+
 type RewriteModelStatusDto = {
   models: Array<{
     id: string;
@@ -38,6 +45,9 @@ type RewriteModelStatusDto = {
   active_model_id: string | null;
   recommended_model_id: string;
   recommended_reason: string;
+  hardware_tier: string;
+  quality_alt_model_id: string | null;
+  hardware_switch_prompt: RewriteHardwareSwitchPromptDto | null;
   needs_setup: boolean;
 };
 
@@ -101,13 +111,19 @@ export function RewriteDialog({
     null,
   );
   const [downloadModelId, setDownloadModelId] = useState<string | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [receivedBytes, setReceivedBytes] = useState(0);
   const [totalBytes, setTotalBytes] = useState(0);
+  const [hardwarePromptBusy, setHardwarePromptBusy] = useState(false);
   const generateTokenRef = useRef(0);
   const selectedStyle = styles.find((s) => s.id === styleId);
-  const recommended = modelStatus?.models.find(
-    (m) => m.id === modelStatus.recommended_model_id,
-  );
+  const selectedModel =
+    modelStatus?.models.find((m) => m.id === selectedModelId) ??
+    modelStatus?.models.find((m) => m.id === modelStatus.recommended_model_id);
+  const qualityAlt = modelStatus?.quality_alt_model_id
+    ? modelStatus.models.find((m) => m.id === modelStatus.quality_alt_model_id)
+    : undefined;
+  const hardwarePrompt = modelStatus?.hardware_switch_prompt ?? null;
 
   function stopInFlightGenerate() {
     void invoke("cancel_rewrite").catch(() => {
@@ -127,10 +143,33 @@ export function RewriteDialog({
         "get_rewrite_model_status",
       );
       setModelStatus(snap);
+      setSelectedModelId((current) => current ?? snap.recommended_model_id);
       return snap;
     } catch (err) {
       setError(formatInvokeError(err));
       return null;
+    }
+  }
+
+  async function respondHardwarePrompt(switchToRecommended: boolean) {
+    setHardwarePromptBusy(true);
+    setError(null);
+    try {
+      const snap = await invoke<RewriteModelStatusDto>(
+        "respond_rewrite_hardware_prompt",
+        { input: { switch: switchToRecommended } },
+      );
+      setModelStatus(snap);
+      setSelectedModelId(snap.recommended_model_id);
+      if (switchToRecommended && snap.needs_setup) {
+        setPhase("setup");
+      } else if (!snap.needs_setup) {
+        await enterIdleWithStyles();
+      }
+    } catch (err) {
+      setError(formatInvokeError(err));
+    } finally {
+      setHardwarePromptBusy(false);
     }
   }
 
@@ -162,6 +201,7 @@ export function RewriteDialog({
     setReceivedBytes(0);
     setTotalBytes(0);
     setDownloadModelId(null);
+    setSelectedModelId(null);
     generateTokenRef.current += 1;
     stopInFlightGenerate();
     void (async () => {
@@ -386,6 +426,11 @@ export function RewriteDialog({
 
   const progressFraction =
     totalBytes > 0 ? Math.min(1, receivedBytes / totalBytes) : undefined;
+  const recommendedName =
+    modelStatus?.models.find((m) => m.id === modelStatus.recommended_model_id)
+      ?.display_name ?? modelStatus?.recommended_model_id;
+  const showHardwarePrompt =
+    hardwarePrompt && (phase === "setup" || phase === "idle");
 
   return (
     <Dialog
@@ -398,20 +443,71 @@ export function RewriteDialog({
         <DialogBody>
           <DialogTitle>Rewrite Draft</DialogTitle>
           <DialogContent>
+            {showHardwarePrompt ? (
+              <div
+                className="ib-rewrite-hardware-prompt"
+                role="status"
+                aria-live="polite"
+              >
+                <Text weight="semibold">Hardware changed</Text>
+                <Text>
+                  Recommended model is now{" "}
+                  {modelStatus?.models.find(
+                    (m) => m.id === hardwarePrompt.recommended_model_id,
+                  )?.display_name ?? hardwarePrompt.recommended_model_id}
+                  . {hardwarePrompt.reason} Keep your current model or switch
+                  (no automatic download).
+                </Text>
+                <div className="ib-rewrite-add-actions">
+                  <Button
+                    size="small"
+                    appearance="secondary"
+                    disabled={hardwarePromptBusy}
+                    onClick={() => void respondHardwarePrompt(false)}
+                  >
+                    Keep
+                  </Button>
+                  <Button
+                    size="small"
+                    appearance="primary"
+                    disabled={hardwarePromptBusy}
+                    onClick={() => void respondHardwarePrompt(true)}
+                  >
+                    Switch
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
             {phase === "setup" ? (
               <div className="ib-rewrite-setup">
                 <Text>
                   Download a local Rewrite model once. Inference stays on this
                   device after the download finishes.
                 </Text>
-                {recommended ? (
+                {selectedModel && modelStatus ? (
                   <div className="ib-rewrite-setup-card">
-                    <Text weight="semibold">{recommended.display_name}</Text>
-                    <Text>{formatBytes(recommended.size_bytes)}</Text>
-                    <Text>{modelStatus?.recommended_reason}</Text>
-                    <Text className="ib-rewrite-setup-summary">
-                      {recommended.summary}
+                    <Text weight="semibold">{selectedModel.display_name}</Text>
+                    <Text>{formatBytes(selectedModel.size_bytes)}</Text>
+                    <Text>
+                      Recommended: {recommendedName}.{" "}
+                      {modelStatus.recommended_reason}
                     </Text>
+                    {selectedModel.id !== modelStatus.recommended_model_id ? (
+                      <Text className="ib-rewrite-setup-summary">
+                        Override selected — Download will use{" "}
+                        {selectedModel.display_name} instead.
+                      </Text>
+                    ) : null}
+                    <Text className="ib-rewrite-setup-summary">
+                      {selectedModel.summary}
+                    </Text>
+                    {qualityAlt ? (
+                      <Text className="ib-rewrite-setup-summary">
+                        Quality alternative: {qualityAlt.display_name} (
+                        {formatBytes(qualityAlt.size_bytes)}).
+                      </Text>
+                    ) : null}
                   </div>
                 ) : (
                   <Text>Loading recommended model…</Text>
@@ -427,14 +523,23 @@ export function RewriteDialog({
                         key={model.id}
                         size="small"
                         appearance={
-                          model.id === modelStatus.recommended_model_id
+                          model.id ===
+                          (selectedModelId ?? modelStatus.recommended_model_id)
                             ? "primary"
                             : "secondary"
                         }
                         disabled={model.id === downloadModelId}
-                        onClick={() => void startDownload(model.id)}
+                        onClick={() => {
+                          setSelectedModelId(model.id);
+                          if (model.verified) {
+                            void startDownload(model.id);
+                          }
+                        }}
                       >
                         {model.display_name}
+                        {model.id === modelStatus.recommended_model_id
+                          ? " (recommended)"
+                          : ""}
                         {model.verified
                           ? " (use)"
                           : model.on_disk
@@ -606,9 +711,9 @@ export function RewriteDialog({
             {phase === "setup" ? (
               <Button
                 appearance="primary"
-                disabled={!recommended}
+                disabled={!selectedModel}
                 onClick={() =>
-                  recommended && void startDownload(recommended.id)
+                  selectedModel && void startDownload(selectedModel.id)
                 }
               >
                 Download

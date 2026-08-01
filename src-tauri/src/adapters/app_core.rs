@@ -12,6 +12,7 @@ use super::file_settings_store::FileSettingsStore;
 use super::github_http::HttpGitHub;
 use super::keyring_token_store::KeyringTokenStore;
 use super::llama_rewrite::{PreferLlamaRewriteEngine, RewriteJobHandle};
+use super::system_hardware_probe::SystemHardwareProbe;
 use super::whisper_voice::WhisperVoiceTranscriber;
 
 #[derive(Debug, Default)]
@@ -45,4 +46,5 @@ pub fn build_app_core(rewrite_job: Arc<RewriteJobHandle>) -> AppCore {
     )
     .with_rewrite_engine(Box::new(PreferLlamaRewriteEngine::new(rewrite_job)))
     .with_rewrite_model_files(Box::new(FileRewriteModelStore::default()))
+    .with_hardware_probe(Box::new(SystemHardwareProbe))
 }

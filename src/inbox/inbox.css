@@ -205,6 +205,15 @@
   margin-top: 4px;
 }
 
+.ib-rewrite-hardware-prompt {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 10px 0;
+  border-top: 1px solid var(--colorNeutralStroke2, rgba(0, 0, 0, 0.12));
+  border-bottom: 1px solid var(--colorNeutralStroke2, rgba(0, 0, 0, 0.12));
+}
+
 .ib-rewrite-setup-summary {
   opacity: 0.85;
 }

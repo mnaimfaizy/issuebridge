@@ -1,6 +1,6 @@
 //! Curated on-device Rewrite model catalog (GGUF Q4_K_M, download-on-demand).
 
-/// Default catalog id when hardware allows (Phi-4 mini). Hardware tiers land in #70.
+/// Default catalog id when hardware allows (Phi-4 mini) — tiers C/D.
 pub const DEFAULT_REWRITE_MODEL_ID: &str = "phi4-mini";
 
 /// One curated GGUF entry available for Inbox Rewrite.
@@ -23,15 +23,6 @@ pub fn rewrite_model_catalog() -> &'static [RewriteModelCatalogEntry] {
 
 pub fn find_rewrite_model(id: &str) -> Option<&'static RewriteModelCatalogEntry> {
     rewrite_model_catalog().iter().find(|e| e.id == id)
-}
-
-/// Recommended model + one-line reason until hardware detection (#70) lands.
-pub fn recommended_rewrite_model() -> (&'static RewriteModelCatalogEntry, &'static str) {
-    let entry = find_rewrite_model(DEFAULT_REWRITE_MODEL_ID).expect("default catalog entry");
-    (
-        entry,
-        "Recommended when hardware allows — Phi-4 mini balances quality and size for Inbox Rewrite.",
-    )
 }
 
 /// True when size and lowercase hex SHA-256 match the catalog expectations.
@@ -127,14 +118,6 @@ mod tests {
         assert!(rewrite_model_catalog()
             .iter()
             .all(|e| !e.id.contains("qwen25-3") && !e.display_name.contains("Qwen2.5 3B")));
-    }
-
-    #[test]
-    fn default_recommendation_is_phi4_mini_with_reason() {
-        let (entry, reason) = recommended_rewrite_model();
-        assert_eq!(entry.id, DEFAULT_REWRITE_MODEL_ID);
-        assert!(reason.contains("Phi-4"));
-        assert!(entry.size_bytes > 1_000_000_000);
     }
 
     #[test]

@@ -12,6 +12,7 @@ mod github_http;
 mod keyring_token_store;
 mod llama_rewrite;
 mod oauth_loopback;
+mod system_hardware_probe;
 mod tray;
 mod whisper_voice;
 
@@ -25,10 +26,11 @@ pub use commands::{
     keep_mine, last_used_repo, list_inbox, list_rewrite_styles, open_app_install,
     prefetch_testing_set_label_catalogs, ptt_hotkey, publish_draft,
     reconcile_testing_set_with_app_visible, remember_last_rewrite_style,
-    remove_custom_rewrite_style, remove_rewrite_model, remove_testing_set_repo, save_capture,
-    set_active_rewrite_model, set_testing_set_max, show_capture, sign_in_with_github,
-    sign_in_with_pat, sign_out, skip_try_capture, start_rewrite_model_download, testing_set,
-    testing_set_max, update_linked_draft, use_theirs, AppState, ModelDownloadHandle,
+    remove_custom_rewrite_style, remove_rewrite_model, remove_testing_set_repo,
+    respond_rewrite_hardware_prompt, save_capture, set_active_rewrite_model, set_testing_set_max,
+    show_capture, sign_in_with_github, sign_in_with_pat, sign_out, skip_try_capture,
+    start_rewrite_model_download, testing_set, testing_set_max, update_linked_draft, use_theirs,
+    AppState, ModelDownloadHandle,
 };
 pub use llama_rewrite::RewriteJobHandle;
 pub use tray::setup_tray;

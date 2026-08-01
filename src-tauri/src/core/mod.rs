@@ -4,6 +4,7 @@
 mod error;
 mod ports;
 mod rewrite;
+pub mod rewrite_hardware;
 pub mod rewrite_model_catalog;
 
 use std::time::Duration;
@@ -15,16 +16,20 @@ pub use error::{
 pub use ports::{
     AppInstallSnapshot, AppSettings, CaptureInput, Clock, CreatedIssue, CustomRewriteStyle, Draft,
     DraftStore, DraftStoreError, EditDraftInput, EmptyRewriteModelFiles, EnsuredLabelCatalog,
-    GitHub, GitHubError, InboxItem, LabelCatalog, LabelCatalogStore, LabelCatalogStoreError,
-    LocalLink, RemoteSnapshot, RepoId, RepoLabel, RewriteEngine, RewriteEngineError, RewriteInput,
+    FixedHardwareProbe, GitHub, GitHubError, HardwareProbe, InboxItem, LabelCatalog,
+    LabelCatalogStore, LabelCatalogStoreError, LocalLink, RemoteSnapshot, RepoId, RepoLabel,
+    RewriteEngine, RewriteEngineError, RewriteHardwareSwitchPrompt, RewriteInput,
     RewriteModelDiskStatus, RewriteModelFileError, RewriteModelFiles, RewriteModelStatusSnapshot,
     RewriteProposal, RewriteStyleInfo, RewriteStylesSnapshot, SettingsStore, SettingsStoreError,
     StoredCredentials, StubRewriteEngine, TokenStore, TokenStoreError, VoiceError,
     VoiceTranscriber,
 };
 pub use rewrite::{is_too_thin_for_rewrite, CLEAR_STYLE_ID};
+pub use rewrite_hardware::{
+    recommend_rewrite_model_for, HardwareProfile, HardwareTier, RewriteModelRecommendation,
+};
 pub use rewrite_model_catalog::{
-    find_rewrite_model, recommended_rewrite_model, rewrite_model_catalog, DEFAULT_REWRITE_MODEL_ID,
+    find_rewrite_model, rewrite_model_catalog, DEFAULT_REWRITE_MODEL_ID,
 };
 
 /// Auth state visible to callers (never includes raw tokens).
@@ -72,6 +77,7 @@ pub struct IssuebridgeCore<G, T, D, V, C, S, L> {
     label_catalog_store: L,
     rewrite: Box<dyn RewriteEngine>,
     rewrite_models: Box<dyn RewriteModelFiles>,
+    hardware: Box<dyn HardwareProbe>,
     /// Process-local signed-in flag. Set on successful sign-in; cleared on sign-out.
     /// Vault remains source of truth across restarts; this avoids flaky post-store re-reads
     /// leaving the UI stuck on Sign in after a successful PAT/OAuth.
@@ -108,6 +114,7 @@ where
             label_catalog_store,
             rewrite: Box::new(StubRewriteEngine),
             rewrite_models: Box::new(EmptyRewriteModelFiles),
+            hardware: Box::new(FixedHardwareProbe::default()),
             session_signed_in,
         }
     }
@@ -121,6 +128,12 @@ where
     /// Replace the Rewrite model files port (download-on-demand GGUFs).
     pub fn with_rewrite_model_files(mut self, files: Box<dyn RewriteModelFiles>) -> Self {
         self.rewrite_models = files;
+        self
+    }
+
+    /// Replace the hardware probe (RAM + Vulkan) used for Rewrite model recommendation.
+    pub fn with_hardware_probe(mut self, probe: Box<dyn HardwareProbe>) -> Self {
+        self.hardware = probe;
         self
     }
 
@@ -1043,6 +1056,7 @@ where
     }
 
     /// Catalog + disk status for Rewrite setup / model settings. Cleans orphan partials.
+    /// Detects hardware and pre-selects the tier A–D catalog default (user may override).
     pub fn rewrite_model_status(&self) -> Result<RewriteModelStatusSnapshot, RewriteError> {
         self.require_signed_in_for_rewrite()?;
         self.rewrite_models
@@ -1053,7 +1067,9 @@ where
             .load()
             .map_err(|_| RewriteError::StorageUnavailable)?;
         let active = settings.active_rewrite_model_id.clone();
-        let (recommended, reason) = recommended_rewrite_model();
+        let profile = self.hardware.probe();
+        let fingerprint = profile.fingerprint();
+        let recommendation = recommend_rewrite_model_for(&profile);
         let models: Vec<RewriteModelDiskStatus> = rewrite_model_catalog()
             .iter()
             .map(|entry| {
@@ -1076,13 +1092,80 @@ where
         let active_verified = active
             .as_ref()
             .is_some_and(|id| models.iter().any(|m| m.id == *id && m.verified && m.active));
+        let active_model_id = if active_verified {
+            active.clone()
+        } else {
+            None
+        };
+        let show_prompt = rewrite_hardware::hardware_switch_prompt_needed(
+            active_model_id.as_deref(),
+            recommendation.model_id,
+            &fingerprint,
+            settings
+                .rewrite_hardware_prompt_acked_fingerprint
+                .as_deref(),
+        );
+        let hardware_switch_prompt = if show_prompt {
+            Some(RewriteHardwareSwitchPrompt {
+                current_model_id: active_model_id.clone().unwrap_or_default(),
+                recommended_model_id: recommendation.model_id.into(),
+                reason: recommendation.reason.into(),
+                fingerprint,
+            })
+        } else {
+            None
+        };
+        let hardware_tier = match recommendation.tier {
+            HardwareTier::A => "A",
+            HardwareTier::B => "B",
+            HardwareTier::C => "C",
+            HardwareTier::D => "D",
+        };
         Ok(RewriteModelStatusSnapshot {
             models,
-            active_model_id: if active_verified { active } else { None },
-            recommended_model_id: recommended.id.into(),
-            recommended_reason: reason.into(),
+            active_model_id,
+            recommended_model_id: recommendation.model_id.into(),
+            recommended_reason: recommendation.reason.into(),
+            hardware_tier: hardware_tier.into(),
+            quality_alt_model_id: recommendation.quality_alt_model_id.map(str::to_string),
+            hardware_switch_prompt,
             needs_setup: !active_verified,
         })
+    }
+
+    /// Keep or Switch after a hardware-recommendation soft prompt. Never downloads.
+    /// Switch activates the recommended model when verified; otherwise clears active so
+    /// setup pre-selects it for an explicit Download.
+    pub fn respond_rewrite_hardware_prompt(
+        &mut self,
+        switch: bool,
+    ) -> Result<RewriteModelStatusSnapshot, RewriteError> {
+        self.require_signed_in_for_rewrite()?;
+        let profile = self.hardware.probe();
+        let fingerprint = profile.fingerprint();
+        let recommendation = recommend_rewrite_model_for(&profile);
+        let mut settings = self
+            .settings_store
+            .load()
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        settings.rewrite_hardware_prompt_acked_fingerprint = Some(fingerprint);
+        if switch {
+            let entry =
+                find_rewrite_model(recommendation.model_id).ok_or(RewriteError::NotFound)?;
+            if self
+                .rewrite_models
+                .is_verified(entry.filename, entry.size_bytes, entry.sha256)
+            {
+                settings.active_rewrite_model_id = Some(entry.id.into());
+            } else {
+                // No auto-download — clear active so setup shows the new recommendation.
+                settings.active_rewrite_model_id = None;
+            }
+        }
+        self.settings_store
+            .save(settings)
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        self.rewrite_model_status()
     }
 
     /// Mark a verified on-disk catalog model as active (keeps prior downloads).
@@ -2911,5 +2994,199 @@ mod tests {
             settings.snapshot().active_rewrite_model_id.as_deref(),
             Some("qwen25-1.5b")
         );
+    }
+
+    #[test]
+    fn rewrite_model_status_recommends_from_hardware_tier() {
+        let settings = FakeSettingsStore::default();
+        let core = signed_in_core(FakeGitHub::default(), settings).with_hardware_probe(Box::new(
+            FixedHardwareProbe {
+                profile: HardwareProfile {
+                    ram_gb: 8,
+                    vulkan_usable: false,
+                    vram_mb: None,
+                },
+            },
+        ));
+        let snap = core.rewrite_model_status().expect("status");
+        assert_eq!(snap.recommended_model_id, "qwen25-1.5b");
+        assert_eq!(snap.hardware_tier, "A");
+        assert!(snap.quality_alt_model_id.is_none());
+        assert!(snap.hardware_switch_prompt.is_none());
+        assert!(
+            snap.recommended_reason.contains("RAM") || snap.recommended_reason.contains("Vulkan")
+        );
+    }
+
+    #[test]
+    fn hardware_switch_prompt_keep_and_switch_once_per_fingerprint() {
+        #[derive(Clone)]
+        struct OnDiskVerified {
+            inner: FakeRewriteModelFiles,
+        }
+        impl RewriteModelFiles for OnDiskVerified {
+            fn clean_orphan_partials(&self) -> Result<(), RewriteModelFileError> {
+                self.inner.clean_orphan_partials()
+            }
+            fn path_for(&self, filename: &str) -> std::path::PathBuf {
+                self.inner.path_for(filename)
+            }
+            fn on_disk_len(&self, filename: &str) -> Option<u64> {
+                self.inner.on_disk_len(filename)
+            }
+            fn is_verified(
+                &self,
+                filename: &str,
+                _expected_size: u64,
+                _expected_sha256: &str,
+            ) -> bool {
+                self.inner.on_disk_len(filename).is_some()
+            }
+            fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError> {
+                self.inner.remove(filename)
+            }
+        }
+
+        let settings = FakeSettingsStore::default();
+        let files = FakeRewriteModelFiles::default();
+        let qwen = find_rewrite_model("qwen25-1.5b").unwrap();
+        let granite = find_rewrite_model("granite-3.3-2b").unwrap();
+        files.put(qwen.filename, b"qwen-bytes".to_vec());
+        files.put(granite.filename, b"granite-bytes".to_vec());
+
+        let mut core = signed_in_core(FakeGitHub::default(), settings.clone())
+            .with_rewrite_model_files(Box::new(OnDiskVerified {
+                inner: files.clone(),
+            }))
+            .with_hardware_probe(Box::new(FixedHardwareProbe {
+                profile: HardwareProfile {
+                    ram_gb: 8,
+                    vulkan_usable: false,
+                    vram_mb: None,
+                },
+            }));
+        core.set_active_rewrite_model("qwen25-1.5b")
+            .expect("active");
+
+        // Upgrade RAM → tier B recommends Granite; soft prompt once.
+        let mut core = signed_in_core(FakeGitHub::default(), settings.clone())
+            .with_rewrite_model_files(Box::new(OnDiskVerified {
+                inner: files.clone(),
+            }))
+            .with_hardware_probe(Box::new(FixedHardwareProbe {
+                profile: HardwareProfile {
+                    ram_gb: 16,
+                    vulkan_usable: false,
+                    vram_mb: None,
+                },
+            }));
+        let snap = core.rewrite_model_status().expect("prompt");
+        assert_eq!(snap.recommended_model_id, "granite-3.3-2b");
+        let prompt = snap.hardware_switch_prompt.expect("soft prompt");
+        assert_eq!(prompt.current_model_id, "qwen25-1.5b");
+        assert_eq!(prompt.recommended_model_id, "granite-3.3-2b");
+
+        let snap = core.respond_rewrite_hardware_prompt(false).expect("keep");
+        assert!(snap.hardware_switch_prompt.is_none());
+        assert_eq!(
+            settings.snapshot().active_rewrite_model_id.as_deref(),
+            Some("qwen25-1.5b")
+        );
+        // Same fingerprint — no second prompt.
+        assert!(core
+            .rewrite_model_status()
+            .expect("again")
+            .hardware_switch_prompt
+            .is_none());
+
+        // New fingerprint + Switch activates recommended when on disk (no download).
+        let mut settings_mut = settings.clone();
+        settings_mut
+            .save(AppSettings {
+                rewrite_hardware_prompt_acked_fingerprint: None,
+                ..settings.snapshot()
+            })
+            .expect("reset ack");
+        let mut core = signed_in_core(FakeGitHub::default(), settings.clone())
+            .with_rewrite_model_files(Box::new(OnDiskVerified {
+                inner: files.clone(),
+            }))
+            .with_hardware_probe(Box::new(FixedHardwareProbe {
+                profile: HardwareProfile {
+                    ram_gb: 32,
+                    vulkan_usable: false,
+                    vram_mb: None,
+                },
+            }));
+        let snap = core.respond_rewrite_hardware_prompt(true).expect("switch");
+        assert_eq!(snap.active_model_id.as_deref(), Some("granite-3.3-2b"));
+        assert!(snap.hardware_switch_prompt.is_none());
+        assert!(!snap.needs_setup);
+    }
+
+    #[test]
+    fn hardware_switch_never_auto_downloads() {
+        #[derive(Clone)]
+        struct OnDiskVerified {
+            inner: FakeRewriteModelFiles,
+        }
+        impl RewriteModelFiles for OnDiskVerified {
+            fn clean_orphan_partials(&self) -> Result<(), RewriteModelFileError> {
+                self.inner.clean_orphan_partials()
+            }
+            fn path_for(&self, filename: &str) -> std::path::PathBuf {
+                self.inner.path_for(filename)
+            }
+            fn on_disk_len(&self, filename: &str) -> Option<u64> {
+                self.inner.on_disk_len(filename)
+            }
+            fn is_verified(
+                &self,
+                filename: &str,
+                _expected_size: u64,
+                _expected_sha256: &str,
+            ) -> bool {
+                self.inner.on_disk_len(filename).is_some()
+            }
+            fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError> {
+                self.inner.remove(filename)
+            }
+        }
+
+        let settings = FakeSettingsStore::default();
+        let files = FakeRewriteModelFiles::default();
+        let qwen = find_rewrite_model("qwen25-1.5b").unwrap();
+        files.put(qwen.filename, b"qwen-only".to_vec());
+        let mut core = signed_in_core(FakeGitHub::default(), settings.clone())
+            .with_rewrite_model_files(Box::new(OnDiskVerified {
+                inner: files.clone(),
+            }))
+            .with_hardware_probe(Box::new(FixedHardwareProbe {
+                profile: HardwareProfile {
+                    ram_gb: 8,
+                    vulkan_usable: false,
+                    vram_mb: None,
+                },
+            }));
+        core.set_active_rewrite_model("qwen25-1.5b")
+            .expect("active");
+
+        let mut core = signed_in_core(FakeGitHub::default(), settings.clone())
+            .with_rewrite_model_files(Box::new(OnDiskVerified { inner: files }))
+            .with_hardware_probe(Box::new(FixedHardwareProbe {
+                profile: HardwareProfile {
+                    ram_gb: 16,
+                    vulkan_usable: true,
+                    vram_mb: Some(8 * 1024),
+                },
+            }));
+        let snap = core
+            .respond_rewrite_hardware_prompt(true)
+            .expect("switch without download");
+        assert!(snap.needs_setup);
+        assert!(snap.active_model_id.is_none());
+        assert_eq!(snap.recommended_model_id, "phi4-mini");
+        assert_eq!(snap.quality_alt_model_id.as_deref(), Some("qwen3-4b"));
+        assert!(settings.snapshot().active_rewrite_model_id.is_none());
     }
 }
