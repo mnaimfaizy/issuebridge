@@ -156,4 +156,61 @@ describe("Inbox Rewrite modal (#67)", () => {
     assert.match(context, /\*\*Rewrite\*\*:/);
     assert.match(context, /\*\*Rewrite style\*\*:/);
   });
+
+  it("Rewrite model catalog download lifecycle (#69)", () => {
+    const catalog = readTauri("core", "rewrite_model_catalog.rs");
+    assert.match(catalog, /phi4-mini/);
+    assert.match(catalog, /qwen25-1\.5b/);
+    assert.match(catalog, /smollm2-1\.7b/);
+    assert.match(catalog, /granite-3\.3-2b/);
+    assert.match(catalog, /qwen3-4b/);
+    // No catalog entry id for the research-license 3B model (comments may mention exclusion).
+    assert.doesNotMatch(catalog, /id:\s*"qwen25-3b"/);
+    assert.doesNotMatch(catalog, /display_name:\s*"Qwen2\.5 3B"/);
+
+    const ports = readTauri("core", "ports", "mod.rs");
+    assert.match(ports, /active_rewrite_model_id/);
+    assert.match(ports, /trait RewriteModelFiles/);
+
+    const store = readTauri("adapters", "file_rewrite_model_store.rs");
+    assert.match(store, /PARTIAL_SUFFIX|\.partial/);
+    assert.match(store, /clean_orphan_partials/);
+    assert.match(store, /download_and_verify/);
+    assert.match(store, /Sha256|sha256/);
+
+    const commands = readTauri("adapters", "commands.rs");
+    assert.match(commands, /get_rewrite_model_status/);
+    assert.match(commands, /start_rewrite_model_download/);
+    assert.match(commands, /cancel_rewrite_model_download/);
+    assert.match(commands, /set_active_rewrite_model/);
+    assert.match(commands, /remove_rewrite_model/);
+    assert.match(commands, /rewrite-model-download-progress/);
+
+    const llama = readTauri("adapters", "llama_rewrite.rs");
+    assert.match(llama, /resolve_active_catalog_gguf/);
+
+    const dialog = readSrc("inbox", "RewriteDialog.tsx");
+    assert.match(dialog, /get_rewrite_model_status/);
+    assert.match(dialog, /start_rewrite_model_download/);
+    assert.match(dialog, /cancel_rewrite_model_download/);
+    assert.match(dialog, /set_active_rewrite_model/);
+    assert.match(dialog, /remove_rewrite_model/);
+    assert.match(dialog, /window\.confirm/);
+    assert.match(dialog, /phase === "setup"|phase === "downloading"/);
+    assert.match(dialog, /Download/);
+    assert.match(dialog, /ProgressBar|received_bytes/);
+    assert.match(dialog, /recommended_reason/);
+    assert.match(dialog, /verified/);
+
+    const captureDir = src("capture");
+    for (const name of ["CapturePopup.tsx", "CaptureApp.tsx"]) {
+      const path = join(captureDir, name);
+      if (!existsSync(path)) continue;
+      const text = readFileSync(path, "utf8");
+      assert.doesNotMatch(
+        text,
+        /start_rewrite_model_download|get_rewrite_model_status/,
+      );
+    }
+  });
 });

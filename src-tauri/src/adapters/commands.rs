@@ -1,14 +1,16 @@
 //! IPC commands — adapters that call the application core and return safe DTOs.
 //! Command results never include raw access/refresh/PAT strings.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::adapters::app_core::AppCore;
+use crate::adapters::file_rewrite_model_store::{FileRewriteModelStore, ModelDownloadError};
 use crate::adapters::github_http::APP_INSTALL_URL;
 use crate::adapters::llama_rewrite::RewriteJobHandle;
 use crate::adapters::oauth_loopback::{
@@ -17,15 +19,53 @@ use crate::adapters::oauth_loopback::{
 };
 use crate::adapters::whisper_voice::write_temp_wav;
 use crate::core::{
-    AuthError, AuthState, CaptureError, CaptureInput, EditDraftInput, FirstRunStep, InboxError,
-    InstallContinueOutcome, InstallError, LabelCatalogError, PublishError, RepoId, RewriteError,
-    TestingSetError, UpdateError, VoiceError,
+    find_rewrite_model, AuthError, AuthState, CaptureError, CaptureInput, EditDraftInput,
+    FirstRunStep, InboxError, InstallContinueOutcome, InstallError, LabelCatalogError,
+    PublishError, RepoId, RewriteError, TestingSetError, UpdateError, VoiceError,
 };
+
+/// Cancel flag for in-flight Rewrite model downloads (lock-free vs core mutex).
+#[derive(Debug, Default)]
+pub struct ModelDownloadHandle {
+    cancel: AtomicBool,
+    busy: AtomicBool,
+}
+
+impl ModelDownloadHandle {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
+    }
+
+    pub fn reset_for_start(&self) -> bool {
+        if self
+            .busy
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return false;
+        }
+        self.cancel.store(false, Ordering::SeqCst);
+        true
+    }
+
+    pub fn finish(&self) {
+        self.busy.store(false, Ordering::SeqCst);
+    }
+
+    pub fn cancel_flag(&self) -> &AtomicBool {
+        &self.cancel
+    }
+}
 
 pub struct AppState {
     pub core: Arc<Mutex<AppCore>>,
     /// Shared with the llama Rewrite engine so Cancel can kill without the core lock.
     pub rewrite_job: Arc<RewriteJobHandle>,
+    pub model_download: Arc<ModelDownloadHandle>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -836,6 +876,165 @@ pub fn remember_last_rewrite_style(
         .map_err(rewrite_error_message)
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RewriteModelEntryDto {
+    pub id: String,
+    pub display_name: String,
+    pub size_bytes: u64,
+    pub summary: String,
+    pub on_disk: bool,
+    pub verified: bool,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RewriteModelStatusDto {
+    pub models: Vec<RewriteModelEntryDto>,
+    pub active_model_id: Option<String>,
+    pub recommended_model_id: String,
+    pub recommended_reason: String,
+    pub needs_setup: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RewriteModelIdDto {
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RewriteModelDownloadProgressDto {
+    pub model_id: String,
+    pub received_bytes: u64,
+    pub total_bytes: u64,
+}
+
+#[tauri::command]
+pub fn get_rewrite_model_status(
+    state: State<'_, AppState>,
+) -> Result<RewriteModelStatusDto, String> {
+    let core = state.core.lock().map_err(|e| e.to_string())?;
+    let snap = core.rewrite_model_status().map_err(rewrite_error_message)?;
+    Ok(RewriteModelStatusDto {
+        models: snap
+            .models
+            .into_iter()
+            .map(|m| RewriteModelEntryDto {
+                id: m.id,
+                display_name: m.display_name,
+                size_bytes: m.size_bytes,
+                summary: m.summary,
+                on_disk: m.on_disk,
+                verified: m.verified,
+                active: m.active,
+            })
+            .collect(),
+        active_model_id: snap.active_model_id,
+        recommended_model_id: snap.recommended_model_id,
+        recommended_reason: snap.recommended_reason,
+        needs_setup: snap.needs_setup,
+    })
+}
+
+#[tauri::command]
+pub fn start_rewrite_model_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    input: RewriteModelIdDto,
+) -> Result<(), String> {
+    let entry = find_rewrite_model(&input.model_id)
+        .ok_or_else(|| rewrite_error_message(RewriteError::NotFound))?;
+    {
+        let mut core = state.core.lock().map_err(|e| e.to_string())?;
+        if core.auth_state() != AuthState::SignedIn {
+            return Err(rewrite_error_message(RewriteError::NotSignedIn));
+        }
+        // Already verified on disk — set active without re-downloading (R30).
+        let status = core.rewrite_model_status().map_err(rewrite_error_message)?;
+        if status.models.iter().any(|m| m.id == entry.id && m.verified) {
+            core.set_active_rewrite_model(entry.id)
+                .map_err(rewrite_error_message)?;
+            return Ok(());
+        }
+    }
+    if !state.model_download.reset_for_start() {
+        return Err("A Rewrite model download is already in progress.".into());
+    }
+
+    let model_id = entry.id.to_string();
+    let url = entry.download_url.to_string();
+    let filename = entry.filename.to_string();
+    let size = entry.size_bytes;
+    let sha = entry.sha256.to_string();
+    let download = Arc::clone(&state.model_download);
+    let core = Arc::clone(&state.core);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = FileRewriteModelStore::default();
+        let app_for_progress = app.clone();
+        let model_id_progress = model_id.clone();
+        let result = store.download_and_verify(
+            &url,
+            &filename,
+            size,
+            &sha,
+            download.cancel_flag(),
+            |received, total| {
+                let _ = app_for_progress.emit(
+                    "rewrite-model-download-progress",
+                    RewriteModelDownloadProgressDto {
+                        model_id: model_id_progress.clone(),
+                        received_bytes: received,
+                        total_bytes: total,
+                    },
+                );
+            },
+        );
+        download.finish();
+        match result {
+            Ok(_) => {
+                if let Ok(mut core) = core.lock() {
+                    let _ = core.set_active_rewrite_model(&model_id);
+                }
+                let _ = app.emit("rewrite-model-download-finished", model_id);
+            }
+            Err(ModelDownloadError::Cancelled) => {
+                let _ = app.emit("rewrite-model-download-cancelled", model_id);
+            }
+            Err(_) => {
+                let _ = app.emit("rewrite-model-download-failed", model_id);
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cancel_rewrite_model_download(state: State<'_, AppState>) -> Result<(), String> {
+    state.model_download.cancel();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_active_rewrite_model(
+    state: State<'_, AppState>,
+    input: RewriteModelIdDto,
+) -> Result<(), String> {
+    let mut core = state.core.lock().map_err(|e| e.to_string())?;
+    core.set_active_rewrite_model(&input.model_id)
+        .map_err(rewrite_error_message)
+}
+
+#[tauri::command]
+pub fn remove_rewrite_model(
+    state: State<'_, AppState>,
+    input: RewriteModelIdDto,
+) -> Result<(), String> {
+    let mut core = state.core.lock().map_err(|e| e.to_string())?;
+    core.remove_rewrite_model(&input.model_id)
+        .map_err(rewrite_error_message)
+}
+
 fn rewrite_error_message(err: RewriteError) -> String {
     match err {
         RewriteError::NotSignedIn => "Sign in to Rewrite a Draft.".into(),
@@ -846,6 +1045,9 @@ fn rewrite_error_message(err: RewriteError) -> String {
         RewriteError::EngineFailed => "Rewrite failed. Try again.".into(),
         RewriteError::TimedOut => "Rewrite timed out. Try again.".into(),
         RewriteError::Cancelled => "Rewrite cancelled.".into(),
+        RewriteError::ModelNotReady => "That Rewrite model is not ready. Download it first.".into(),
+        RewriteError::DownloadFailed => "Rewrite model download failed. Try again.".into(),
+        RewriteError::DownloadCancelled => "Rewrite model download cancelled.".into(),
     }
 }
 

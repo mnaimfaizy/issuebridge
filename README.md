@@ -62,14 +62,16 @@ Windows needs companion DLLs next to `whisper-cli` (`ggml.dll`, `whisper.dll`, `
 powershell -ExecutionPolicy Bypass -File scripts/fetch-llama-assets.ps1
 ```
 
-2. Point at a local GGUF until download-on-demand lands (#69):
+2. In Inbox, open a Draft that is not too thin → **Rewrite…**. With no model on disk, confirm the recommended catalog entry → **Download** (byte progress + Cancel). After download, pick a Rewrite style → **Generate**. Cancel stops the sidecar; soft timeout is ~60s.
+
+Optional local override (skips catalog path):
 
 ```powershell
 $env:ISSUEBRIDGE_REWRITE_GGUF = "D:\models\phi-4-mini.Q4_K_M.gguf"
 # optional: $env:ISSUEBRIDGE_REWRITE_CLI = "D:\path\to\llama-cli.exe"
 ```
 
-3. In Inbox, open a Draft that is not too thin → **Rewrite…** → **Generate**. Cancel stops the sidecar; soft timeout is ~60s. Without a GGUF path, Generate still uses the stub engine from #67.
+Without a local GGUF and before catalog download, Generate still uses the stub engine from #67.
 
 Fully quit Issuebridge before re-fetching if DLLs are locked.
 

@@ -4,6 +4,7 @@
 mod error;
 mod ports;
 mod rewrite;
+pub mod rewrite_model_catalog;
 
 use std::time::Duration;
 
@@ -13,13 +14,18 @@ pub use error::{
 };
 pub use ports::{
     AppInstallSnapshot, AppSettings, CaptureInput, Clock, CreatedIssue, CustomRewriteStyle, Draft,
-    DraftStore, DraftStoreError, EditDraftInput, EnsuredLabelCatalog, GitHub, GitHubError,
-    InboxItem, LabelCatalog, LabelCatalogStore, LabelCatalogStoreError, LocalLink, RemoteSnapshot,
-    RepoId, RepoLabel, RewriteEngine, RewriteEngineError, RewriteInput, RewriteProposal,
-    RewriteStyleInfo, RewriteStylesSnapshot, SettingsStore, SettingsStoreError, StoredCredentials,
-    StubRewriteEngine, TokenStore, TokenStoreError, VoiceError, VoiceTranscriber,
+    DraftStore, DraftStoreError, EditDraftInput, EmptyRewriteModelFiles, EnsuredLabelCatalog,
+    GitHub, GitHubError, InboxItem, LabelCatalog, LabelCatalogStore, LabelCatalogStoreError,
+    LocalLink, RemoteSnapshot, RepoId, RepoLabel, RewriteEngine, RewriteEngineError, RewriteInput,
+    RewriteModelDiskStatus, RewriteModelFileError, RewriteModelFiles, RewriteModelStatusSnapshot,
+    RewriteProposal, RewriteStyleInfo, RewriteStylesSnapshot, SettingsStore, SettingsStoreError,
+    StoredCredentials, StubRewriteEngine, TokenStore, TokenStoreError, VoiceError,
+    VoiceTranscriber,
 };
 pub use rewrite::{is_too_thin_for_rewrite, CLEAR_STYLE_ID};
+pub use rewrite_model_catalog::{
+    find_rewrite_model, recommended_rewrite_model, rewrite_model_catalog, DEFAULT_REWRITE_MODEL_ID,
+};
 
 /// Auth state visible to callers (never includes raw tokens).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +71,7 @@ pub struct IssuebridgeCore<G, T, D, V, C, S, L> {
     settings_store: S,
     label_catalog_store: L,
     rewrite: Box<dyn RewriteEngine>,
+    rewrite_models: Box<dyn RewriteModelFiles>,
     /// Process-local signed-in flag. Set on successful sign-in; cleared on sign-out.
     /// Vault remains source of truth across restarts; this avoids flaky post-store re-reads
     /// leaving the UI stuck on Sign in after a successful PAT/OAuth.
@@ -100,6 +107,7 @@ where
             settings_store,
             label_catalog_store,
             rewrite: Box::new(StubRewriteEngine),
+            rewrite_models: Box::new(EmptyRewriteModelFiles),
             session_signed_in,
         }
     }
@@ -107,6 +115,12 @@ where
     /// Replace the Rewrite engine (tests / future llama.cpp sidecar).
     pub fn with_rewrite_engine(mut self, engine: Box<dyn RewriteEngine>) -> Self {
         self.rewrite = engine;
+        self
+    }
+
+    /// Replace the Rewrite model files port (download-on-demand GGUFs).
+    pub fn with_rewrite_model_files(mut self, files: Box<dyn RewriteModelFiles>) -> Self {
+        self.rewrite_models = files;
         self
     }
 
@@ -1028,6 +1042,104 @@ where
         Ok(())
     }
 
+    /// Catalog + disk status for Rewrite setup / model settings. Cleans orphan partials.
+    pub fn rewrite_model_status(&self) -> Result<RewriteModelStatusSnapshot, RewriteError> {
+        self.require_signed_in_for_rewrite()?;
+        self.rewrite_models
+            .clean_orphan_partials()
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        let settings = self
+            .settings_store
+            .load()
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        let active = settings.active_rewrite_model_id.clone();
+        let (recommended, reason) = recommended_rewrite_model();
+        let models: Vec<RewriteModelDiskStatus> = rewrite_model_catalog()
+            .iter()
+            .map(|entry| {
+                let on_disk = self.rewrite_models.on_disk_len(entry.filename).is_some();
+                let verified =
+                    self.rewrite_models
+                        .is_verified(entry.filename, entry.size_bytes, entry.sha256);
+                let is_active = active.as_deref() == Some(entry.id) && verified;
+                RewriteModelDiskStatus {
+                    id: entry.id.into(),
+                    display_name: entry.display_name.into(),
+                    size_bytes: entry.size_bytes,
+                    summary: entry.summary.into(),
+                    on_disk,
+                    verified,
+                    active: is_active,
+                }
+            })
+            .collect();
+        let active_verified = active
+            .as_ref()
+            .is_some_and(|id| models.iter().any(|m| m.id == *id && m.verified && m.active));
+        Ok(RewriteModelStatusSnapshot {
+            models,
+            active_model_id: if active_verified { active } else { None },
+            recommended_model_id: recommended.id.into(),
+            recommended_reason: reason.into(),
+            needs_setup: !active_verified,
+        })
+    }
+
+    /// Mark a verified on-disk catalog model as active (keeps prior downloads).
+    pub fn set_active_rewrite_model(&mut self, model_id: &str) -> Result<(), RewriteError> {
+        self.require_signed_in_for_rewrite()?;
+        let entry = find_rewrite_model(model_id).ok_or(RewriteError::NotFound)?;
+        if !self
+            .rewrite_models
+            .is_verified(entry.filename, entry.size_bytes, entry.sha256)
+        {
+            return Err(RewriteError::ModelNotReady);
+        }
+        let mut settings = self
+            .settings_store
+            .load()
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        settings.active_rewrite_model_id = Some(entry.id.into());
+        self.settings_store
+            .save(settings)
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        Ok(())
+    }
+
+    /// Remove a downloaded model. Active remove clears active (next Rewrite re-enters setup).
+    pub fn remove_rewrite_model(&mut self, model_id: &str) -> Result<(), RewriteError> {
+        self.require_signed_in_for_rewrite()?;
+        let entry = find_rewrite_model(model_id).ok_or(RewriteError::NotFound)?;
+        self.rewrite_models
+            .remove(entry.filename)
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        let mut settings = self
+            .settings_store
+            .load()
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        if settings.active_rewrite_model_id.as_deref() == Some(entry.id) {
+            settings.active_rewrite_model_id = None;
+        }
+        self.settings_store
+            .save(settings)
+            .map_err(|_| RewriteError::StorageUnavailable)?;
+        Ok(())
+    }
+
+    /// Absolute path of the active verified GGUF when ready (for llama.cpp sidecar).
+    pub fn active_rewrite_model_path(&self) -> Option<std::path::PathBuf> {
+        let settings = self.settings_store.load().ok()?;
+        let id = settings.active_rewrite_model_id.as_deref()?;
+        let entry = find_rewrite_model(id)?;
+        if !self
+            .rewrite_models
+            .is_verified(entry.filename, entry.size_bytes, entry.sha256)
+        {
+            return None;
+        }
+        Some(self.rewrite_models.path_for(entry.filename))
+    }
+
     fn require_signed_in_for_rewrite(&self) -> Result<(), RewriteError> {
         if self.auth_state() != AuthState::SignedIn {
             return Err(RewriteError::NotSignedIn);
@@ -1167,8 +1279,8 @@ mod tests {
 
     use super::*;
     use ports::fakes::{
-        FakeClock, FakeDraftStore, FakeGitHub, FakeLabelCatalogStore, FakeSettingsStore,
-        FakeTokenStore, FakeVoiceTranscriber,
+        FakeClock, FakeDraftStore, FakeGitHub, FakeLabelCatalogStore, FakeRewriteModelFiles,
+        FakeSettingsStore, FakeTokenStore, FakeVoiceTranscriber,
     };
 
     type TestCore = IssuebridgeCore<
@@ -2668,6 +2780,136 @@ mod tests {
         assert_eq!(
             settings.snapshot().last_used_rewrite_style_id.as_deref(),
             Some(CLEAR_STYLE_ID)
+        );
+    }
+
+    #[test]
+    fn rewrite_model_status_needs_setup_until_active_verified_model() {
+        #[derive(Clone)]
+        struct OnDiskVerified {
+            inner: FakeRewriteModelFiles,
+        }
+        impl RewriteModelFiles for OnDiskVerified {
+            fn clean_orphan_partials(&self) -> Result<(), RewriteModelFileError> {
+                self.inner.clean_orphan_partials()
+            }
+            fn path_for(&self, filename: &str) -> std::path::PathBuf {
+                self.inner.path_for(filename)
+            }
+            fn on_disk_len(&self, filename: &str) -> Option<u64> {
+                self.inner.on_disk_len(filename)
+            }
+            fn is_verified(
+                &self,
+                filename: &str,
+                _expected_size: u64,
+                _expected_sha256: &str,
+            ) -> bool {
+                self.inner.on_disk_len(filename).is_some()
+            }
+            fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError> {
+                self.inner.remove(filename)
+            }
+        }
+
+        let settings = FakeSettingsStore::default();
+        let files = FakeRewriteModelFiles::default();
+        let core = signed_in_core(FakeGitHub::default(), settings.clone())
+            .with_rewrite_model_files(Box::new(OnDiskVerified {
+                inner: files.clone(),
+            }));
+        let snap = core.rewrite_model_status().expect("status");
+        assert!(snap.needs_setup);
+        assert_eq!(snap.models.len(), 5);
+        assert_eq!(snap.recommended_model_id, DEFAULT_REWRITE_MODEL_ID);
+        assert!(snap.models.iter().all(|m| !m.on_disk && !m.active));
+        assert!(snap
+            .models
+            .iter()
+            .all(|m| m.id != "qwen25-3b" && !m.display_name.contains("Qwen2.5 3B")));
+
+        let entry = find_rewrite_model(DEFAULT_REWRITE_MODEL_ID).unwrap();
+        files.put(entry.filename, b"phi4-fixture-bytes".to_vec());
+        let mut core = signed_in_core(FakeGitHub::default(), settings.clone())
+            .with_rewrite_model_files(Box::new(OnDiskVerified {
+                inner: files.clone(),
+            }));
+        core.set_active_rewrite_model(DEFAULT_REWRITE_MODEL_ID)
+            .expect("activate");
+        assert_eq!(
+            settings.snapshot().active_rewrite_model_id.as_deref(),
+            Some(DEFAULT_REWRITE_MODEL_ID)
+        );
+        let snap = core.rewrite_model_status().expect("ready");
+        assert!(!snap.needs_setup);
+        assert_eq!(
+            snap.active_model_id.as_deref(),
+            Some(DEFAULT_REWRITE_MODEL_ID)
+        );
+        core.remove_rewrite_model(DEFAULT_REWRITE_MODEL_ID)
+            .expect("remove active");
+        assert!(settings.snapshot().active_rewrite_model_id.is_none());
+        assert!(core.rewrite_model_status().expect("again").needs_setup);
+    }
+
+    #[test]
+    fn set_active_rewrite_model_refuses_unverified_and_keeps_prior_on_switch() {
+        #[derive(Clone)]
+        struct OnDiskVerified {
+            inner: FakeRewriteModelFiles,
+        }
+        impl RewriteModelFiles for OnDiskVerified {
+            fn clean_orphan_partials(&self) -> Result<(), RewriteModelFileError> {
+                self.inner.clean_orphan_partials()
+            }
+            fn path_for(&self, filename: &str) -> std::path::PathBuf {
+                self.inner.path_for(filename)
+            }
+            fn on_disk_len(&self, filename: &str) -> Option<u64> {
+                self.inner.on_disk_len(filename)
+            }
+            fn is_verified(
+                &self,
+                filename: &str,
+                _expected_size: u64,
+                _expected_sha256: &str,
+            ) -> bool {
+                self.inner.on_disk_len(filename).is_some()
+            }
+            fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError> {
+                self.inner.remove(filename)
+            }
+        }
+
+        let settings = FakeSettingsStore::default();
+        let files = FakeRewriteModelFiles::default();
+        let phi = find_rewrite_model("phi4-mini").unwrap();
+        let qwen = find_rewrite_model("qwen25-1.5b").unwrap();
+        files.put(phi.filename, b"phi".to_vec());
+        files.put(qwen.filename, b"qwen".to_vec());
+        let mut core = signed_in_core(FakeGitHub::default(), settings.clone())
+            .with_rewrite_model_files(Box::new(OnDiskVerified {
+                inner: files.clone(),
+            }));
+
+        assert_eq!(
+            core.set_active_rewrite_model("missing-id"),
+            Err(RewriteError::NotFound)
+        );
+        core.set_active_rewrite_model("phi4-mini").expect("phi");
+        core.set_active_rewrite_model("qwen25-1.5b")
+            .expect("switch");
+        assert_eq!(
+            settings.snapshot().active_rewrite_model_id.as_deref(),
+            Some("qwen25-1.5b")
+        );
+        assert!(RewriteModelFiles::on_disk_len(&files, phi.filename).is_some());
+        core.remove_rewrite_model("phi4-mini")
+            .expect("remove prior");
+        assert!(RewriteModelFiles::on_disk_len(&files, phi.filename).is_none());
+        assert_eq!(
+            settings.snapshot().active_rewrite_model_id.as_deref(),
+            Some("qwen25-1.5b")
         );
     }
 }

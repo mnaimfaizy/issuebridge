@@ -193,6 +193,28 @@
   max-width: min(560px, 92vw);
 }
 
+.ib-rewrite-setup {
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.ib-rewrite-setup-card {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.ib-rewrite-setup-summary {
+  opacity: 0.85;
+}
+
+.ib-rewrite-download {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
 .ib-rewrite-style-row {
   display: flex;
   flex-wrap: wrap;

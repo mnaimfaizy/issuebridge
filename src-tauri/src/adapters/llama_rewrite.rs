@@ -1,8 +1,8 @@
 //! llama.cpp Rewrite sidecar — offline Generate via `llama-cli` + local GGUF.
 //!
-//! Models are **not** bundled in NSIS. Dev/release override the GGUF path with
-//! `ISSUEBRIDGE_REWRITE_GGUF` (and optional `ISSUEBRIDGE_REWRITE_CLI`) until
-//! download-on-demand lands (#69).
+//! Models are **not** bundled in NSIS. Prefer the active catalog GGUF under
+//! app-data (`models/`); override with `ISSUEBRIDGE_REWRITE_GGUF` (and optional
+//! `ISSUEBRIDGE_REWRITE_CLI`) for local/dev.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -140,7 +140,7 @@ impl RewriteEngine for LlamaRewriteEngine {
         })?;
         let model = resolve_model_path().ok_or_else(|| {
             eprintln!(
-                "[issuebridge] rewrite: GGUF missing (set ISSUEBRIDGE_REWRITE_GGUF until #69)"
+                "[issuebridge] rewrite: GGUF missing (download via Rewrite… or set ISSUEBRIDGE_REWRITE_GGUF)"
             );
             RewriteEngineError::EngineFailed
         })?;
@@ -475,7 +475,8 @@ fn resolve_model_path() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    None
+    // Active catalog download (#69); env override above wins for local/dev.
+    crate::adapters::file_rewrite_model_store::resolve_active_catalog_gguf()
 }
 
 fn sidecar_candidates() -> Vec<PathBuf> {
