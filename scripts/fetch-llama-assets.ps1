@@ -34,6 +34,9 @@ $RequiredDlls = @(
     "llama.dll",
     "llama-common.dll",
     "llama-cli-impl.dll",
+    # llama-cli-impl.dll -> llama-server-impl.dll -> mtmd.dll (STATUS_DLL_NOT_FOUND without these).
+    "llama-server-impl.dll",
+    "mtmd.dll",
     "ggml.dll",
     "ggml-base.dll",
     "ggml-vulkan.dll",
@@ -54,5 +57,5 @@ Get-ChildItem -Path $ReleaseDir -Filter "ggml-cpu-*.dll" | ForEach-Object {
     Write-Host "Wrote $(Join-Path $BinDir $_.Name)"
 }
 
-Write-Host "Done. GGUF models are not bundled — set ISSUEBRIDGE_REWRITE_GGUF for local Rewrite Generate."
+Write-Host "Done. GGUF models are not bundled - set ISSUEBRIDGE_REWRITE_GGUF for local Rewrite Generate."
 Write-Host "Fully quit Issuebridge before re-fetching if DLLs are locked."

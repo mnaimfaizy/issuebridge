@@ -37,7 +37,8 @@ type RewriteDialogProps = {
  * Variant B Rewrite modal: style chips → Generate → editable proposal → Accept / Discard.
  * Closing mid-generate cancels; never silent-overwrites the Draft underneath.
  */
-const GENERATE_SOFT_TIMEOUT_MS = 60_000;
+/** Keep in sync with llama Rewrite engine soft timeout (~120s). */
+const GENERATE_SOFT_TIMEOUT_MS = 120_000;
 
 export function RewriteDialog({
   open,

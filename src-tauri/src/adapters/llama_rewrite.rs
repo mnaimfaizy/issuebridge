@@ -4,13 +4,14 @@
 //! `ISSUEBRIDGE_REWRITE_GGUF` (and optional `ISSUEBRIDGE_REWRITE_CLI`) until
 //! download-on-demand lands (#69).
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -22,7 +23,8 @@ use crate::core::{
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
+/// Soft timeout for Generate. Cold model load + Vulkan can take tens of seconds.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
 const JSON_SCHEMA: &str = r#"{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"}},"required":["title","body"]}"#;
 
@@ -146,6 +148,16 @@ impl RewriteEngine for LlamaRewriteEngine {
         let model_abs = absolute_path(&model);
         let dll_dir = resolve_dll_dir(&sidecar);
         let prompt = build_rewrite_prompt(input);
+        let prompt_file =
+            write_temp_sidecar_file("prompt.txt", prompt.as_bytes()).map_err(|err| {
+                eprintln!("[issuebridge] rewrite: prompt temp file failed: {err}");
+                RewriteEngineError::EngineFailed
+            })?;
+        let schema_file =
+            write_temp_sidecar_file("schema.json", JSON_SCHEMA.as_bytes()).map_err(|err| {
+                eprintln!("[issuebridge] rewrite: schema temp file failed: {err}");
+                RewriteEngineError::EngineFailed
+            })?;
 
         eprintln!(
             "[issuebridge] rewrite: cli={} model={} dll_dir={}",
@@ -157,25 +169,32 @@ impl RewriteEngine for LlamaRewriteEngine {
                 .unwrap_or_else(|| "(none)".into())
         );
 
+        // -st: one shot then exit (modern llama-cli defaults to interactive chat).
+        // --no-jinja: avoid chat-template tokens breaking JSON-schema grammars.
         let mut command = Command::new(&sidecar);
         command
             .arg("-m")
             .arg(&model_abs)
             .arg("--offline")
-            .arg("-no-cnv")
+            .arg("-st")
+            .arg("--no-jinja")
             .arg("-n")
-            .arg("1024")
-            .arg("-p")
-            .arg(&prompt)
-            .arg("-j")
-            .arg(JSON_SCHEMA)
+            .arg("512")
+            .arg("-f")
+            .arg(&prompt_file)
+            .arg("-jf")
+            .arg(&schema_file)
             .arg("--simple-io")
+            .arg("--no-display-prompt")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
         apply_dll_search(&mut command, &sidecar, dll_dir.as_deref());
 
-        let output = run_with_job(command, self.timeout, &self.job)?;
+        let output = run_with_job(command, self.timeout, &self.job);
+        let _ = fs::remove_file(&prompt_file);
+        let _ = fs::remove_file(&schema_file);
+        let output = output?;
         if self.job.is_cancelled() {
             return Err(RewriteEngineError::Cancelled);
         }
@@ -208,7 +227,8 @@ pub fn build_rewrite_prompt(input: &RewriteInput) -> String {
     format!(
         "You rewrite GitHub issue drafts. Follow the style instruction exactly. \
 Preserve facts; do not invent steps, environment, product scope, or answers. \
-Respond with JSON only matching {{\"title\":\"...\",\"body\":\"...\"}}.\n\n\
+Respond with one JSON object only, with string keys title and body. \
+Do not wrap the JSON in markdown fences.\n\n\
 Style ({name}): {instruction}\n\n\
 Current title:\n{title}\n\n\
 Current body:\n{body}\n\n\
@@ -220,13 +240,14 @@ JSON:",
     )
 }
 
-/// Extract `{ "title", "body" }` from llama-cli stdout (may include banners).
+/// Extract `{ "title", "body" }` from llama-cli stdout (may include banners / echoed prompt).
 pub fn parse_proposal_from_stdout(stdout: &str) -> Option<RewriteProposal> {
     if let Some(proposal) = try_parse_json_object(stdout.trim()) {
         return Some(proposal);
     }
-    // Scan for a JSON object that contains title + body.
+    // Prefer the last valid object — echoed prompts may contain earlier placeholders.
     let bytes = stdout.as_bytes();
+    let mut last = None;
     for (i, &b) in bytes.iter().enumerate() {
         if b != b'{' {
             continue;
@@ -234,11 +255,11 @@ pub fn parse_proposal_from_stdout(stdout: &str) -> Option<RewriteProposal> {
         if let Some(end) = find_json_object_end(bytes, i) {
             let slice = &stdout[i..end];
             if let Some(proposal) = try_parse_json_object(slice) {
-                return Some(proposal);
+                last = Some(proposal);
             }
         }
     }
-    None
+    last
 }
 
 fn try_parse_json_object(s: &str) -> Option<RewriteProposal> {
@@ -248,10 +269,18 @@ fn try_parse_json_object(s: &str) -> Option<RewriteProposal> {
     if title.is_empty() && body.is_empty() {
         return None;
     }
+    // Reject prompt-echo placeholders like {"title":"...","body":"..."}.
+    if is_placeholder_field(title) && is_placeholder_field(body) {
+        return None;
+    }
     Some(RewriteProposal {
         title: title.to_string(),
         body: body.to_string(),
     })
+}
+
+fn is_placeholder_field(s: &str) -> bool {
+    matches!(s, "..." | "…" | "title" | "body" | "<title>" | "<body>")
 }
 
 fn find_json_object_end(bytes: &[u8], start: usize) -> Option<usize> {
@@ -511,6 +540,21 @@ fn truncate_for_log(s: &str) -> String {
     format!("{head}…")
 }
 
+fn write_temp_sidecar_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let path = std::env::temp_dir().join(format!(
+        "issuebridge-rewrite-{}-{}-{}",
+        std::process::id(),
+        nanos,
+        name
+    ));
+    fs::write(&path, bytes)?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,8 +607,21 @@ llama_perf: ...
     }
 
     #[test]
+    fn parse_proposal_skips_prompt_placeholder_and_uses_later_object() {
+        let stdout = "\
+> Respond with JSON.\n\
+{\"title\":\"...\",\"body\":\"...\"}\n\
+JSON:\n\
+{\"title\":\"Login fails on settings\",\"body\":\"## Problem\\nSign-in does nothing after refresh.\"}\n";
+        let proposal = parse_proposal_from_stdout(stdout).expect("prefer real proposal");
+        assert_eq!(proposal.title, "Login fails on settings");
+        assert!(proposal.body.contains("Problem"));
+    }
+
+    #[test]
     fn parse_proposal_rejects_empty_object() {
         assert!(parse_proposal_from_stdout(r#"{"title":"","body":""}"#).is_none());
+        assert!(parse_proposal_from_stdout(r#"{"title":"...","body":"..."}"#).is_none());
     }
 
     #[test]
@@ -575,6 +632,10 @@ llama_perf: ...
         assert!(prompt.contains("login fails"));
         assert!(prompt.contains("sign in nothing happens"));
         assert!(prompt.contains("JSON:"));
+        assert!(
+            !prompt.contains(r#"{"title":"...","body":"..."}"#),
+            "prompt must not embed a parseable placeholder JSON object"
+        );
     }
 
     #[test]

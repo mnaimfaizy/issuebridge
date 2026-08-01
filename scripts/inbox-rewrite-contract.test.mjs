@@ -80,7 +80,7 @@ describe("Inbox Rewrite modal (#67)", () => {
     assert.match(dialog, /requestClose/);
     assert.match(dialog, /cancelGenerate/);
     assert.match(dialog, /cancel_rewrite/);
-    assert.match(dialog, /GENERATE_SOFT_TIMEOUT_MS|60_000/);
+    assert.match(dialog, /GENERATE_SOFT_TIMEOUT_MS|120_000/);
     assert.match(dialog, /Rewrite timed out/);
     assert.match(dialog, /onAccept/);
     assert.doesNotMatch(dialog, /edit_draft/);
@@ -146,6 +146,8 @@ describe("Inbox Rewrite modal (#67)", () => {
     assert.match(fetch, /vulkan/i);
     assert.match(fetch, /ggml-vulkan\.dll/);
     assert.match(fetch, /ggml-cpu-/);
+    assert.match(fetch, /llama-server-impl\.dll/);
+    assert.match(fetch, /mtmd\.dll/);
     assert.match(fetch, /NOT fetched|not bundled/i);
   });
 

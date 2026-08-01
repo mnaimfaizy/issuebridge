@@ -22,9 +22,11 @@ Or set `ISSUEBRIDGE_WHISPER_CLI` / `ISSUEBRIDGE_WHISPER_MODEL` to absolute paths
 
 CPU + **Vulkan** Windows build (not CUDA/HIP). Companion DLLs colocated like Whisper:
 
-- `llama.dll`, `llama-common.dll`, `llama-cli-impl.dll`
+- `llama.dll`, `llama-common.dll`, `llama-cli-impl.dll`, `llama-server-impl.dll`, `mtmd.dll`
 - `ggml.dll`, `ggml-base.dll`, `ggml-cpu-*.dll`, `ggml-vulkan.dll`
 - `libomp140.x86_64.dll`
+
+(`llama-cli` is a tiny stub; without `llama-server-impl.dll` / `mtmd.dll` Windows exits with `STATUS_DLL_NOT_FOUND` / `-1073741515`.)
 
 ```powershell
 pwsh ../scripts/fetch-llama-assets.ps1
