@@ -157,6 +157,42 @@ describe("Inbox Rewrite modal (#67)", () => {
     assert.match(context, /\*\*Rewrite style\*\*:/);
   });
 
+  it("hardware-aware Rewrite model recommendation (#70)", () => {
+    const hardware = readTauri("core", "rewrite_hardware.rs");
+    assert.match(hardware, /HardwareTier/);
+    assert.match(hardware, /recommend_rewrite_model_for/);
+    assert.match(hardware, /qwen25-1\.5b/);
+    assert.match(hardware, /granite-3\.3-2b/);
+    assert.match(hardware, /phi4-mini/);
+    assert.match(hardware, /qwen3-4b/);
+    assert.match(hardware, /hardware_switch_prompt_needed/);
+
+    const ports = readTauri("core", "ports", "mod.rs");
+    assert.match(ports, /trait HardwareProbe/);
+    assert.match(ports, /rewrite_hardware_prompt_acked_fingerprint/);
+    assert.match(ports, /hardware_switch_prompt/);
+    assert.match(ports, /quality_alt_model_id/);
+
+    const probe = readTauri("adapters", "system_hardware_probe.rs");
+    assert.match(probe, /SystemHardwareProbe/);
+    assert.match(probe, /vulkan/i);
+    // Detection must not branch on non-Vulkan GPU runtimes.
+    assert.doesNotMatch(probe, /\bcuda\b|\bhip\b|\bsycl\b/i);
+
+    const commands = readTauri("adapters", "commands.rs");
+    assert.match(commands, /respond_rewrite_hardware_prompt/);
+    assert.match(commands, /hardware_tier/);
+    assert.match(commands, /quality_alt_model_id/);
+
+    const dialog = readSrc("inbox", "RewriteDialog.tsx");
+    assert.match(dialog, /respond_rewrite_hardware_prompt/);
+    assert.match(dialog, /Keep/);
+    assert.match(dialog, /Switch/);
+    assert.match(dialog, /recommended_reason/);
+    assert.match(dialog, /quality_alt_model_id|Quality alternative/);
+    assert.match(dialog, /selectedModelId|setSelectedModelId/);
+  });
+
   it("Rewrite model catalog download lifecycle (#69)", () => {
     const catalog = readTauri("core", "rewrite_model_catalog.rs");
     assert.match(catalog, /phi4-mini/);
