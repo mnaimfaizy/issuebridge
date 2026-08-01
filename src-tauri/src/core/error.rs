@@ -106,4 +106,10 @@ pub enum RewriteError {
     TimedOut,
     /// In-flight Generate was cancelled.
     Cancelled,
+    /// Catalog model id unknown or file not verified on disk.
+    ModelNotReady,
+    /// Download failed or verification failed after download.
+    DownloadFailed,
+    /// In-flight model download was cancelled.
+    DownloadCancelled,
 }

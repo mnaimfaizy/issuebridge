@@ -189,6 +189,9 @@ pub struct AppSettings {
     /// Global last-used Rewrite style id (persisted on successful Generate).
     #[serde(default)]
     pub last_used_rewrite_style_id: Option<String>,
+    /// Active Rewrite catalog model id (GGUF on disk). Cleared when Remove active.
+    #[serde(default)]
+    pub active_rewrite_model_id: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -206,7 +209,79 @@ impl Default for AppSettings {
             ptt_hotkey: None,
             custom_rewrite_styles: Vec::new(),
             last_used_rewrite_style_id: None,
+            active_rewrite_model_id: None,
         }
+    }
+}
+
+/// Per-catalog-entry disk status for Rewrite model lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewriteModelDiskStatus {
+    pub id: String,
+    pub display_name: String,
+    pub size_bytes: u64,
+    pub summary: String,
+    pub on_disk: bool,
+    pub verified: bool,
+    pub active: bool,
+}
+
+/// Snapshot for Rewrite setup / model settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewriteModelStatusSnapshot {
+    pub models: Vec<RewriteModelDiskStatus>,
+    pub active_model_id: Option<String>,
+    pub recommended_model_id: String,
+    pub recommended_reason: String,
+    pub needs_setup: bool,
+}
+
+/// Local GGUF files for curated Rewrite models (download-on-demand).
+pub trait RewriteModelFiles: Send + Sync {
+    /// Delete orphan `*.gguf.partial` files left by cancel/fail.
+    fn clean_orphan_partials(&self) -> Result<(), RewriteModelFileError>;
+
+    /// Absolute path for a catalog filename under the models directory.
+    fn path_for(&self, filename: &str) -> std::path::PathBuf;
+
+    /// On-disk byte length when the final `.gguf` exists.
+    fn on_disk_len(&self, filename: &str) -> Option<u64>;
+
+    /// Size + SHA-256 verification for a completed download.
+    fn is_verified(&self, filename: &str, expected_size: u64, expected_sha256: &str) -> bool;
+
+    /// Remove a completed model file (no-op if missing).
+    fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RewriteModelFileError {
+    Unavailable,
+}
+
+/// No-op model files (tests / until wired).
+#[derive(Debug, Default)]
+pub struct EmptyRewriteModelFiles;
+
+impl RewriteModelFiles for EmptyRewriteModelFiles {
+    fn clean_orphan_partials(&self) -> Result<(), RewriteModelFileError> {
+        Ok(())
+    }
+
+    fn path_for(&self, filename: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(filename)
+    }
+
+    fn on_disk_len(&self, _filename: &str) -> Option<u64> {
+        None
+    }
+
+    fn is_verified(&self, _filename: &str, _expected_size: u64, _expected_sha256: &str) -> bool {
+        false
+    }
+
+    fn remove(&self, _filename: &str) -> Result<(), RewriteModelFileError> {
+        Ok(())
     }
 }
 

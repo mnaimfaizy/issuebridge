@@ -7,8 +7,8 @@ use std::time::{Duration, SystemTime};
 use super::{
     AppInstallSnapshot, AppSettings, Clock, CreatedIssue, Draft, DraftStore, DraftStoreError,
     GitHub, GitHubError, LabelCatalog, LabelCatalogStore, LabelCatalogStoreError, RepoId,
-    RepoLabel, SettingsStore, SettingsStoreError, StoredCredentials, TokenStore, TokenStoreError,
-    VoiceError, VoiceTranscriber,
+    RepoLabel, RewriteModelFileError, RewriteModelFiles, SettingsStore, SettingsStoreError,
+    StoredCredentials, TokenStore, TokenStoreError, VoiceError, VoiceTranscriber,
 };
 
 fn issue_key(repo: &RepoId, number: u64) -> String {
@@ -418,5 +418,66 @@ impl FakeClock {
 impl Clock for FakeClock {
     fn now(&self) -> SystemTime {
         *self.now.lock().expect("FakeClock lock")
+    }
+}
+
+/// In-memory Rewrite model files keyed by catalog filename.
+#[derive(Debug, Clone, Default)]
+pub struct FakeRewriteModelFiles {
+    /// filename → raw bytes (verified via catalog helpers in tests).
+    pub files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    pub partials: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeRewriteModelFiles {
+    pub fn put(&self, filename: &str, bytes: Vec<u8>) {
+        self.files
+            .lock()
+            .expect("FakeRewriteModelFiles lock")
+            .insert(filename.to_string(), bytes);
+    }
+}
+
+impl RewriteModelFiles for FakeRewriteModelFiles {
+    fn clean_orphan_partials(&self) -> Result<(), RewriteModelFileError> {
+        self.partials
+            .lock()
+            .map_err(|_| RewriteModelFileError::Unavailable)?
+            .clear();
+        Ok(())
+    }
+
+    fn path_for(&self, filename: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from("fake-models").join(filename)
+    }
+
+    fn on_disk_len(&self, filename: &str) -> Option<u64> {
+        self.files
+            .lock()
+            .ok()?
+            .get(filename)
+            .map(|b| b.len() as u64)
+    }
+
+    fn is_verified(&self, filename: &str, expected_size: u64, expected_sha256: &str) -> bool {
+        let Ok(guard) = self.files.lock() else {
+            return false;
+        };
+        let Some(bytes) = guard.get(filename) else {
+            return false;
+        };
+        super::super::rewrite_model_catalog::verify_model_bytes(
+            bytes,
+            expected_size,
+            expected_sha256,
+        )
+    }
+
+    fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError> {
+        self.files
+            .lock()
+            .map_err(|_| RewriteModelFileError::Unavailable)?
+            .remove(filename);
+        Ok(())
     }
 }

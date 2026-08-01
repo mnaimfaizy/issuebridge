@@ -32,7 +32,7 @@ CPU + **Vulkan** Windows build (not CUDA/HIP). Companion DLLs colocated like Whi
 pwsh ../scripts/fetch-llama-assets.ps1
 ```
 
-**GGUF models are not fetched or committed** — set `ISSUEBRIDGE_REWRITE_GGUF` (and optional `ISSUEBRIDGE_REWRITE_CLI`) for local Rewrite until download-on-demand (#69). NSIS must not bundle `.gguf` files.
+**GGUF models are not fetched or committed** — they download on demand from Inbox **Rewrite…** (app-data `models/`). Optional `ISSUEBRIDGE_REWRITE_GGUF` / `ISSUEBRIDGE_REWRITE_CLI` override for local/dev. NSIS must not bundle `.gguf` files.
 
 Release packaging maps `binaries/*.dll` to the install root so DLLs sit beside both sidecars (see #55 / #68). Fully quit Issuebridge before re-fetching if DLLs are locked.
 
