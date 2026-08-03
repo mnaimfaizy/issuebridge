@@ -265,10 +265,7 @@ impl GitHub for HttpGitHub {
         label_names: &[String],
     ) -> Result<CreatedIssue, GitHubError> {
         let op = format!("POST issues {}/{}", repo.owner, repo.name);
-        eprintln!(
-            "[issuebridge] GitHub {op} … (labels={})",
-            label_names.len()
-        );
+        eprintln!("[issuebridge] GitHub {op} … (labels={})", label_names.len());
         let url = format!(
             "https://api.github.com/repos/{}/{}/issues",
             repo.owner, repo.name
@@ -288,9 +285,7 @@ impl GitHub for HttpGitHub {
             .map_err(|err| map_request_error(&op, err))?;
 
         let response = match_github_status(&op, response, 201)?;
-        let issue: IssueResponse = response
-            .json()
-            .map_err(|err| map_json_error(&op, err))?;
+        let issue: IssueResponse = response.json().map_err(|err| map_json_error(&op, err))?;
         eprintln!("[issuebridge] GitHub {op} ok number={}", issue.number);
         Ok(issue_from_response(issue))
     }
@@ -317,9 +312,7 @@ impl GitHub for HttpGitHub {
             .map_err(|err| map_request_error(&op, err))?;
 
         let response = match_github_status(&op, response, 200)?;
-        let issue: IssueResponse = response
-            .json()
-            .map_err(|err| map_json_error(&op, err))?;
+        let issue: IssueResponse = response.json().map_err(|err| map_json_error(&op, err))?;
         Ok(issue_from_response(issue))
     }
 
@@ -333,10 +326,7 @@ impl GitHub for HttpGitHub {
         label_names: &[String],
     ) -> Result<CreatedIssue, GitHubError> {
         let op = format!("PATCH issues {}/{}/{number}", repo.owner, repo.name);
-        eprintln!(
-            "[issuebridge] GitHub {op} … (labels={})",
-            label_names.len()
-        );
+        eprintln!("[issuebridge] GitHub {op} … (labels={})", label_names.len());
         let url = format!(
             "https://api.github.com/repos/{}/{}/issues/{number}",
             repo.owner, repo.name
@@ -356,9 +346,7 @@ impl GitHub for HttpGitHub {
             .map_err(|err| map_request_error(&op, err))?;
 
         let response = match_github_status(&op, response, 200)?;
-        let issue: IssueResponse = response
-            .json()
-            .map_err(|err| map_json_error(&op, err))?;
+        let issue: IssueResponse = response.json().map_err(|err| map_json_error(&op, err))?;
         Ok(issue_from_response(issue))
     }
 
@@ -383,9 +371,7 @@ impl GitHub for HttpGitHub {
 
             let response = match_github_status(&op, response, 200)?;
             let next = next_link(response.headers().get(LINK).and_then(|v| v.to_str().ok()));
-            let page: Vec<LabelJson> = response
-                .json()
-                .map_err(|err| map_json_error(&op, err))?;
+            let page: Vec<LabelJson> = response.json().map_err(|err| map_json_error(&op, err))?;
             for label in page {
                 labels.push(RepoLabel {
                     name: label.name,
@@ -426,9 +412,7 @@ impl GitHub for HttpGitHub {
             .map_err(|err| map_request_error(&op, err))?;
 
         let response = match_github_status(&op, response, 201)?;
-        let label: LabelJson = response
-            .json()
-            .map_err(|err| map_json_error(&op, err))?;
+        let label: LabelJson = response.json().map_err(|err| map_json_error(&op, err))?;
         Ok(RepoLabel {
             name: label.name,
             color: label.color.unwrap_or_else(|| color.to_string()),
