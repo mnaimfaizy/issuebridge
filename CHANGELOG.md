@@ -2,6 +2,11 @@
 
 All notable changes to Issuebridge are documented here. Release notes are user-facing; see git history for full commit detail.
 
+## [0.2.0-rc.2] - 2026-08-03
+
+### Fixed
+- Publish: clearer GitHub failure logging and surface invalid credentials to the user
+
 ## [0.2.0-rc.1] - 2026-08-01
 
 ### Added
