@@ -25,6 +25,8 @@ pub enum PublishError {
     AlreadyLinked,
     NotFound,
     StorageUnavailable,
+    /// Stored token rejected by GitHub (401/403) — user must sign in again.
+    InvalidCredentials,
     ProviderUnavailable,
 }
 
@@ -38,6 +40,8 @@ pub enum UpdateError {
     /// Remote `updated_at` no longer matches the Remote snapshot — caller must resolve.
     Conflict,
     StorageUnavailable,
+    /// Stored token rejected by GitHub (401/403) — user must sign in again.
+    InvalidCredentials,
     ProviderUnavailable,
 }
 

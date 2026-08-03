@@ -264,6 +264,11 @@ impl GitHub for HttpGitHub {
         body: &str,
         label_names: &[String],
     ) -> Result<CreatedIssue, GitHubError> {
+        let op = format!("POST issues {}/{}", repo.owner, repo.name);
+        eprintln!(
+            "[issuebridge] GitHub {op} … (labels={})",
+            label_names.len()
+        );
         let url = format!(
             "https://api.github.com/repos/{}/{}/issues",
             repo.owner, repo.name
@@ -280,15 +285,13 @@ impl GitHub for HttpGitHub {
                 "labels": label_names,
             }))
             .send()
-            .map_err(|_| GitHubError::Unavailable)?;
+            .map_err(|err| map_request_error(&op, err))?;
 
-        match response.status().as_u16() {
-            201 => {}
-            401 | 403 => return Err(GitHubError::InvalidCredentials),
-            _ => return Err(GitHubError::Unavailable),
-        }
-
-        let issue: IssueResponse = response.json().map_err(|_| GitHubError::Unavailable)?;
+        let response = match_github_status(&op, response, 201)?;
+        let issue: IssueResponse = response
+            .json()
+            .map_err(|err| map_json_error(&op, err))?;
+        eprintln!("[issuebridge] GitHub {op} ok number={}", issue.number);
         Ok(issue_from_response(issue))
     }
 
@@ -298,6 +301,8 @@ impl GitHub for HttpGitHub {
         repo: &RepoId,
         number: u64,
     ) -> Result<CreatedIssue, GitHubError> {
+        let op = format!("GET issues {}/{}/{number}", repo.owner, repo.name);
+        eprintln!("[issuebridge] GitHub {op} …");
         let url = format!(
             "https://api.github.com/repos/{}/{}/issues/{number}",
             repo.owner, repo.name
@@ -309,15 +314,12 @@ impl GitHub for HttpGitHub {
             .header(ACCEPT, "application/vnd.github+json")
             .header("X-GitHub-Api-Version", API_VERSION)
             .send()
-            .map_err(|_| GitHubError::Unavailable)?;
+            .map_err(|err| map_request_error(&op, err))?;
 
-        match response.status().as_u16() {
-            200 => {}
-            401 | 403 => return Err(GitHubError::InvalidCredentials),
-            _ => return Err(GitHubError::Unavailable),
-        }
-
-        let issue: IssueResponse = response.json().map_err(|_| GitHubError::Unavailable)?;
+        let response = match_github_status(&op, response, 200)?;
+        let issue: IssueResponse = response
+            .json()
+            .map_err(|err| map_json_error(&op, err))?;
         Ok(issue_from_response(issue))
     }
 
@@ -330,6 +332,11 @@ impl GitHub for HttpGitHub {
         body: &str,
         label_names: &[String],
     ) -> Result<CreatedIssue, GitHubError> {
+        let op = format!("PATCH issues {}/{}/{number}", repo.owner, repo.name);
+        eprintln!(
+            "[issuebridge] GitHub {op} … (labels={})",
+            label_names.len()
+        );
         let url = format!(
             "https://api.github.com/repos/{}/{}/issues/{number}",
             repo.owner, repo.name
@@ -346,19 +353,18 @@ impl GitHub for HttpGitHub {
                 "labels": label_names,
             }))
             .send()
-            .map_err(|_| GitHubError::Unavailable)?;
+            .map_err(|err| map_request_error(&op, err))?;
 
-        match response.status().as_u16() {
-            200 => {}
-            401 | 403 => return Err(GitHubError::InvalidCredentials),
-            _ => return Err(GitHubError::Unavailable),
-        }
-
-        let issue: IssueResponse = response.json().map_err(|_| GitHubError::Unavailable)?;
+        let response = match_github_status(&op, response, 200)?;
+        let issue: IssueResponse = response
+            .json()
+            .map_err(|err| map_json_error(&op, err))?;
         Ok(issue_from_response(issue))
     }
 
     fn list_labels(&self, token: &str, repo: &RepoId) -> Result<Vec<RepoLabel>, GitHubError> {
+        let op = format!("GET labels {}/{}", repo.owner, repo.name);
+        eprintln!("[issuebridge] GitHub {op} …");
         let mut url = Some(format!(
             "https://api.github.com/repos/{}/{}/labels?per_page=100",
             repo.owner, repo.name
@@ -373,16 +379,13 @@ impl GitHub for HttpGitHub {
                 .header(ACCEPT, "application/vnd.github+json")
                 .header("X-GitHub-Api-Version", API_VERSION)
                 .send()
-                .map_err(|_| GitHubError::Unavailable)?;
+                .map_err(|err| map_request_error(&op, err))?;
 
-            match response.status().as_u16() {
-                200 => {}
-                401 | 403 => return Err(GitHubError::InvalidCredentials),
-                _ => return Err(GitHubError::Unavailable),
-            }
-
+            let response = match_github_status(&op, response, 200)?;
             let next = next_link(response.headers().get(LINK).and_then(|v| v.to_str().ok()));
-            let page: Vec<LabelJson> = response.json().map_err(|_| GitHubError::Unavailable)?;
+            let page: Vec<LabelJson> = response
+                .json()
+                .map_err(|err| map_json_error(&op, err))?;
             for label in page {
                 labels.push(RepoLabel {
                     name: label.name,
@@ -392,6 +395,7 @@ impl GitHub for HttpGitHub {
             url = next;
         }
 
+        eprintln!("[issuebridge] GitHub {op} ok count={}", labels.len());
         Ok(labels)
     }
 
@@ -402,6 +406,8 @@ impl GitHub for HttpGitHub {
         name: &str,
         color: &str,
     ) -> Result<RepoLabel, GitHubError> {
+        let op = format!("POST labels {}/{}", repo.owner, repo.name);
+        eprintln!("[issuebridge] GitHub {op} name={name:?} …");
         let url = format!(
             "https://api.github.com/repos/{}/{}/labels",
             repo.owner, repo.name
@@ -417,19 +423,47 @@ impl GitHub for HttpGitHub {
                 "color": color,
             }))
             .send()
-            .map_err(|_| GitHubError::Unavailable)?;
+            .map_err(|err| map_request_error(&op, err))?;
 
-        match response.status().as_u16() {
-            201 => {}
-            401 | 403 => return Err(GitHubError::InvalidCredentials),
-            _ => return Err(GitHubError::Unavailable),
-        }
-
-        let label: LabelJson = response.json().map_err(|_| GitHubError::Unavailable)?;
+        let response = match_github_status(&op, response, 201)?;
+        let label: LabelJson = response
+            .json()
+            .map_err(|err| map_json_error(&op, err))?;
         Ok(RepoLabel {
             name: label.name,
             color: label.color.unwrap_or_else(|| color.to_string()),
         })
+    }
+}
+
+fn map_request_error(op: &str, err: reqwest::Error) -> GitHubError {
+    eprintln!("[issuebridge] GitHub {op} request failed: {err}");
+    GitHubError::Unavailable
+}
+
+fn map_json_error(op: &str, err: reqwest::Error) -> GitHubError {
+    eprintln!("[issuebridge] GitHub {op} JSON parse failed: {err}");
+    GitHubError::Unavailable
+}
+
+fn match_github_status(
+    op: &str,
+    response: reqwest::blocking::Response,
+    ok_status: u16,
+) -> Result<reqwest::blocking::Response, GitHubError> {
+    let status = response.status().as_u16();
+    eprintln!("[issuebridge] GitHub {op} status={status}");
+    if status == ok_status {
+        return Ok(response);
+    }
+    let body = response.text().unwrap_or_default();
+    eprintln!(
+        "[issuebridge] GitHub {op} error status={status} body={}",
+        truncate_for_log(&body)
+    );
+    match status {
+        401 | 403 => Err(GitHubError::InvalidCredentials),
+        _ => Err(GitHubError::Unavailable),
     }
 }
 
