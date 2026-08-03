@@ -662,11 +662,7 @@ where
 
         let label_names = self
             .ensure_remote_labels(&credentials.access_token, &draft.repo, &draft.label_names)
-            .map_err(|err| match err {
-                GitHubError::InvalidCredentials | GitHubError::Unavailable => {
-                    PublishError::ProviderUnavailable
-                }
-            })?;
+            .map_err(map_publish_github_error)?;
 
         let created = self
             .github
@@ -677,11 +673,7 @@ where
                 &draft.body,
                 &label_names,
             )
-            .map_err(|err| match err {
-                GitHubError::InvalidCredentials | GitHubError::Unavailable => {
-                    PublishError::ProviderUnavailable
-                }
-            })?;
+            .map_err(map_publish_github_error)?;
 
         // Align working fields with what GitHub accepted so Dirty stays clear after Publish.
         draft.title = created.title.clone();
@@ -1304,11 +1296,17 @@ fn map_github_error(err: GitHubError) -> AuthError {
     }
 }
 
+fn map_publish_github_error(err: GitHubError) -> PublishError {
+    match err {
+        GitHubError::InvalidCredentials => PublishError::InvalidCredentials,
+        GitHubError::Unavailable => PublishError::ProviderUnavailable,
+    }
+}
+
 fn map_update_github_error(err: GitHubError) -> UpdateError {
     match err {
-        GitHubError::InvalidCredentials | GitHubError::Unavailable => {
-            UpdateError::ProviderUnavailable
-        }
+        GitHubError::InvalidCredentials => UpdateError::InvalidCredentials,
+        GitHubError::Unavailable => UpdateError::ProviderUnavailable,
     }
 }
 
@@ -2166,6 +2164,32 @@ mod tests {
         let loaded = core.get_draft(&saved.id).expect("get");
         assert!(loaded.local_link.is_none());
         assert!(loaded.remote_snapshot.is_none());
+    }
+
+    #[test]
+    fn publish_with_invalid_credentials_maps_to_invalid_credentials() {
+        let mut core = signed_in_core(
+            FakeGitHub {
+                create_issue_result: Some(Err(GitHubError::InvalidCredentials)),
+                ..FakeGitHub::default()
+            },
+            ready_settings(),
+        );
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "Broken button".into(),
+                body: "Clicking Save does nothing.".into(),
+            })
+            .expect("capture");
+
+        let err = core
+            .publish_draft(&saved.id)
+            .expect_err("Publish with bad credentials must fail");
+        assert_eq!(err, PublishError::InvalidCredentials);
+
+        let loaded = core.get_draft(&saved.id).expect("get");
+        assert!(loaded.local_link.is_none());
     }
 
     #[test]

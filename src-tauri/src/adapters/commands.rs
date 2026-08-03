@@ -580,7 +580,10 @@ pub fn publish_draft(
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    let draft = core.publish_draft(&id).map_err(publish_error_message)?;
+    let draft = core.publish_draft(&id).map_err(|err| {
+        eprintln!("[issuebridge] publish_draft failed: {err:?}");
+        publish_error_message(err)
+    })?;
     drop(core);
     let _ = app.emit("inbox-changed", ());
     Ok(draft_to_dto(draft))
@@ -624,7 +627,10 @@ pub fn update_linked_draft(
                 issue_number: draft.local_link.as_ref().map(|l| l.number),
             })
         }
-        Err(err) => Err(update_error_message(err)),
+        Err(err) => {
+            eprintln!("[issuebridge] update_linked_draft failed: {err:?}");
+            Err(update_error_message(err))
+        }
     }
 }
 
@@ -1156,7 +1162,13 @@ fn publish_error_message(err: PublishError) -> String {
         }
         PublishError::NotFound => "That Draft was not found.".into(),
         PublishError::StorageUnavailable => "Could not save Draft after Publish.".into(),
-        PublishError::ProviderUnavailable => "Could not create the GitHub issue. Try again.".into(),
+        PublishError::InvalidCredentials => {
+            "GitHub rejected your sign-in. Sign out, then Sign in with GitHub again.".into()
+        }
+        PublishError::ProviderUnavailable => {
+            "Could not create the GitHub issue. Check the terminal [issuebridge] logs and try again."
+                .into()
+        }
     }
 }
 
@@ -1168,7 +1180,13 @@ fn update_error_message(err: UpdateError) -> String {
         UpdateError::TitleRequired => "Add a title before Update.".into(),
         UpdateError::Conflict => "This issue changed on GitHub since you last updated it.".into(),
         UpdateError::StorageUnavailable => "Could not save Draft after update.".into(),
-        UpdateError::ProviderUnavailable => "Could not update the GitHub issue. Try again.".into(),
+        UpdateError::InvalidCredentials => {
+            "GitHub rejected your sign-in. Sign out, then Sign in with GitHub again.".into()
+        }
+        UpdateError::ProviderUnavailable => {
+            "Could not update the GitHub issue. Check the terminal [issuebridge] logs and try again."
+                .into()
+        }
     }
 }
 
