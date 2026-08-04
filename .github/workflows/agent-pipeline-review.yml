@@ -62,11 +62,24 @@ jobs:
         run: |
           set -euo pipefail
 
+          # grep -c prints 0 but exits 1 on no match; never pair with `|| echo 0` (doubles the value).
+          count_matches() {
+            local n
+            n=$(grep -c -- "$1" <<<"$2" || true)
+            printf '%s' "${n:-0}"
+          }
+          as_int() {
+            local v
+            v=$(printf '%s' "${1:-0}" | tr -d '[:space:]')
+            [[ "$v" =~ ^[0-9]+$ ]] || v=0
+            printf '%s' "$v"
+          }
+
           PR=""
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             PR="$PR_FROM_INPUT"
           elif [ "$EVENT_NAME" = "workflow_run" ]; then
-            PR=$(echo "$WR_PRS_JSON" | jq -r '.[0].number // empty')
+            PR=$(jq -r '.[0].number // empty' <<<"${WR_PRS_JSON:-[]}")
             if [ -z "$PR" ] && [ -n "${WR_HEAD_SHA:-}" ]; then
               PR=$(gh api "repos/$OWNER/$REPO/commits/$WR_HEAD_SHA/pulls" \
                 -H "Accept: application/vnd.github.groot-preview+json" \
@@ -84,15 +97,15 @@ jobs:
           echo "pr=$PR" >> "$GITHUB_OUTPUT"
 
           META=$(gh pr view "$PR" --repo "$OWNER/$REPO" --json number,author,headRefName,headRefOid,isDraft,state,body,reviews,comments,closingIssuesReferences,reviewRequests,assignees)
-          STATE=$(echo "$META" | jq -r .state)
+          STATE=$(jq -r '.state' <<<"$META")
           if [ "$STATE" != "OPEN" ]; then
             echo "action=skip" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          AUTHOR=$(echo "$META" | jq -r .author.login)
-          HEAD_REF=$(echo "$META" | jq -r .headRefName)
-          HEAD_SHA=$(echo "$META" | jq -r .headRefOid)
+          AUTHOR=$(jq -r '.author.login' <<<"$META")
+          HEAD_REF=$(jq -r '.headRefName' <<<"$META")
+          HEAD_SHA=$(jq -r '.headRefOid' <<<"$META")
           echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
           # Pipeline PRs: Copilot agent + linked issue with plan marker (or existing loop markers).
@@ -105,19 +118,19 @@ jobs:
           fi
 
           HAS_PLAN=false
-          ISSUE_NUMS=$(echo "$META" | jq -r '.closingIssuesReferences[].number // empty')
-          # Also scrape "#N" from body / title for Issues that use "Fixes #N"
-          BODY_ISSUES=$(echo "$META" | jq -r .body // empty | grep -oE '#[0-9]+' | tr -d '#' || true)
+          ISSUE_NUMS=$(jq -r '.closingIssuesReferences[]?.number // empty' <<<"$META")
+          # Also scrape "#N" from body for Issues that use "Fixes #N"
+          BODY_ISSUES=$(jq -r '.body // ""' <<<"$META" | grep -oE '#[0-9]+' | tr -d '#' || true)
           ALL_ISSUES=$(printf '%s\n%s\n' "$ISSUE_NUMS" "$BODY_ISSUES" | awk 'NF' | sort -u)
           for ISS in $ALL_ISSUES; do
             COMMENTS=$(gh api "repos/$OWNER/$REPO/issues/$ISS/comments" --paginate)
-            if echo "$COMMENTS" | jq -e '[.[] | select(.body | contains("<!-- agent-pipeline-plan -->"))] | length > 0' >/dev/null; then
+            if jq -e '[.[] | select(.body | contains("<!-- agent-pipeline-plan -->"))] | length > 0' <<<"$COMMENTS" >/dev/null; then
               HAS_PLAN=true
               break
             fi
           done
 
-          COMMENT_BODIES=$(echo "$META" | jq -r '.comments[].body // empty')
+          COMMENT_BODIES=$(jq -r '.comments[]?.body // empty' <<<"$META")
           if echo "$COMMENT_BODIES" | grep -q '<!-- agent-pipeline-'; then
             HAS_PLAN=true
           fi
@@ -134,28 +147,28 @@ jobs:
             exit 0
           fi
 
-          FIX_ROUNDS=$(echo "$COMMENT_BODIES" | grep -c '<!-- agent-pipeline-fix-round:' || echo 0)
+          FIX_ROUNDS=$(as_int "$(count_matches '<!-- agent-pipeline-fix-round:' "$COMMENT_BODIES")")
           echo "fix_rounds=$FIX_ROUNDS" >> "$GITHUB_OUTPUT"
 
           MAINTAINER=$(echo "${ALLOWLIST:-}" | awk -F',' '{print $1}' | xargs)
           echo "maintainer=$MAINTAINER" >> "$GITHUB_OUTPUT"
 
           # CI status for head SHA
-          CI_STATE=$(gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/status" --jq .state // empty || true)
+          CI_STATE=$(gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/status" --jq '.state // empty' || true)
           # Prefer check-runs named frontend/rust/ci when present
           CHECKS=$(gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/check-runs" --paginate \
             --jq '[.check_runs[] | select(.name=="frontend" or .name=="rust" or .name=="ci") | {name, conclusion, status}]' || echo '[]')
-          FRONTEND=$(echo "$CHECKS" | jq -r '[.[] | select(.name=="frontend") | .conclusion] | last // empty')
-          RUST=$(echo "$CHECKS" | jq -r '[.[] | select(.name=="rust") | .conclusion] | last // empty')
-          CI_JOB=$(echo "$CHECKS" | jq -r '[.[] | select(.name=="ci") | .conclusion] | last // empty')
-          CHECKS_PENDING=$(echo "$CHECKS" | jq '[.[] | select(.status != "completed")] | length')
+          FRONTEND=$(jq -r '[.[] | select(.name=="frontend") | .conclusion] | last // empty' <<<"$CHECKS")
+          RUST=$(jq -r '[.[] | select(.name=="rust") | .conclusion] | last // empty' <<<"$CHECKS")
+          CI_JOB=$(jq -r '[.[] | select(.name=="ci") | .conclusion] | last // empty' <<<"$CHECKS")
+          CHECKS_PENDING=$(as_int "$(jq '[.[] | select(.status != "completed")] | length' <<<"$CHECKS")")
 
           CI_FAILED=false
           CI_GREEN=false
           if [ "$FRONTEND" = "failure" ] || [ "$RUST" = "failure" ] || [ "$CI_JOB" = "failure" ] || [ "$CI_STATE" = "failure" ]; then
             CI_FAILED=true
           fi
-          if [ "$CHECKS_PENDING" = "0" ] && { [ "$CI_JOB" = "success" ] || { [ "$FRONTEND" = "success" ] && [ "$RUST" = "success" ]; }; }; then
+          if [ "$CHECKS_PENDING" -eq 0 ] && { [ "$CI_JOB" = "success" ] || { [ "$FRONTEND" = "success" ] && [ "$RUST" = "success" ]; }; }; then
             CI_GREEN=true
           fi
           if [ "$EVENT_NAME" = "workflow_run" ] && [ "${WR_CONCLUSION:-}" = "failure" ]; then
@@ -169,13 +182,14 @@ jobs:
 
           # Copilot review findings (inline comments still open / recent COMMENTED review)
           REVIEW_FINDINGS=false
-          COPILOT_REVIEW_COUNT=$(echo "$META" | jq '
-            [.reviews[] | select(.author.login=="copilot-pull-request-reviewer" or .author.login=="copilot-pull-request-reviewer[bot]" or .author.login=="copilot[bot]")] | length')
-          INLINE=$(gh api "repos/$OWNER/$REPO/pulls/$PR/comments" --paginate \
-            --jq '[.[] | select(.user.login=="copilot-pull-request-reviewer[bot]" or .user.login=="copilot[bot]")] | length' || echo 0)
-          if [ "${INLINE:-0}" -gt 0 ]; then
+          COPILOT_REVIEW_COUNT=$(as_int "$(jq '
+            [.reviews[]? | select(.author.login=="copilot-pull-request-reviewer" or .author.login=="copilot-pull-request-reviewer[bot]" or .author.login=="copilot[bot]")] | length
+          ' <<<"$META")")
+          INLINE=$(as_int "$(gh api "repos/$OWNER/$REPO/pulls/$PR/comments" --paginate \
+            --jq '[.[] | select(.user.login=="copilot-pull-request-reviewer[bot]" or .user.login=="copilot[bot]")] | length' || true)")
+          if [ "$INLINE" -gt 0 ]; then
             # Unresolved conversations preferred; fall back to any inline from Copilot if API lacks resolved flag
-            UNRESOLVED=$(gh api graphql -f query="
+            UNRESOLVED=$(as_int "$(gh api graphql -f query="
               query(\$o:String!,\$n:String!,\$p:Int!) {
                 repository(owner:\$o,name:\$n) {
                   pullRequest(number:\$p) {
@@ -187,14 +201,14 @@ jobs:
               }" -f o="$OWNER" -f n="$REPO" -F p="$PR" \
               --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
                 | select(.isResolved==false)
-                | select(.comments.nodes[0].author.login=="copilot-pull-request-reviewer" or .comments.nodes[0].author.login=="copilot")] | length' || echo 0)
-            if [ "${UNRESOLVED:-0}" -gt 0 ] || [ "$EVENT_NAME" = "pull_request_review" ]; then
+                | select(.comments.nodes[0].author.login=="copilot-pull-request-reviewer" or .comments.nodes[0].author.login=="copilot")] | length' || true)")
+            if [ "$UNRESOLVED" -gt 0 ] || [ "$EVENT_NAME" = "pull_request_review" ]; then
               REVIEW_FINDINGS=true
             fi
           fi
 
-          REVIEW_REQUESTED=$(echo "$COMMENT_BODIES" | grep -c '<!-- agent-pipeline-review-requested -->' || echo 0)
-          HAS_REVIEW_REQ=$(echo "$META" | jq '[.reviewRequests[].login // empty | select(test("copilot";"i"))] | length')
+          REVIEW_REQUESTED=$(as_int "$(count_matches '<!-- agent-pipeline-review-requested -->' "$COMMENT_BODIES")")
+          HAS_REVIEW_REQ=$(as_int "$(jq '[.reviewRequests[]?.login // empty | select(test("copilot";"i"))] | length' <<<"$META")")
 
           # Already asked for a fix on this exact SHA? Avoid double-fire on synchronize.
           ALREADY_FIX_THIS_SHA=false
@@ -204,7 +218,7 @@ jobs:
 
           ACTION=skip
           NEED_FIRST_REVIEW=false
-          if [ "$REVIEW_REQUESTED" -eq 0 ] && [ "${HAS_REVIEW_REQ:-0}" -eq 0 ] && [ "${COPILOT_REVIEW_COUNT:-0}" -eq 0 ]; then
+          if [ "$REVIEW_REQUESTED" -eq 0 ] && [ "$HAS_REVIEW_REQ" -eq 0 ] && [ "$COPILOT_REVIEW_COUNT" -eq 0 ]; then
             NEED_FIRST_REVIEW=true
           fi
 
@@ -217,17 +231,17 @@ jobs:
             ACTION=fix_ci
           elif [ "$REVIEW_FINDINGS" = "true" ] && [ "$ALREADY_FIX_THIS_SHA" != "true" ] && [ "$FIX_ROUNDS" -lt 2 ]; then
             ACTION=fix_review
-          elif [ "$CI_GREEN" = "true" ] && [ "$REVIEW_FINDINGS" != "true" ] && [ "${COPILOT_REVIEW_COUNT:-0}" -gt 0 ]; then
+          elif [ "$CI_GREEN" = "true" ] && [ "$REVIEW_FINDINGS" != "true" ] && [ "$COPILOT_REVIEW_COUNT" -gt 0 ]; then
             ACTION=handoff_ready
           elif [ "$EVENT_NAME" = "workflow_run" ] && [ "$CI_GREEN" = "true" ] && [ "$REVIEW_FINDINGS" != "true" ] \
-            && [ "$REVIEW_REQUESTED" -gt 0 ] && [ "${COPILOT_REVIEW_COUNT:-0}" -gt 0 ] \
+            && [ "$REVIEW_REQUESTED" -gt 0 ] && [ "$COPILOT_REVIEW_COUNT" -gt 0 ] \
             && [ "$ALREADY_FIX_THIS_SHA" != "true" ] && [ "$FIX_ROUNDS" -gt 0 ]; then
             # After a fix round made CI green: ask Copilot to re-review once
             ACTION=rerequest_review
           fi
 
           # On synchronize: wait for CI unless we still need the first review request
-          if [ "$EVENT_NAME" = "pull_request" ] && [ "${CHECKS_PENDING:-0}" -gt 0 ] && [ "$ACTION" != "request_review" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$CHECKS_PENDING" -gt 0 ] && [ "$ACTION" != "request_review" ]; then
             ACTION=skip
           fi
 
