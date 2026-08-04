@@ -105,10 +105,15 @@ Mocked-only orchestration does **not** count. Prototype invoke is **label-only**
 
 ### 4.4 Reviewer loop (orchestrator policy)
 
-1. Request review from `copilot-pull-request-reviewer[bot]`.
-2. On findings: orchestrator may `@copilot` on the PR for a fix round (write-gated by platform).
-3. **Hard cap: 2** rounds → bot comment “stuck after 2 rounds”, assign PR to maintainer, stop auto-loops.
-4. When CI green (or cap): assign PR to maintainer for final approval.
+Implemented by `.github/workflows/agent-pipeline-review.yml` (triggers: PR open/sync, Copilot review submitted, CI `workflow_run` completed, plus manual `workflow_dispatch`).
+
+1. Detect pipeline PRs: Copilot author / `copilot/*` head **and** a linked issue (or prior loop comment) with `<!-- agent-pipeline-plan -->`.
+2. Request review from `copilot-pull-request-reviewer[bot]` (GraphQL `requestReviews` + `botIds`, REST fallback). Marker: `<!-- agent-pipeline-review-requested -->`.
+3. On **CI failure** or **open Copilot review threads**: post `@copilot` fix comment (`<!-- agent-pipeline-fix-round:N sha:… -->`), optionally re-assign `copilot-swe-agent[bot]`.
+4. **Hard cap: 2** fix rounds → `<!-- agent-pipeline-handoff -->`, assign PR to first login on `AGENT_PIPELINE_ALLOWLIST`, stop auto-loops.
+5. When CI green and no open Copilot threads (after at least one review): same handoff marker + maintainer assign for final human approval.
+
+State is PR-comment markers (no extra DB). Kill-switch `AGENT_PIPELINE_ENABLED` still applies.
 
 ### 4.5 Failure UX
 
@@ -156,8 +161,10 @@ Mocked-only orchestration does **not** count. Prototype invoke is **label-only**
 2. Vars: `AGENT_PIPELINE_ENABLED=true`, `AGENT_PIPELINE_ALLOWLIST=mnaimfaizy` (adjust).
 3. Secret: fine-grained PAT → `COPILOT_GITHUB_TOKEN` (Copilot Requests + repo issues/contents/PRs as needed).
 4. Workflow: `.github/workflows/agent-pipeline.yml` on default branch (`issues: [labeled]`, concurrency `agent-pipeline`).
-5. Prompts under `.github/agent-pipeline/`.
-6. Dry-run kill-switch / allowlist miss; then one tiny real E2E issue.
+5. Review loop: `.github/workflows/agent-pipeline-review.yml` on default branch.
+6. Copilot env: `.github/workflows/copilot-setup-steps.yml` on default branch (Node 22 + `npm ci`, Rust toolchain, Tauri Linux deps, `cargo fetch`) so cloud agent / code review can build before the firewall session.
+7. Prompts under `.github/agent-pipeline/`.
+8. Dry-run kill-switch / allowlist miss; then one tiny real E2E issue.
 
 ---
 

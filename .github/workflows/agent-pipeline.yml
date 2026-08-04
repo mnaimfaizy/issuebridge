@@ -1,6 +1,7 @@
 # PROTOTYPE — agent pipeline orchestrator (Issuebridge pilot)
 # Spec: docs/agent-pipeline-pilot.md (map #80 / prototype #88)
 # Throwaway-quality vertical slice: gates + Copilot CLI plan + Copilot cloud-agent implement.
+# Review loop (≤2 fix rounds + maintainer handoff): agent-pipeline-review.yml
 
 name: Agent pipeline
 
@@ -200,4 +201,4 @@ jobs:
           fi
 
           gh issue comment "$ISSUE" --repo "$OWNER/$REPO" \
-            --body "Implementer started: assigned \`copilot-swe-agent[bot]\` with plan handoff. After the PR exists, request Copilot review and keep ≤2 auto fix rounds (orchestrator policy — manual for this prototype slice if needed)."
+            --body "Implementer started: assigned \`copilot-swe-agent[bot]\` with plan handoff. When the PR opens, \`Agent pipeline review\` will request Copilot code review, run ≤2 \`@copilot\` fix rounds (CI / review findings), then assign the maintainer."
