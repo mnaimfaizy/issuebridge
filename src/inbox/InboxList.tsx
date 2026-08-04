@@ -1,6 +1,9 @@
 import { Badge, Button, Text } from "@fluentui/react-components";
 import type { KeyboardEvent, RefObject } from "react";
-import { formatTimestamp, type TimestampDisplay } from "../shared/formatTimestamp";
+import {
+  formatTimestamp,
+  type TimestampDisplay,
+} from "../shared/formatTimestamp";
 import type { InboxItemDto } from "./types";
 
 type InboxListProps = {

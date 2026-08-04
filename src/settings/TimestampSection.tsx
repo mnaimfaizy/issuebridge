@@ -1,4 +1,10 @@
-import { Caption1, Label, Radio, RadioGroup, Subtitle2 } from "@fluentui/react-components";
+import {
+  Caption1,
+  Label,
+  Radio,
+  RadioGroup,
+  Subtitle2,
+} from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import type { TimestampDisplay } from "../shared/formatTimestamp";

@@ -9,7 +9,10 @@ import {
   Textarea,
 } from "@fluentui/react-components";
 import type { RefObject } from "react";
-import { formatTimestamp, type TimestampDisplay } from "../shared/formatTimestamp";
+import {
+  formatTimestamp,
+  type TimestampDisplay,
+} from "../shared/formatTimestamp";
 import type { DraftDto, RepoLabelDto } from "./types";
 import { assignedLabelSet, parseLabelNames } from "./types";
 
