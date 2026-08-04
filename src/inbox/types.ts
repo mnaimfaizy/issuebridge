@@ -5,6 +5,7 @@ export type InboxItemDto = {
   name: string;
   linked: boolean;
   dirty: boolean;
+  created_at_millis: number;
 };
 
 export type DraftDto = {
@@ -18,6 +19,7 @@ export type DraftDto = {
   dirty: boolean;
   issue_number: number | null;
   html_url: string | null;
+  created_at_millis: number;
 };
 
 export type RepoLabelDto = {

@@ -1,5 +1,6 @@
 import { Badge, Button, Text } from "@fluentui/react-components";
 import type { KeyboardEvent, RefObject } from "react";
+import { formatTimestamp, type TimestampDisplay } from "../shared/formatTimestamp";
 import type { InboxItemDto } from "./types";
 
 type InboxListProps = {
@@ -7,6 +8,7 @@ type InboxListProps = {
   selectedId: string | null;
   busy: boolean;
   listRef: RefObject<HTMLDivElement | null>;
+  timestampDisplay: TimestampDisplay;
   onSelect: (id: string) => void;
   onCapture: () => void;
   onListKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
@@ -17,6 +19,7 @@ export function InboxList({
   selectedId,
   busy,
   listRef,
+  timestampDisplay,
   onSelect,
   onCapture,
   onListKeyDown,
@@ -67,6 +70,9 @@ export function InboxList({
             <div className="ib-inbox-row-meta">
               <span>
                 {item.owner}/{item.name}
+              </span>
+              <span className="ib-inbox-row-timestamp">
+                {formatTimestamp(item.created_at_millis, timestampDisplay)}
               </span>
               <span className="ib-inbox-badges">
                 <Badge

@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { TimestampDisplay } from "../shared/formatTimestamp";
 import { ConflictDialog } from "./ConflictDialog";
 import { DraftInspector } from "./DraftInspector";
 import { InboxList } from "./InboxList";
@@ -66,6 +67,8 @@ export function InboxWorkbench() {
   const [conflictOpen, setConflictOpen] = useState(false);
   const [conflictUrl, setConflictUrl] = useState<string | null>(null);
   const [rewriteOpen, setRewriteOpen] = useState(false);
+  const [timestampDisplay, setTimestampDisplay] =
+    useState<TimestampDisplay>("local");
 
   const listRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLElement>(null);
@@ -199,6 +202,22 @@ export function InboxWorkbench() {
     const onChange = () => setNarrow(media.matches);
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<string>("get_timestamp_display")
+      .then((value) => {
+        if (!cancelled) {
+          setTimestampDisplay(value === "utc" ? "utc" : "local");
+        }
+      })
+      .catch(() => {
+        // Soft: keep default "local" on error.
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -522,6 +541,7 @@ export function InboxWorkbench() {
               selectedId={selectedId}
               busy={busy}
               listRef={listRef}
+              timestampDisplay={timestampDisplay}
               onSelect={(id) => void openDraft(id)}
               onCapture={() => void runCapture()}
               onListKeyDown={onListKeyDown}
@@ -540,6 +560,7 @@ export function InboxWorkbench() {
             suggestionFilter={suggestionFilter}
             busy={busy}
             narrowStacked={narrow}
+            timestampDisplay={timestampDisplay}
             editorRef={editorRef}
             updateButtonRef={updateButtonRef}
             onTitleChange={(value) => {

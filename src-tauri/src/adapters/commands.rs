@@ -3,7 +3,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -21,7 +21,7 @@ use crate::adapters::whisper_voice::write_temp_wav;
 use crate::core::{
     find_rewrite_model, AuthError, AuthState, CaptureError, CaptureInput, EditDraftInput,
     FirstRunStep, InboxError, InstallContinueOutcome, InstallError, LabelCatalogError,
-    PublishError, RepoId, RewriteError, TestingSetError, UpdateError, VoiceError,
+    PublishError, RepoId, RewriteError, TestingSetError, TimestampDisplay, UpdateError, VoiceError,
 };
 
 /// Cancel flag for in-flight Rewrite model downloads (lock-free vs core mutex).
@@ -168,6 +168,7 @@ pub struct InboxItemDto {
     pub name: String,
     pub linked: bool,
     pub dirty: bool,
+    pub created_at_millis: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -182,6 +183,7 @@ pub struct DraftDto {
     pub dirty: bool,
     pub issue_number: Option<u64>,
     pub html_url: Option<String>,
+    pub created_at_millis: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -479,6 +481,7 @@ pub fn list_inbox(state: State<'_, AppState>) -> Result<Vec<InboxItemDto>, Strin
                     name: item.repo.name,
                     linked: item.linked,
                     dirty: item.dirty,
+                    created_at_millis: system_time_millis(item.created_at),
                 })
                 .collect()
         })
@@ -754,6 +757,33 @@ pub fn ptt_hotkey(state: State<'_, AppState>) -> Result<String, String> {
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
     Ok(core.ptt_hotkey())
+}
+
+#[tauri::command]
+pub fn get_timestamp_display(state: State<'_, AppState>) -> Result<String, String> {
+    let core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    let value = match core.timestamp_display() {
+        TimestampDisplay::Local => "local",
+        TimestampDisplay::Utc => "utc",
+    };
+    Ok(value.to_string())
+}
+
+#[tauri::command]
+pub fn save_timestamp_display(state: State<'_, AppState>, value: String) -> Result<(), String> {
+    let mut core = state
+        .core
+        .lock()
+        .map_err(|_| "core lock poisoned".to_string())?;
+    let display = match value.as_str() {
+        "utc" => TimestampDisplay::Utc,
+        _ => TimestampDisplay::Local,
+    };
+    core.save_timestamp_display(display)
+        .map_err(|_| "Could not save timestamp display preference.".to_string())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1135,7 +1165,14 @@ fn draft_to_dto(draft: crate::core::Draft) -> DraftDto {
         dirty,
         issue_number: draft.local_link.as_ref().map(|l| l.number),
         html_url: draft.local_link.map(|l| l.html_url),
+        created_at_millis: system_time_millis(draft.created_at),
     }
+}
+
+fn system_time_millis(time: SystemTime) -> u64 {
+    time.duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn inbox_error_message(err: InboxError) -> String {
