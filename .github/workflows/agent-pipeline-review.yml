@@ -1,6 +1,12 @@
 # PROTOTYPE — agent pipeline review loop (Issuebridge pilot)
 # Spec: docs/agent-pipeline-pilot.md §4.4
 # Flow: request Copilot review → on CI fail / review findings @copilot fix (≤2) → assign maintainer
+#
+# Important:
+# - @copilot mentions must be posted with COPILOT_GITHUB_TOKEN (user PAT). Comments from
+#   github-actions[bot] are ignored by Copilot cloud agent (no 👀 reaction).
+# - Do not fire a fix round in the same run as the first review request; wait for the
+#   reviewer (or a later CI signal) so Implementer follows Reviewer.
 
 name: Agent pipeline review
 
@@ -9,8 +15,10 @@ on:
     types: [opened, reopened, ready_for_review, synchronize]
   pull_request_review:
     types: [submitted]
+  # Copilot code review runs as a dynamic Actions workflow; its completion is a reliable
+  # signal that findings may be ready (pull_request_review from the bot is flaky/absent).
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["CI", "Running Copilot Code Review"]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -32,29 +40,20 @@ permissions:
 
 jobs:
   review-loop:
-    if: >-
-      vars.AGENT_PIPELINE_ENABLED == 'true' &&
-      (
-        github.event_name == 'workflow_dispatch' ||
-        github.event_name == 'workflow_run' ||
-        github.event_name == 'pull_request' ||
-        (github.event_name == 'pull_request_review' &&
-          (github.event.review.user.login == 'copilot-pull-request-reviewer[bot]' ||
-           github.event.review.user.login == 'copilot[bot]'))
-      )
+    if: vars.AGENT_PIPELINE_ENABLED == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Resolve PR + decide action
         id: decide
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           ALLOWLIST: ${{ vars.AGENT_PIPELINE_ALLOWLIST }}
           EVENT_NAME: ${{ github.event_name }}
           PR_FROM_EVENT: ${{ github.event.pull_request.number }}
           PR_FROM_INPUT: ${{ inputs.pr_number }}
           WR_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           WR_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          WR_NAME: ${{ github.event.workflow_run.name }}
           WR_PRS_JSON: ${{ toJson(github.event.workflow_run.pull_requests) }}
           REVIEW_LOGIN: ${{ github.event.review.user.login }}
           OWNER: ${{ github.repository_owner }}
@@ -62,7 +61,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # grep -c prints 0 but exits 1 on no match; never pair with `|| echo 0` (doubles the value).
+          # grep -c prints 0 but exits 1 on no match; never pair with `|| echo 0`.
           count_matches() {
             local n
             n=$(grep -c -- "$1" <<<"$2" || true)
@@ -73,6 +72,9 @@ jobs:
             v=$(printf '%s' "${1:-0}" | tr -d '[:space:]')
             [[ "$v" =~ ^[0-9]+$ ]] || v=0
             printf '%s' "$v"
+          }
+          is_copilot_login() {
+            echo "$1" | grep -qiE '^(copilot|copilot-pull-request-reviewer|copilot-swe-agent)(\[bot\])?$'
           }
 
           PR=""
@@ -85,6 +87,13 @@ jobs:
                 -H "Accept: application/vnd.github.groot-preview+json" \
                 --jq '.[0].number // empty' || true)
             fi
+          elif [ "$EVENT_NAME" = "pull_request_review" ]; then
+            # Only act on Copilot (or any) reviews for pipeline PRs — filter login loosely.
+            if [ -n "${REVIEW_LOGIN:-}" ] && ! is_copilot_login "$REVIEW_LOGIN" && [ "$REVIEW_LOGIN" != "mnaimfaizy" ]; then
+              # Still allow non-Copilot reviews to no-op after resolve; don't exit before PR set
+              :
+            fi
+            PR="$PR_FROM_EVENT"
           else
             PR="$PR_FROM_EVENT"
           fi
@@ -108,18 +117,12 @@ jobs:
           HEAD_SHA=$(jq -r '.headRefOid' <<<"$META")
           echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
-          # Pipeline PRs: Copilot agent + linked issue with plan marker (or existing loop markers).
           PIPELINE=false
-          if echo "$AUTHOR" | grep -qi 'copilot'; then
-            PIPELINE=true
-          fi
-          if echo "$HEAD_REF" | grep -q '^copilot/'; then
-            PIPELINE=true
-          fi
+          if echo "$AUTHOR" | grep -qi 'copilot'; then PIPELINE=true; fi
+          if echo "$HEAD_REF" | grep -q '^copilot/'; then PIPELINE=true; fi
 
           HAS_PLAN=false
           ISSUE_NUMS=$(jq -r '.closingIssuesReferences[]?.number // empty' <<<"$META")
-          # Also scrape "#N" from body for Issues that use "Fixes #N"
           BODY_ISSUES=$(jq -r '.body // ""' <<<"$META" | grep -oE '#[0-9]+' | tr -d '#' || true)
           ALL_ISSUES=$(printf '%s\n%s\n' "$ISSUE_NUMS" "$BODY_ISSUES" | awk 'NF' | sort -u)
           for ISS in $ALL_ISSUES; do
@@ -147,15 +150,20 @@ jobs:
             exit 0
           fi
 
-          FIX_ROUNDS=$(as_int "$(count_matches '<!-- agent-pipeline-fix-round:' "$COMMENT_BODIES")")
+          # Only PAT-posted rounds (invoked:user) count toward the budget. Legacy
+          # github-actions @copilot comments are ignored by Copilot and must not burn rounds.
+          USER_FIX_ROUNDS=$(as_int "$(count_matches 'invoked:user -->' "$COMMENT_BODIES")")
+          if [ "$USER_FIX_ROUNDS" -gt 0 ]; then
+            FIX_ROUNDS="$USER_FIX_ROUNDS"
+          else
+            FIX_ROUNDS=0
+          fi
           echo "fix_rounds=$FIX_ROUNDS" >> "$GITHUB_OUTPUT"
 
           MAINTAINER=$(echo "${ALLOWLIST:-}" | awk -F',' '{print $1}' | xargs)
           echo "maintainer=$MAINTAINER" >> "$GITHUB_OUTPUT"
 
-          # CI status for head SHA
           CI_STATE=$(gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/status" --jq '.state // empty' || true)
-          # Prefer check-runs named frontend/rust/ci when present
           CHECKS=$(gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/check-runs" --paginate \
             --jq '[.check_runs[] | select(.name=="frontend" or .name=="rust" or .name=="ci") | {name, conclusion, status}]' || echo '[]')
           FRONTEND=$(jq -r '[.[] | select(.name=="frontend") | .conclusion] | last // empty' <<<"$CHECKS")
@@ -171,24 +179,28 @@ jobs:
           if [ "$CHECKS_PENDING" -eq 0 ] && { [ "$CI_JOB" = "success" ] || { [ "$FRONTEND" = "success" ] && [ "$RUST" = "success" ]; }; }; then
             CI_GREEN=true
           fi
-          if [ "$EVENT_NAME" = "workflow_run" ] && [ "${WR_CONCLUSION:-}" = "failure" ]; then
+          if [ "$EVENT_NAME" = "workflow_run" ] && [ "${WR_NAME:-}" = "CI" ] && [ "${WR_CONCLUSION:-}" = "failure" ]; then
             CI_FAILED=true
             CI_GREEN=false
           fi
-          if [ "$EVENT_NAME" = "workflow_run" ] && [ "${WR_CONCLUSION:-}" = "success" ]; then
+          if [ "$EVENT_NAME" = "workflow_run" ] && [ "${WR_NAME:-}" = "CI" ] && [ "${WR_CONCLUSION:-}" = "success" ]; then
             CI_GREEN=true
             CI_FAILED=false
           fi
 
-          # Copilot review findings (inline comments still open / recent COMMENTED review)
+          # Copilot review findings — login may be "Copilot", "copilot-pull-request-reviewer[bot]", etc.
           REVIEW_FINDINGS=false
           COPILOT_REVIEW_COUNT=$(as_int "$(jq '
-            [.reviews[]? | select(.author.login=="copilot-pull-request-reviewer" or .author.login=="copilot-pull-request-reviewer[bot]" or .author.login=="copilot[bot]")] | length
+            [.reviews[]?
+              | select(.author.login | test("copilot"; "i"))
+            ] | length
           ' <<<"$META")")
+
           INLINE=$(as_int "$(gh api "repos/$OWNER/$REPO/pulls/$PR/comments" --paginate \
-            --jq '[.[] | select(.user.login=="copilot-pull-request-reviewer[bot]" or .user.login=="copilot[bot]")] | length' || true)")
-          if [ "$INLINE" -gt 0 ]; then
-            # Unresolved conversations preferred; fall back to any inline from Copilot if API lacks resolved flag
+            --jq '[.[] | select(.user.login | test("copilot"; "i"))] | length' || true)")
+
+          UNRESOLVED=0
+          if [ "$INLINE" -gt 0 ] || [ "$COPILOT_REVIEW_COUNT" -gt 0 ]; then
             UNRESOLVED=$(as_int "$(gh api graphql -f query="
               query(\$o:String!,\$n:String!,\$p:Int!) {
                 repository(owner:\$o,name:\$n) {
@@ -201,8 +213,20 @@ jobs:
               }" -f o="$OWNER" -f n="$REPO" -F p="$PR" \
               --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
                 | select(.isResolved==false)
-                | select(.comments.nodes[0].author.login=="copilot-pull-request-reviewer" or .comments.nodes[0].author.login=="copilot")] | length' || true)")
-            if [ "$UNRESOLVED" -gt 0 ] || [ "$EVENT_NAME" = "pull_request_review" ]; then
+                | select(.comments.nodes[0].author.login | test("copilot"; "i"))] | length' || true)")
+          fi
+
+          if [ "$UNRESOLVED" -gt 0 ] || [ "$INLINE" -gt 0 ]; then
+            REVIEW_FINDINGS=true
+          fi
+          # Copilot code-review workflow just finished → treat as findings signal if any Copilot review exists
+          if [ "$EVENT_NAME" = "workflow_run" ] && echo "${WR_NAME:-}" | grep -qi 'copilot code review'; then
+            if [ "$COPILOT_REVIEW_COUNT" -gt 0 ] || [ "$INLINE" -gt 0 ]; then
+              REVIEW_FINDINGS=true
+            fi
+          fi
+          if [ "$EVENT_NAME" = "pull_request_review" ] && is_copilot_login "${REVIEW_LOGIN:-}"; then
+            if [ "$INLINE" -gt 0 ] || [ "$UNRESOLVED" -gt 0 ]; then
               REVIEW_FINDINGS=true
             fi
           fi
@@ -210,9 +234,8 @@ jobs:
           REVIEW_REQUESTED=$(as_int "$(count_matches '<!-- agent-pipeline-review-requested -->' "$COMMENT_BODIES")")
           HAS_REVIEW_REQ=$(as_int "$(jq '[.reviewRequests[]?.login // empty | select(test("copilot";"i"))] | length' <<<"$META")")
 
-          # Already asked for a fix on this exact SHA? Avoid double-fire on synchronize.
           ALREADY_FIX_THIS_SHA=false
-          if echo "$COMMENT_BODIES" | grep -q "<!-- agent-pipeline-fix-round:.*sha:${HEAD_SHA}"; then
+          if echo "$COMMENT_BODIES" | grep -q "<!-- agent-pipeline-fix-round:.*sha:${HEAD_SHA}.*invoked:user"; then
             ALREADY_FIX_THIS_SHA=true
           fi
 
@@ -222,32 +245,38 @@ jobs:
             NEED_FIRST_REVIEW=true
           fi
 
+          # Prefer Reviewer → Implementer: never fix in the same run as the first review request.
           if [ "$FIX_ROUNDS" -ge 2 ] && { [ "$CI_FAILED" = "true" ] || [ "$REVIEW_FINDINGS" = "true" ]; }; then
             ACTION=handoff_stuck
           elif [ "$NEED_FIRST_REVIEW" = "true" ]; then
-            # Always start with Copilot review; CI/fix rounds follow.
             ACTION=request_review
-          elif [ "$CI_FAILED" = "true" ] && [ "$ALREADY_FIX_THIS_SHA" != "true" ] && [ "$FIX_ROUNDS" -lt 2 ]; then
-            ACTION=fix_ci
-          elif [ "$REVIEW_FINDINGS" = "true" ] && [ "$ALREADY_FIX_THIS_SHA" != "true" ] && [ "$FIX_ROUNDS" -lt 2 ]; then
-            ACTION=fix_review
+          elif [ "$ALREADY_FIX_THIS_SHA" = "true" ]; then
+            # Waiting for Copilot to push; next synchronize/CI will re-evaluate.
+            ACTION=skip
+          elif [ "$FIX_ROUNDS" -lt 2 ] && { [ "$CI_FAILED" = "true" ] || [ "$REVIEW_FINDINGS" = "true" ]; }; then
+            if [ "$CI_FAILED" = "true" ] && [ "$REVIEW_FINDINGS" = "true" ]; then
+              ACTION=fix_both
+            elif [ "$CI_FAILED" = "true" ]; then
+              ACTION=fix_ci
+            else
+              ACTION=fix_review
+            fi
           elif [ "$CI_GREEN" = "true" ] && [ "$REVIEW_FINDINGS" != "true" ] && [ "$COPILOT_REVIEW_COUNT" -gt 0 ]; then
             ACTION=handoff_ready
-          elif [ "$EVENT_NAME" = "workflow_run" ] && [ "$CI_GREEN" = "true" ] && [ "$REVIEW_FINDINGS" != "true" ] \
-            && [ "$REVIEW_REQUESTED" -gt 0 ] && [ "$COPILOT_REVIEW_COUNT" -gt 0 ] \
-            && [ "$ALREADY_FIX_THIS_SHA" != "true" ] && [ "$FIX_ROUNDS" -gt 0 ]; then
-            # After a fix round made CI green: ask Copilot to re-review once
+          elif [ "$EVENT_NAME" = "workflow_run" ] && [ "${WR_NAME:-}" = "CI" ] && [ "$CI_GREEN" = "true" ] \
+            && [ "$REVIEW_FINDINGS" != "true" ] && [ "$REVIEW_REQUESTED" -gt 0 ] \
+            && [ "$COPILOT_REVIEW_COUNT" -gt 0 ] && [ "$FIX_ROUNDS" -gt 0 ]; then
             ACTION=rerequest_review
           fi
 
-          # On synchronize: wait for CI unless we still need the first review request
           if [ "$EVENT_NAME" = "pull_request" ] && [ "$CHECKS_PENDING" -gt 0 ] && [ "$ACTION" != "request_review" ]; then
             ACTION=skip
           fi
 
           echo "action=$ACTION" >> "$GITHUB_OUTPUT"
           echo "ci_failed=$CI_FAILED" >> "$GITHUB_OUTPUT"
-          echo "Resolved PR #$PR action=$ACTION fix_rounds=$FIX_ROUNDS ci_failed=$CI_FAILED ci_green=$CI_GREEN findings=$REVIEW_FINDINGS"
+          echo "review_findings=$REVIEW_FINDINGS" >> "$GITHUB_OUTPUT"
+          echo "Resolved PR #$PR action=$ACTION fix_rounds=$FIX_ROUNDS ci_failed=$CI_FAILED ci_green=$CI_GREEN findings=$REVIEW_FINDINGS inline=$INLINE unresolved=$UNRESOLVED event=$EVENT_NAME wr=${WR_NAME:-}"
 
       - name: Request Copilot review
         if: steps.decide.outputs.action == 'request_review' || steps.decide.outputs.action == 'rerequest_review'
@@ -282,7 +311,6 @@ jobs:
           gstatus=$?
           set -e
 
-          # REST fallback (some accounts)
           if [ "$gstatus" -ne 0 ]; then
             gh api --method POST "repos/$OWNER/$REPO/pulls/$PR/requested_reviewers" \
               -f 'reviewers[]=copilot-pull-request-reviewer[bot]' || \
@@ -290,65 +318,93 @@ jobs:
               -f 'reviewers[]=Copilot' || true
           fi
 
-          # Comments use default GITHUB_TOKEN (fine-grained PAT often lacks Issues write)
           export GH_TOKEN="$COMMENT_TOKEN"
           if [ "$ACTION" = "request_review" ]; then
             gh pr comment "$PR" --repo "$OWNER/$REPO" --body "$(printf '%s\n' \
               '<!-- agent-pipeline-review-requested -->' \
               '' \
               'Agent pipeline: requested **Copilot code review**.' \
-              'Orchestrator will allow up to **2** `@copilot` fix rounds for CI failures or review findings, then assign the maintainer.')"
+              'After review (and/or CI), orchestrator will `@copilot` (as the pipeline PAT user) for ≤2 fix rounds, then assign the maintainer.')"
           else
             gh pr comment "$PR" --repo "$OWNER/$REPO" --body "Agent pipeline: re-requested Copilot review after fix round."
           fi
 
-      - name: Ask Copilot to fix (CI or review)
+      - name: Ask Copilot to fix (implementer)
         if: >-
           steps.decide.outputs.action == 'fix_ci' ||
           steps.decide.outputs.action == 'fix_review' ||
-          (steps.decide.outputs.action == 'request_review' && steps.decide.outputs.ci_failed == 'true')
+          steps.decide.outputs.action == 'fix_both'
         env:
-          # Prefer PAT so @copilot assignment is accepted
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ASSIGN_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          # MUST be a user PAT — github-actions @copilot comments do not start the coding agent.
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          COMMENT_FALLBACK: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ steps.decide.outputs.pr }}
           HEAD_SHA: ${{ steps.decide.outputs.head_sha }}
           FIX_ROUNDS: ${{ steps.decide.outputs.fix_rounds }}
           ACTION: ${{ steps.decide.outputs.action }}
-          CI_FAILED: ${{ steps.decide.outputs.ci_failed }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
           set -euo pipefail
-          NEXT=$((FIX_ROUNDS + 1))
-          # First touch may be request_review while CI is already red — treat as CI fix round.
-          if [ "$ACTION" = "fix_review" ]; then
-            REASON="open Copilot code-review findings on this PR. Address the actionable review comments; do not expand scope."
-          else
-            REASON="failing CI checks (lint/typecheck/tests). Reproduce with the repo CI scripts and fix only what is broken."
+          if [ -z "${COPILOT_GITHUB_TOKEN:-}" ]; then
+            echo "COPILOT_GITHUB_TOKEN is required so @copilot is posted by a user (not github-actions)."
+            exit 1
           fi
+          export GH_TOKEN="$COPILOT_GITHUB_TOKEN"
+
+          NEXT=$((FIX_ROUNDS + 1))
+          case "$ACTION" in
+            fix_review)
+              REASON="all open Copilot code-review comments on this PR. Address the actionable findings; do not expand scope."
+              ;;
+            fix_both)
+              REASON="(1) failing CI checks and (2) all open Copilot code-review comments. Fix both; do not expand scope."
+              ;;
+            *)
+              REASON="failing CI checks (lint/typecheck/tests). Reproduce with the repo CI scripts and fix only what is broken."
+              ;;
+          esac
 
           BODY=$(printf '%s\n' \
-            "<!-- agent-pipeline-fix-round:${NEXT} sha:${HEAD_SHA} -->" \
+            "<!-- agent-pipeline-fix-round:${NEXT} sha:${HEAD_SHA} invoked:user -->" \
             "" \
             "@copilot Fix round **${NEXT}/2** for the agent pipeline." \
             "" \
             "Please address: ${REASON}" \
             "" \
-            "- Stay on this PR branch; do not open a separate PR unless required." \
+            "- Push commits to **this** PR branch (do not open a separate PR)." \
             "- Do not merge or expand scope beyond the linked Agent plan." \
-            "- When done, leave CI green.")
+            "- When done, leave CI green and resolve the review threads you addressed.")
 
           gh pr comment "$PR" --repo "$OWNER/$REPO" --body "$BODY"
 
-          # Also nudge via assignee when PAT can assign the coding agent
-          if [ -n "${ASSIGN_TOKEN:-}" ]; then
-            set +e
-            GH_TOKEN="$ASSIGN_TOKEN" gh api --method POST \
-              -H "Accept: application/vnd.github+json" \
-              "/repos/$OWNER/$REPO/issues/$PR/assignees" \
-              -f 'assignees[]=copilot-swe-agent[bot]' >/dev/null 2>&1
-            set -e
+          # Extra nudge: assign coding agent on the PR issue with the same instructions.
+          jq -n \
+            --arg instructions "$BODY" \
+            --arg repo "$OWNER/$REPO" \
+            --arg base "$(gh pr view "$PR" --repo "$OWNER/$REPO" --json baseRefName --jq .baseRefName)" \
+            '{
+              assignees: ["copilot-swe-agent[bot]"],
+              agent_assignment: {
+                target_repo: $repo,
+                base_branch: $base,
+                custom_instructions: $instructions,
+                custom_agent: "",
+                model: ""
+              }
+            }' > /tmp/fix-assign.json
+
+          set +e
+          gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/$OWNER/$REPO/issues/$PR/assignees" \
+            --input /tmp/fix-assign.json > /tmp/fix-assign-out.json 2>/tmp/fix-assign-err.txt
+          aset=$?
+          set -e
+          if [ "$aset" -ne 0 ]; then
+            echo "Assign nudge failed (comment @copilot may still work):"
+            tail -c 2000 /tmp/fix-assign-err.txt || true
           fi
 
       - name: Handoff to maintainer

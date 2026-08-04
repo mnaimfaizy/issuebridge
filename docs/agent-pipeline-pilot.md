@@ -109,11 +109,12 @@ Implemented by `.github/workflows/agent-pipeline-review.yml` (triggers: PR open/
 
 1. Detect pipeline PRs: Copilot author / `copilot/*` head **and** a linked issue (or prior loop comment) with `<!-- agent-pipeline-plan -->`.
 2. Request review from `copilot-pull-request-reviewer[bot]` (GraphQL `requestReviews` + `botIds`, REST fallback). Marker: `<!-- agent-pipeline-review-requested -->`.
-3. On **CI failure** or **open Copilot review threads**: post `@copilot` fix comment (`<!-- agent-pipeline-fix-round:N sha:… -->`), optionally re-assign `copilot-swe-agent[bot]`.
-4. **Hard cap: 2** fix rounds → `<!-- agent-pipeline-handoff -->`, assign PR to first login on `AGENT_PIPELINE_ALLOWLIST`, stop auto-loops.
-5. When CI green and no open Copilot threads (after at least one review): same handoff marker + maintainer assign for final human approval.
+3. After review (and/or CI), post `@copilot` **as the `COPILOT_GITHUB_TOKEN` user** (`<!-- agent-pipeline-fix-round:N sha:… invoked:user -->`) and optionally re-assign `copilot-swe-agent[bot]`. Comments from `github-actions[bot]` do **not** start the coding agent.
+4. Triggers include CI `workflow_run` and **Running Copilot Code Review** completion (bot `pull_request_review` alone is unreliable).
+5. **Hard cap: 2** user-invoked fix rounds → `<!-- agent-pipeline-handoff -->`, assign PR to first login on `AGENT_PIPELINE_ALLOWLIST`, stop auto-loops.
+6. When CI green and no open Copilot threads (after at least one review): same handoff marker + maintainer assign for final human approval.
 
-State is PR-comment markers (no extra DB). Kill-switch `AGENT_PIPELINE_ENABLED` still applies.
+State is PR-comment markers (no extra DB). Kill-switch `AGENT_PIPELINE_ENABLED` still applies. First review request does **not** fire a fix in the same run (Reviewer → Implementer order).
 
 ### 4.5 Failure UX
 
