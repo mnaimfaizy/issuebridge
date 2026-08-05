@@ -481,7 +481,7 @@ pub fn list_inbox(state: State<'_, AppState>) -> Result<Vec<InboxItemDto>, Strin
                     name: item.repo.name,
                     linked: item.linked,
                     dirty: item.dirty,
-                    created_at_millis: system_time_millis(item.created_at),
+                    created_at_millis: crate::adapters::system_time_millis(item.created_at),
                 })
                 .collect()
         })
@@ -1160,12 +1160,8 @@ fn draft_to_dto(draft: crate::core::Draft) -> DraftDto {
         dirty,
         issue_number: draft.local_link.as_ref().map(|l| l.number),
         html_url: draft.local_link.map(|l| l.html_url),
-        created_at_millis: system_time_millis(draft.created_at),
+        created_at_millis: crate::adapters::system_time_millis(draft.created_at),
     }
-}
-
-fn system_time_millis(time: SystemTime) -> u64 {
-    crate::adapters::file_draft_store::system_time_millis(time)
 }
 
 fn inbox_error_message(err: InboxError) -> String {

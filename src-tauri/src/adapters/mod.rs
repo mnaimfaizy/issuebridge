@@ -32,5 +32,6 @@ pub use commands::{
     sign_in_with_pat, sign_out, skip_try_capture, start_rewrite_model_download, testing_set,
     testing_set_max, update_linked_draft, use_theirs, AppState, ModelDownloadHandle,
 };
+pub(crate) use file_draft_store::system_time_millis;
 pub use llama_rewrite::RewriteJobHandle;
 pub use tray::setup_tray;
