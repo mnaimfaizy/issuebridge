@@ -436,7 +436,7 @@ export function RewriteDialog({
     <Dialog
       open={open}
       onOpenChange={(_, data) => {
-        if (!data.open) requestClose();
+        if (!data.open && data.type === "triggerClick") requestClose();
       }}
     >
       <DialogSurface className="ib-rewrite-dialog">
