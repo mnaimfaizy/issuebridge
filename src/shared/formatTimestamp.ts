@@ -11,7 +11,7 @@ export function formatTimestamp(
 ): string {
   const date = new Date(millis);
   if (display === "utc") {
-    return new Intl.DateTimeFormat("en-US", {
+    return new Intl.DateTimeFormat(undefined, {
       year: "numeric",
       month: "short",
       day: "numeric",

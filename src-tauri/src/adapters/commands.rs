@@ -3,7 +3,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -760,29 +760,24 @@ pub fn ptt_hotkey(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn get_timestamp_display(state: State<'_, AppState>) -> Result<String, String> {
+pub fn get_timestamp_display(state: State<'_, AppState>) -> Result<TimestampDisplay, String> {
     let core = state
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    let value = match core.timestamp_display() {
-        TimestampDisplay::Local => "local",
-        TimestampDisplay::Utc => "utc",
-    };
-    Ok(value.to_string())
+    Ok(core.timestamp_display())
 }
 
 #[tauri::command]
-pub fn save_timestamp_display(state: State<'_, AppState>, value: String) -> Result<(), String> {
+pub fn save_timestamp_display(
+    state: State<'_, AppState>,
+    value: TimestampDisplay,
+) -> Result<(), String> {
     let mut core = state
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    let display = match value.as_str() {
-        "utc" => TimestampDisplay::Utc,
-        _ => TimestampDisplay::Local,
-    };
-    core.save_timestamp_display(display)
+    core.save_timestamp_display(value)
         .map_err(|_| "Could not save timestamp display preference.".to_string())
 }
 
@@ -1170,9 +1165,7 @@ fn draft_to_dto(draft: crate::core::Draft) -> DraftDto {
 }
 
 fn system_time_millis(time: SystemTime) -> u64 {
-    time.duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    crate::adapters::file_draft_store::system_time_millis(time)
 }
 
 fn inbox_error_message(err: InboxError) -> String {

@@ -15,17 +15,17 @@ type TimestampSectionProps = {
   firstRunComplete: boolean;
 };
 
-/** Settings → Timestamps: local time or UTC for all Draft timestamps. */
+/** Settings → Timestamps: local time or UTC for Draft and Inbox timestamps. */
 export function TimestampSection({
   auth,
   firstRunComplete,
 }: TimestampSectionProps) {
-  const enabled = auth.signedIn && firstRunComplete;
+  const enabled = auth === "signed_in" && firstRunComplete;
   const [display, setDisplay] = useState<TimestampDisplay>("local");
 
   useEffect(() => {
     let cancelled = false;
-    void invoke<string>("get_timestamp_display")
+    void invoke<TimestampDisplay>("get_timestamp_display")
       .then((value) => {
         if (!cancelled) setDisplay(value === "utc" ? "utc" : "local");
       })

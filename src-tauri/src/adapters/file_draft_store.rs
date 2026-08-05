@@ -158,7 +158,7 @@ impl DraftStore for FileDraftStore {
     }
 }
 
-fn system_time_millis(time: SystemTime) -> u64 {
+pub(crate) fn system_time_millis(time: SystemTime) -> u64 {
     time.duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
