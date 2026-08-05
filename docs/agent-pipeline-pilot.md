@@ -112,8 +112,9 @@ Implemented by `.github/workflows/agent-pipeline-review.yml` (triggers: PR open/
 3. After review (and/or CI), post `@copilot` **as the `COPILOT_GITHUB_TOKEN` user** (`<!-- agent-pipeline-fix-round:N sha:… invoked:user -->`) and optionally re-assign `copilot-swe-agent[bot]`. Comments from `github-actions[bot]` do **not** start the coding agent.
 4. Triggers include CI / Copilot Code Review `workflow_run` (may need manual approval when Copilot is the actor) **and** PR `synchronize`, which **waits for CI in-job** so round-2 is not lost.
 5. Review findings = unresolved **and** non-outdated Copilot threads; fix comments include a short thread summary.
-6. **Hard cap: 2** user-invoked fix rounds → `<!-- agent-pipeline-handoff -->`, assign PR to first login on `AGENT_PIPELINE_ALLOWLIST`, stop auto-loops.
-7. When CI green and no open Copilot threads (after at least one review): same handoff marker + maintainer assign for final human approval.
+6. **Hard cap: 2** user-invoked fix rounds → `<!-- agent-pipeline-handoff -->`, assign PR to first login on `AGENT_PIPELINE_ALLOWLIST`, stop auto-loops. The handoff comment reports CI state, whether the last agent session errored, its session log, and any open threads.
+7. **Crashed agent sessions are free.** A `Copilot cloud agent` run that ends in `failure` did not complete its round, so the orchestrator re-invokes with `kind:crash-retry crash-run:<id>` (max 2 retries) instead of burning the budget. Known crash: the agent's Node process aborts with `failed printing to stdout: Resource temporarily unavailable (os error 11)` / exit 134 when rust-analyzer floods stdout with `macro expansion failed` warnings — mitigated by warming the Rust build cache in `copilot-setup-steps.yml`.
+8. When CI green and no open Copilot threads (after at least one review): same handoff marker + maintainer assign for final human approval.
 
 State is PR-comment markers (no extra DB). Kill-switch `AGENT_PIPELINE_ENABLED` still applies. First review request does **not** fire a fix in the same run (Reviewer → Implementer order).
 
@@ -164,7 +165,7 @@ State is PR-comment markers (no extra DB). Kill-switch `AGENT_PIPELINE_ENABLED` 
 3. Secret: fine-grained PAT → `COPILOT_GITHUB_TOKEN` (Copilot Requests + repo issues/contents/PRs as needed).
 4. Workflow: `.github/workflows/agent-pipeline.yml` on default branch (`issues: [labeled]`, concurrency `agent-pipeline`).
 5. Review loop: `.github/workflows/agent-pipeline-review.yml` on default branch.
-6. Copilot env: `.github/workflows/copilot-setup-steps.yml` on default branch (Node 22 + `npm ci`, Rust toolchain, Tauri Linux deps, `cargo fetch`) so cloud agent / code review can build before the firewall session.
+6. Copilot env: `.github/workflows/copilot-setup-steps.yml` on default branch (Node 22 + `npm ci`, Rust toolchain, Tauri Linux deps, `cargo check --all-targets`) so cloud agent / code review can build before the firewall session, and rust-analyzer has macro/build-script artifacts.
 7. Prompts under `.github/agent-pipeline/`.
 8. Dry-run kill-switch / allowlist miss; then one tiny real E2E issue.
 

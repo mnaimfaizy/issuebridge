@@ -10,6 +10,8 @@
 # - On synchronize after a Copilot push, wait for CI in-job (workflow_run from Copilot
 #   often lands in action_required and never runs round-2 / handoff).
 # - Review findings = unresolved + non-outdated Copilot threads only.
+# - A Copilot session that ends in error (e.g. stdout EAGAIN → exit 134) gets a free
+#   retry: it did not complete its round, so it must not consume the 2-round budget.
 
 name: Agent pipeline review
 
@@ -156,13 +158,17 @@ jobs:
 
           # Only PAT-posted rounds (invoked:user) count toward the budget. Legacy
           # github-actions @copilot comments are ignored by Copilot and must not burn rounds.
-          USER_FIX_ROUNDS=$(as_int "$(count_matches 'invoked:user -->' "$COMMENT_BODIES")")
-          if [ "$USER_FIX_ROUNDS" -gt 0 ]; then
-            FIX_ROUNDS="$USER_FIX_ROUNDS"
+          USER_FIX_ROUNDS=$(as_int "$(count_matches 'invoked:user' "$COMMENT_BODIES")")
+          # A crashed Copilot session did not complete its round, so its retry is free.
+          CRASH_RETRIES=$(as_int "$(count_matches 'kind:crash-retry' "$COMMENT_BODIES")")
+          MAX_CRASH_RETRIES=2
+          if [ "$USER_FIX_ROUNDS" -gt "$CRASH_RETRIES" ]; then
+            FIX_ROUNDS=$((USER_FIX_ROUNDS - CRASH_RETRIES))
           else
             FIX_ROUNDS=0
           fi
           echo "fix_rounds=$FIX_ROUNDS" >> "$GITHUB_OUTPUT"
+          echo "crash_retries=$CRASH_RETRIES" >> "$GITHUB_OUTPUT"
 
           MAINTAINER=$(echo "${ALLOWLIST:-}" | awk -F',' '{print $1}' | xargs)
           echo "maintainer=$MAINTAINER" >> "$GITHUB_OUTPUT"
@@ -256,6 +262,31 @@ jobs:
             ALREADY_FIX_THIS_SHA=true
           fi
 
+          # Copilot cloud agent sessions can abort mid-task (stdout EAGAIN → exit 134) after
+          # pushing a partial change. Detect that so the round is retried, not blamed.
+          AGENT_CRASHED=false
+          AGENT_RUN_ID=""
+          AGENT_RUN_URL=""
+          RUNS_JSON=$(gh api "repos/$OWNER/$REPO/actions/runs?per_page=100" || echo '{"workflow_runs":[]}')
+          LATEST_AGENT=$(jq --arg ref "$HEAD_REF" --arg pr "$PR" '
+            [ .workflow_runs[]?
+              | select((.name // "") | test("copilot cloud agent"; "i"))
+              | select(((.head_branch // "") == $ref) or ((.display_title // "") | test("PR #" + $pr + "([^0-9]|$)")))
+              | {id, conclusion, status, created_at, html_url}
+            ] | sort_by(.created_at) | last // empty' <<<"$RUNS_JSON")
+
+          if [ -n "$LATEST_AGENT" ]; then
+            AGENT_RUN_ID=$(jq -r '.id' <<<"$LATEST_AGENT")
+            AGENT_RUN_URL=$(jq -r '.html_url' <<<"$LATEST_AGENT")
+            AGENT_CONCLUSION=$(jq -r '.conclusion // empty' <<<"$LATEST_AGENT")
+            if [ "$AGENT_CONCLUSION" = "failure" ] && ! echo "$COMMENT_BODIES" | grep -q "crash-run:${AGENT_RUN_ID}"; then
+              AGENT_CRASHED=true
+            fi
+          fi
+          echo "agent_crashed=$AGENT_CRASHED" >> "$GITHUB_OUTPUT"
+          echo "agent_run_id=$AGENT_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "agent_run_url=$AGENT_RUN_URL" >> "$GITHUB_OUTPUT"
+
           NEED_FIRST_REVIEW=false
           if [ "$REVIEW_REQUESTED" -eq 0 ] && [ "$HAS_REVIEW_REQ" -eq 0 ] && [ "$COPILOT_REVIEW_COUNT" -eq 0 ]; then
             NEED_FIRST_REVIEW=true
@@ -284,7 +315,10 @@ jobs:
 
           ACTION=skip
           # Prefer Reviewer → Implementer: never fix in the same run as the first review request.
-          if [ "$FIX_ROUNDS" -ge 2 ] && { [ "$CI_FAILED" = "true" ] || [ "$REVIEW_FINDINGS" = "true" ]; }; then
+          if [ "$AGENT_CRASHED" = "true" ] && [ "$CRASH_RETRIES" -lt "$MAX_CRASH_RETRIES" ] \
+            && { [ "$CI_FAILED" = "true" ] || [ "$REVIEW_FINDINGS" = "true" ]; }; then
+            ACTION=fix_retry
+          elif [ "$FIX_ROUNDS" -ge 2 ] && { [ "$CI_FAILED" = "true" ] || [ "$REVIEW_FINDINGS" = "true" ]; }; then
             ACTION=handoff_stuck
           elif [ "$NEED_FIRST_REVIEW" = "true" ]; then
             ACTION=request_review
@@ -315,7 +349,7 @@ jobs:
             printf '%s\n' "$FINDINGS_SUMMARY"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-          echo "Resolved PR #$PR action=$ACTION fix_rounds=$FIX_ROUNDS ci_failed=$CI_FAILED ci_green=$CI_GREEN findings=$REVIEW_FINDINGS unresolved=$UNRESOLVED event=$EVENT_NAME wr=${WR_NAME:-}"
+          echo "Resolved PR #$PR action=$ACTION fix_rounds=$FIX_ROUNDS crash_retries=$CRASH_RETRIES agent_crashed=$AGENT_CRASHED ci_failed=$CI_FAILED ci_green=$CI_GREEN findings=$REVIEW_FINDINGS unresolved=$UNRESOLVED event=$EVENT_NAME wr=${WR_NAME:-}"
 
       - name: Request Copilot review
         if: steps.decide.outputs.action == 'request_review' || steps.decide.outputs.action == 'rerequest_review'
@@ -372,7 +406,8 @@ jobs:
         if: >-
           steps.decide.outputs.action == 'fix_ci' ||
           steps.decide.outputs.action == 'fix_review' ||
-          steps.decide.outputs.action == 'fix_both'
+          steps.decide.outputs.action == 'fix_both' ||
+          steps.decide.outputs.action == 'fix_retry'
         env:
           # MUST be a user PAT — github-actions @copilot comments do not start the coding agent.
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
@@ -382,6 +417,9 @@ jobs:
           FIX_ROUNDS: ${{ steps.decide.outputs.fix_rounds }}
           ACTION: ${{ steps.decide.outputs.action }}
           FINDINGS_SUMMARY: ${{ steps.decide.outputs.findings_summary }}
+          CI_FAILED: ${{ steps.decide.outputs.ci_failed }}
+          AGENT_RUN_ID: ${{ steps.decide.outputs.agent_run_id }}
+          AGENT_RUN_URL: ${{ steps.decide.outputs.agent_run_url }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
@@ -393,6 +431,8 @@ jobs:
           export GH_TOKEN="$COPILOT_GITHUB_TOKEN"
 
           NEXT=$((FIX_ROUNDS + 1))
+          MARKER="<!-- agent-pipeline-fix-round:${NEXT} sha:${HEAD_SHA} invoked:user -->"
+          HEADING="@copilot Fix round **${NEXT}/2** for the agent pipeline."
           case "$ACTION" in
             fix_review)
               REASON="the remaining open Copilot code-review threads listed below. Address each actionable finding; do not expand scope."
@@ -400,18 +440,26 @@ jobs:
             fix_both)
               REASON="(1) failing CI checks and (2) the open Copilot code-review threads listed below. Fix both; do not expand scope."
               ;;
+            fix_retry)
+              MARKER="<!-- agent-pipeline-fix-round:${NEXT} sha:${HEAD_SHA} invoked:user kind:crash-retry crash-run:${AGENT_RUN_ID} -->"
+              HEADING="@copilot Fix round **${NEXT}/2** — **retry** after the previous session ended in error."
+              REASON="the unfinished work from the aborted session: any leftover partial edits (unused imports, half-done refactors), failing CI, and the open review threads listed below."
+              ;;
             *)
               REASON="failing CI checks (lint/typecheck/tests). Reproduce with the repo CI scripts and fix only what is broken."
               ;;
           esac
 
           BODY=$(printf '%s\n' \
-            "<!-- agent-pipeline-fix-round:${NEXT} sha:${HEAD_SHA} invoked:user -->" \
+            "$MARKER" \
             "" \
-            "@copilot Fix round **${NEXT}/2** for the agent pipeline." \
+            "$HEADING" \
             "" \
             "Please address: ${REASON}" \
             "")
+          if [ "$ACTION" = "fix_retry" ] && [ -n "${AGENT_RUN_URL:-}" ]; then
+            BODY=$(printf '%s\n%s\n\n' "$BODY" "Previous session: ${AGENT_RUN_URL}")
+          fi
           if [ -n "${FINDINGS_SUMMARY:-}" ]; then
             BODY=$(printf '%s\n%s\n' "$BODY" "$FINDINGS_SUMMARY")
             BODY=$(printf '%s\n' "$BODY" "")
@@ -419,6 +467,7 @@ jobs:
           BODY=$(printf '%s\n' "$BODY" \
             "- Push commits to **this** PR branch (do not open a separate PR)." \
             "- Do not merge or expand scope beyond the linked Agent plan." \
+            "- Before pushing, run \`cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings\`, \`cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check\`, \`npm run lint\` and \`npm run typecheck\`." \
             "- When done, leave CI green and resolve the review threads you addressed.")
 
           gh pr comment "$PR" --repo "$OWNER/$REPO" --body "$BODY"
@@ -460,6 +509,11 @@ jobs:
           MAINTAINER: ${{ steps.decide.outputs.maintainer }}
           ACTION: ${{ steps.decide.outputs.action }}
           FIX_ROUNDS: ${{ steps.decide.outputs.fix_rounds }}
+          CRASH_RETRIES: ${{ steps.decide.outputs.crash_retries }}
+          AGENT_CRASHED: ${{ steps.decide.outputs.agent_crashed }}
+          AGENT_RUN_URL: ${{ steps.decide.outputs.agent_run_url }}
+          CI_FAILED: ${{ steps.decide.outputs.ci_failed }}
+          FINDINGS_SUMMARY: ${{ steps.decide.outputs.findings_summary }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
@@ -473,8 +527,18 @@ jobs:
             MSG=$(printf '%s\n' \
               "<!-- agent-pipeline-handoff -->" \
               "" \
-              "Agent pipeline **stopped** after **${FIX_ROUNDS}** fix rounds (cap = 2)." \
-              "CI and/or review findings may remain. Assigned to \`${MAINTAINER:-maintainer}\` for human take-over.")
+              "Agent pipeline **stopped** after **${FIX_ROUNDS}** fix rounds (cap = 2, crash retries used: ${CRASH_RETRIES:-0})." \
+              "" \
+              "State at handoff:" \
+              "- CI failing: \`${CI_FAILED:-unknown}\`" \
+              "- Last Copilot cloud agent session ended in error: \`${AGENT_CRASHED:-false}\`")
+            if [ -n "${AGENT_RUN_URL:-}" ]; then
+              MSG=$(printf '%s\n' "$MSG" "- Session log: ${AGENT_RUN_URL}")
+            fi
+            if [ -n "${FINDINGS_SUMMARY:-}" ]; then
+              MSG=$(printf '%s\n\n%s' "$MSG" "$FINDINGS_SUMMARY")
+            fi
+            MSG=$(printf '%s\n\n%s' "$MSG" "Assigned to \`${MAINTAINER:-maintainer}\` for human take-over.")
           else
             MSG=$(printf '%s\n' \
               "<!-- agent-pipeline-handoff -->" \

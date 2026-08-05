@@ -69,5 +69,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Fetch Rust deps (no build)
-        run: cargo fetch --manifest-path src-tauri/Cargo.toml
+      # Build artifacts must exist before the agent starts. Without them rust-analyzer
+      # cannot expand macros and emits a warning per call site, which floods the agent's
+      # stdout until its Node process aborts (EAGAIN, exit 134).
+      - name: Warm Rust build cache
+        run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets
