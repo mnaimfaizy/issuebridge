@@ -7,6 +7,9 @@
 #   github-actions[bot] are ignored by Copilot cloud agent (no 👀 reaction).
 # - Do not fire a fix round in the same run as the first review request; wait for the
 #   reviewer (or a later CI signal) so Implementer follows Reviewer.
+# - On synchronize after a Copilot push, wait for CI in-job (workflow_run from Copilot
+#   often lands in action_required and never runs round-2 / handoff).
+# - Review findings = unresolved + non-outdated Copilot threads only.
 
 name: Agent pipeline review
 
@@ -45,6 +48,7 @@ jobs:
     steps:
       - name: Resolve PR + decide action
         id: decide
+        timeout-minutes: 25
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ALLOWLIST: ${{ vars.AGENT_PIPELINE_ALLOWLIST }}
@@ -163,22 +167,25 @@ jobs:
           MAINTAINER=$(echo "${ALLOWLIST:-}" | awk -F',' '{print $1}' | xargs)
           echo "maintainer=$MAINTAINER" >> "$GITHUB_OUTPUT"
 
-          CI_STATE=$(gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/status" --jq '.state // empty' || true)
-          CHECKS=$(gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/check-runs" --paginate \
-            --jq '[.check_runs[] | select(.name=="frontend" or .name=="rust" or .name=="ci") | {name, conclusion, status}]' || echo '[]')
-          FRONTEND=$(jq -r '[.[] | select(.name=="frontend") | .conclusion] | last // empty' <<<"$CHECKS")
-          RUST=$(jq -r '[.[] | select(.name=="rust") | .conclusion] | last // empty' <<<"$CHECKS")
-          CI_JOB=$(jq -r '[.[] | select(.name=="ci") | .conclusion] | last // empty' <<<"$CHECKS")
-          CHECKS_PENDING=$(as_int "$(jq '[.[] | select(.status != "completed")] | length' <<<"$CHECKS")")
+          refresh_ci() {
+            CI_STATE=$(gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/status" --jq '.state // empty' || true)
+            CHECKS=$(gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/check-runs" --paginate \
+              --jq '[.check_runs[] | select(.name=="frontend" or .name=="rust" or .name=="ci") | {name, conclusion, status}]' || echo '[]')
+            FRONTEND=$(jq -r '[.[] | select(.name=="frontend") | .conclusion] | last // empty' <<<"$CHECKS")
+            RUST=$(jq -r '[.[] | select(.name=="rust") | .conclusion] | last // empty' <<<"$CHECKS")
+            CI_JOB=$(jq -r '[.[] | select(.name=="ci") | .conclusion] | last // empty' <<<"$CHECKS")
+            CHECKS_PENDING=$(as_int "$(jq '[.[] | select(.status != "completed")] | length' <<<"$CHECKS")")
+            CI_FAILED=false
+            CI_GREEN=false
+            if [ "$FRONTEND" = "failure" ] || [ "$RUST" = "failure" ] || [ "$CI_JOB" = "failure" ] || [ "$CI_STATE" = "failure" ]; then
+              CI_FAILED=true
+            fi
+            if [ "$CHECKS_PENDING" -eq 0 ] && { [ "$CI_JOB" = "success" ] || { [ "$FRONTEND" = "success" ] && [ "$RUST" = "success" ]; }; }; then
+              CI_GREEN=true
+            fi
+          }
 
-          CI_FAILED=false
-          CI_GREEN=false
-          if [ "$FRONTEND" = "failure" ] || [ "$RUST" = "failure" ] || [ "$CI_JOB" = "failure" ] || [ "$CI_STATE" = "failure" ]; then
-            CI_FAILED=true
-          fi
-          if [ "$CHECKS_PENDING" -eq 0 ] && { [ "$CI_JOB" = "success" ] || { [ "$FRONTEND" = "success" ] && [ "$RUST" = "success" ]; }; }; then
-            CI_GREEN=true
-          fi
+          refresh_ci
           if [ "$EVENT_NAME" = "workflow_run" ] && [ "${WR_NAME:-}" = "CI" ] && [ "${WR_CONCLUSION:-}" = "failure" ]; then
             CI_FAILED=true
             CI_GREEN=false
@@ -188,7 +195,7 @@ jobs:
             CI_FAILED=false
           fi
 
-          # Copilot review findings — login may be "Copilot", "copilot-pull-request-reviewer[bot]", etc.
+          # Copilot review findings — only unresolved + non-outdated threads (inline alone is noisy).
           REVIEW_FINDINGS=false
           COPILOT_REVIEW_COUNT=$(as_int "$(jq '
             [.reviews[]?
@@ -196,37 +203,47 @@ jobs:
             ] | length
           ' <<<"$META")")
 
-          INLINE=$(as_int "$(gh api "repos/$OWNER/$REPO/pulls/$PR/comments" --paginate \
-            --jq '[.[] | select(.user.login | test("copilot"; "i"))] | length' || true)")
-
-          UNRESOLVED=0
-          if [ "$INLINE" -gt 0 ] || [ "$COPILOT_REVIEW_COUNT" -gt 0 ]; then
-            UNRESOLVED=$(as_int "$(gh api graphql -f query="
-              query(\$o:String!,\$n:String!,\$p:Int!) {
-                repository(owner:\$o,name:\$n) {
-                  pullRequest(number:\$p) {
-                    reviewThreads(first:100) {
-                      nodes { isResolved comments(first:1) { nodes { author { login } } } }
+          THREADS_JSON=$(gh api graphql -f query="
+            query(\$o:String!,\$n:String!,\$p:Int!) {
+              repository(owner:\$o,name:\$n) {
+                pullRequest(number:\$p) {
+                  reviewThreads(first:100) {
+                    nodes {
+                      isResolved
+                      isOutdated
+                      path
+                      comments(first:1) { nodes { author { login } body } }
                     }
                   }
                 }
-              }" -f o="$OWNER" -f n="$REPO" -F p="$PR" \
-              --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
-                | select(.isResolved==false)
-                | select(.comments.nodes[0].author.login | test("copilot"; "i"))] | length' || true)")
-          fi
+              }
+            }" -f o="$OWNER" -f n="$REPO" -F p="$PR" \
+            --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+              | select(.isResolved==false and .isOutdated==false)
+              | select(.comments.nodes[0].author.login | test("copilot"; "i"))
+              | {path, body: .comments.nodes[0].body}]' || echo '[]')
 
-          if [ "$UNRESOLVED" -gt 0 ] || [ "$INLINE" -gt 0 ]; then
+          UNRESOLVED=$(as_int "$(jq 'length' <<<"$THREADS_JSON")")
+          FINDINGS_SUMMARY=$(jq -r '
+            if length == 0 then empty
+            else
+              ["Open Copilot review threads:"] +
+              [.[] | "- `\(.path)`: \((.body // "") | split("\n")[0] | .[0:180])"]
+              | join("\n")
+            end
+          ' <<<"$THREADS_JSON")
+
+          if [ "$UNRESOLVED" -gt 0 ]; then
             REVIEW_FINDINGS=true
           fi
-          # Copilot code-review workflow just finished → treat as findings signal if any Copilot review exists
+          # Fresh Copilot review event with no threads yet: keep findings false (nothing to fix).
           if [ "$EVENT_NAME" = "workflow_run" ] && echo "${WR_NAME:-}" | grep -qi 'copilot code review'; then
-            if [ "$COPILOT_REVIEW_COUNT" -gt 0 ] || [ "$INLINE" -gt 0 ]; then
+            if [ "$UNRESOLVED" -gt 0 ]; then
               REVIEW_FINDINGS=true
             fi
           fi
           if [ "$EVENT_NAME" = "pull_request_review" ] && is_copilot_login "${REVIEW_LOGIN:-}"; then
-            if [ "$INLINE" -gt 0 ] || [ "$UNRESOLVED" -gt 0 ]; then
+            if [ "$UNRESOLVED" -gt 0 ]; then
               REVIEW_FINDINGS=true
             fi
           fi
@@ -239,19 +256,40 @@ jobs:
             ALREADY_FIX_THIS_SHA=true
           fi
 
-          ACTION=skip
           NEED_FIRST_REVIEW=false
           if [ "$REVIEW_REQUESTED" -eq 0 ] && [ "$HAS_REVIEW_REQ" -eq 0 ] && [ "$COPILOT_REVIEW_COUNT" -eq 0 ]; then
             NEED_FIRST_REVIEW=true
           fi
 
+          # Copilot pushes often leave CI pending; workflow_run from Copilot can sit in
+          # action_required. Wait here on synchronize so round-2 / handoff still runs.
+          if [ "$NEED_FIRST_REVIEW" != "true" ] && [ "$ALREADY_FIX_THIS_SHA" != "true" ]; then
+            if [ "$CHECKS_PENDING" -gt 0 ] || { [ "$CI_GREEN" != "true" ] && [ "$CI_FAILED" != "true" ]; }; then
+              echo "Waiting for CI checks on $HEAD_SHA (pending=$CHECKS_PENDING)..."
+              for _i in $(seq 1 40); do
+                sleep 30
+                refresh_ci
+                echo "  poll $_i: pending=$CHECKS_PENDING frontend=$FRONTEND rust=$RUST ci=$CI_JOB"
+                if [ "$CHECKS_PENDING" -eq 0 ] && { [ "$CI_GREEN" = "true" ] || [ "$CI_FAILED" = "true" ]; }; then
+                  break
+                fi
+                # No checks registered yet — keep waiting a bit, then stop.
+                if [ "$CHECKS_PENDING" -eq 0 ] && [ -z "$FRONTEND$RUST$CI_JOB" ] && [ "$_i" -ge 4 ]; then
+                  echo "No frontend/rust/ci checks appeared; continuing."
+                  break
+                fi
+              done
+            fi
+          fi
+
+          ACTION=skip
           # Prefer Reviewer → Implementer: never fix in the same run as the first review request.
           if [ "$FIX_ROUNDS" -ge 2 ] && { [ "$CI_FAILED" = "true" ] || [ "$REVIEW_FINDINGS" = "true" ]; }; then
             ACTION=handoff_stuck
           elif [ "$NEED_FIRST_REVIEW" = "true" ]; then
             ACTION=request_review
           elif [ "$ALREADY_FIX_THIS_SHA" = "true" ]; then
-            # Waiting for Copilot to push; next synchronize/CI will re-evaluate.
+            # Waiting for Copilot to push; next synchronize will wait for CI then re-evaluate.
             ACTION=skip
           elif [ "$FIX_ROUNDS" -lt 2 ] && { [ "$CI_FAILED" = "true" ] || [ "$REVIEW_FINDINGS" = "true" ]; }; then
             if [ "$CI_FAILED" = "true" ] && [ "$REVIEW_FINDINGS" = "true" ]; then
@@ -263,20 +301,21 @@ jobs:
             fi
           elif [ "$CI_GREEN" = "true" ] && [ "$REVIEW_FINDINGS" != "true" ] && [ "$COPILOT_REVIEW_COUNT" -gt 0 ]; then
             ACTION=handoff_ready
-          elif [ "$EVENT_NAME" = "workflow_run" ] && [ "${WR_NAME:-}" = "CI" ] && [ "$CI_GREEN" = "true" ] \
-            && [ "$REVIEW_FINDINGS" != "true" ] && [ "$REVIEW_REQUESTED" -gt 0 ] \
+          elif [ "$CI_GREEN" = "true" ] && [ "$REVIEW_FINDINGS" != "true" ] && [ "$REVIEW_REQUESTED" -gt 0 ] \
             && [ "$COPILOT_REVIEW_COUNT" -gt 0 ] && [ "$FIX_ROUNDS" -gt 0 ]; then
             ACTION=rerequest_review
           fi
 
-          if [ "$EVENT_NAME" = "pull_request" ] && [ "$CHECKS_PENDING" -gt 0 ] && [ "$ACTION" != "request_review" ]; then
-            ACTION=skip
-          fi
-
-          echo "action=$ACTION" >> "$GITHUB_OUTPUT"
-          echo "ci_failed=$CI_FAILED" >> "$GITHUB_OUTPUT"
-          echo "review_findings=$REVIEW_FINDINGS" >> "$GITHUB_OUTPUT"
-          echo "Resolved PR #$PR action=$ACTION fix_rounds=$FIX_ROUNDS ci_failed=$CI_FAILED ci_green=$CI_GREEN findings=$REVIEW_FINDINGS inline=$INLINE unresolved=$UNRESOLVED event=$EVENT_NAME wr=${WR_NAME:-}"
+          # Persist findings summary for the implementer step (multiline via delimiter).
+          {
+            echo "action=$ACTION"
+            echo "ci_failed=$CI_FAILED"
+            echo "review_findings=$REVIEW_FINDINGS"
+            echo "findings_summary<<EOF"
+            printf '%s\n' "$FINDINGS_SUMMARY"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved PR #$PR action=$ACTION fix_rounds=$FIX_ROUNDS ci_failed=$CI_FAILED ci_green=$CI_GREEN findings=$REVIEW_FINDINGS unresolved=$UNRESOLVED event=$EVENT_NAME wr=${WR_NAME:-}"
 
       - name: Request Copilot review
         if: steps.decide.outputs.action == 'request_review' || steps.decide.outputs.action == 'rerequest_review'
@@ -342,6 +381,7 @@ jobs:
           HEAD_SHA: ${{ steps.decide.outputs.head_sha }}
           FIX_ROUNDS: ${{ steps.decide.outputs.fix_rounds }}
           ACTION: ${{ steps.decide.outputs.action }}
+          FINDINGS_SUMMARY: ${{ steps.decide.outputs.findings_summary }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
@@ -355,10 +395,10 @@ jobs:
           NEXT=$((FIX_ROUNDS + 1))
           case "$ACTION" in
             fix_review)
-              REASON="all open Copilot code-review comments on this PR. Address the actionable findings; do not expand scope."
+              REASON="the remaining open Copilot code-review threads listed below. Address each actionable finding; do not expand scope."
               ;;
             fix_both)
-              REASON="(1) failing CI checks and (2) all open Copilot code-review comments. Fix both; do not expand scope."
+              REASON="(1) failing CI checks and (2) the open Copilot code-review threads listed below. Fix both; do not expand scope."
               ;;
             *)
               REASON="failing CI checks (lint/typecheck/tests). Reproduce with the repo CI scripts and fix only what is broken."
@@ -371,7 +411,12 @@ jobs:
             "@copilot Fix round **${NEXT}/2** for the agent pipeline." \
             "" \
             "Please address: ${REASON}" \
-            "" \
+            "")
+          if [ -n "${FINDINGS_SUMMARY:-}" ]; then
+            BODY=$(printf '%s\n%s\n' "$BODY" "$FINDINGS_SUMMARY")
+            BODY=$(printf '%s\n' "$BODY" "")
+          fi
+          BODY=$(printf '%s\n' "$BODY" \
             "- Push commits to **this** PR branch (do not open a separate PR)." \
             "- Do not merge or expand scope beyond the linked Agent plan." \
             "- When done, leave CI green and resolve the review threads you addressed.")
