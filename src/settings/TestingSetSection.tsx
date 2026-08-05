@@ -385,7 +385,8 @@ export function TestingSetSection({
       <Dialog
         open={pendingConfirm !== null}
         onOpenChange={(_, data) => {
-          if (!data.open && !busy) setPendingConfirm(null);
+          if (!data.open && !busy && data.type === "triggerClick")
+            setPendingConfirm(null);
         }}
       >
         <DialogSurface>
