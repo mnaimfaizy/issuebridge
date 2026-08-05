@@ -129,6 +129,7 @@ pub struct InboxItem {
     pub repo: RepoId,
     pub linked: bool,
     pub dirty: bool,
+    pub created_at: SystemTime,
 }
 
 /// Credentials held only by TokenStore adapters — never returned through core IPC results.
@@ -152,6 +153,15 @@ pub struct AppInstallSnapshot {
 
 fn default_testing_set_max() -> usize {
     3
+}
+
+/// Timestamp display preference: user's local time or UTC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TimestampDisplay {
+    #[default]
+    Local,
+    Utc,
 }
 
 /// User-defined Rewrite style (name + instruction text).
@@ -195,6 +205,9 @@ pub struct AppSettings {
     /// Hardware fingerprint the user last Keep/Switch'd for (at most once per change).
     #[serde(default)]
     pub rewrite_hardware_prompt_acked_fingerprint: Option<String>,
+    /// Whether timestamps display in local time or UTC (default: local).
+    #[serde(default)]
+    pub timestamp_display: TimestampDisplay,
 }
 
 impl Default for AppSettings {
@@ -214,6 +227,7 @@ impl Default for AppSettings {
             last_used_rewrite_style_id: None,
             active_rewrite_model_id: None,
             rewrite_hardware_prompt_acked_fingerprint: None,
+            timestamp_display: TimestampDisplay::Local,
         }
     }
 }

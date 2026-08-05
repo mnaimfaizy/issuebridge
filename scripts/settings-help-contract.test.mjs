@@ -177,6 +177,35 @@ describe("Settings + Help destinations (#38)", () => {
     assert.doesNotMatch(help, /Replay onboarding|chatbot|docs site/i);
   });
 
+  it("Timestamp settings expose local/UTC toggle wired to get/save commands (#93)", () => {
+    const settings = readSrc("settings", "SettingsPage.tsx");
+    assert.match(settings, /TimestampSection/);
+    assert.ok(
+      existsSync(src("settings", "TimestampSection.tsx")),
+      "expected TimestampSection",
+    );
+    const section = readSrc("settings", "TimestampSection.tsx");
+    assert.match(section, /Timestamps|timestamp/i);
+    assert.match(section, /get_timestamp_display/);
+    assert.match(section, /save_timestamp_display/);
+    assert.match(section, /local|Local/);
+    assert.match(section, /utc|UTC/);
+    assert.match(section, /Radio|radio/i);
+    const types = readSrc("inbox", "types.ts");
+    assert.match(types, /created_at_millis/);
+    const inboxList = readSrc("inbox", "InboxList.tsx");
+    assert.match(inboxList, /created_at_millis/);
+    assert.match(inboxList, /formatTimestamp/);
+    const draftInspector = readSrc("inbox", "DraftInspector.tsx");
+    assert.match(draftInspector, /created_at_millis/);
+    assert.match(draftInspector, /formatTimestamp/);
+    const formatUtil = readSrc("shared", "formatTimestamp.ts");
+    assert.match(formatUtil, /TimestampDisplay/);
+    assert.match(formatUtil, /local/);
+    assert.match(formatUtil, /utc/);
+    assert.match(formatUtil, /Intl\.DateTimeFormat/);
+  });
+
   it("progressive gating keeps unavailable entries visible with helpers", () => {
     const gating = readSrc("settings", "gating.ts");
     assert.match(gating, /signed_out|signed_in/);
@@ -188,6 +217,7 @@ describe("Settings + Help destinations (#38)", () => {
     assert.match(settings, /AccountSection/);
     assert.match(settings, /TestingSetSection/);
     assert.match(settings, /CaptureSection/);
+    assert.match(settings, /TimestampSection/);
     assert.match(settings, /RewriteModelsSection/);
     const testing = readSrc("settings", "TestingSetSection.tsx");
     const capture = readSrc("settings", "CaptureSection.tsx");

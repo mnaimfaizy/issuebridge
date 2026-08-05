@@ -21,8 +21,8 @@ pub use ports::{
     RewriteEngine, RewriteEngineError, RewriteHardwareSwitchPrompt, RewriteInput,
     RewriteModelDiskStatus, RewriteModelFileError, RewriteModelFiles, RewriteModelStatusSnapshot,
     RewriteProposal, RewriteStyleInfo, RewriteStylesSnapshot, SettingsStore, SettingsStoreError,
-    StoredCredentials, StubRewriteEngine, TokenStore, TokenStoreError, VoiceError,
-    VoiceTranscriber,
+    StoredCredentials, StubRewriteEngine, TimestampDisplay, TokenStore, TokenStoreError,
+    VoiceError, VoiceTranscriber,
 };
 pub use rewrite::{is_too_thin_for_rewrite, CLEAR_STYLE_ID};
 pub use rewrite_hardware::{
@@ -905,6 +905,22 @@ where
             .unwrap_or_else(|| DEFAULT_PTT_HOTKEY.to_string())
     }
 
+    pub fn timestamp_display(&self) -> TimestampDisplay {
+        self.settings_store
+            .load()
+            .map(|s| s.timestamp_display)
+            .unwrap_or_default()
+    }
+
+    pub fn save_timestamp_display(
+        &mut self,
+        display: TimestampDisplay,
+    ) -> Result<(), SettingsStoreError> {
+        let mut settings = self.settings_store.load().unwrap_or_default();
+        settings.timestamp_display = display;
+        self.settings_store.save(settings)
+    }
+
     /// Transcribe a PTT recording and append into the current Capture field text
     /// (Title or Body — chosen by the UI from focus). Does not persist a Draft.
     pub fn apply_ptt(&self, current_text: &str, audio_path: &str) -> Result<String, VoiceError> {
@@ -1286,6 +1302,7 @@ fn inbox_item_from_draft(draft: Draft) -> InboxItem {
         repo: draft.repo,
         linked,
         dirty,
+        created_at: draft.created_at,
     }
 }
 

@@ -23,14 +23,15 @@ pub use commands::{
     all_repositories_warning, app_visible_repos, apply_ptt, auth_state, cancel_rewrite,
     cancel_rewrite_model_download, complete_testing_set, continue_install, edit_draft,
     ensure_label_catalog, first_run_step, generate_rewrite, get_draft, get_rewrite_model_status,
-    keep_mine, last_used_repo, list_inbox, list_rewrite_styles, open_app_install,
-    prefetch_testing_set_label_catalogs, ptt_hotkey, publish_draft,
+    get_timestamp_display, keep_mine, last_used_repo, list_inbox, list_rewrite_styles,
+    open_app_install, prefetch_testing_set_label_catalogs, ptt_hotkey, publish_draft,
     reconcile_testing_set_with_app_visible, remember_last_rewrite_style,
     remove_custom_rewrite_style, remove_rewrite_model, remove_testing_set_repo,
-    respond_rewrite_hardware_prompt, save_capture, set_active_rewrite_model, set_testing_set_max,
-    show_capture, sign_in_with_github, sign_in_with_pat, sign_out, skip_try_capture,
-    start_rewrite_model_download, testing_set, testing_set_max, update_linked_draft, use_theirs,
-    AppState, ModelDownloadHandle,
+    respond_rewrite_hardware_prompt, save_capture, save_timestamp_display,
+    set_active_rewrite_model, set_testing_set_max, show_capture, sign_in_with_github,
+    sign_in_with_pat, sign_out, skip_try_capture, start_rewrite_model_download, testing_set,
+    testing_set_max, update_linked_draft, use_theirs, AppState, ModelDownloadHandle,
 };
+pub(crate) use file_draft_store::system_time_millis;
 pub use llama_rewrite::RewriteJobHandle;
 pub use tray::setup_tray;

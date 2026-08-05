@@ -27,7 +27,7 @@ impl From<&LabelCatalog> for CatalogRecord {
         Self {
             repo: catalog.repo.clone(),
             labels: catalog.labels.clone(),
-            refreshed_at_millis: system_time_millis(catalog.refreshed_at),
+            refreshed_at_millis: crate::adapters::system_time_millis(catalog.refreshed_at),
         }
     }
 }
@@ -106,12 +106,6 @@ impl LabelCatalogStore for FileLabelCatalogStore {
         }
         self.write_all(&file)
     }
-}
-
-fn system_time_millis(time: SystemTime) -> u64 {
-    time.duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 fn millis_to_system_time(millis: u64) -> SystemTime {

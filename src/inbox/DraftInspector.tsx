@@ -1,6 +1,7 @@
 import {
   Badge,
   Button,
+  Caption1,
   Field,
   Input,
   Link,
@@ -8,6 +9,10 @@ import {
   Textarea,
 } from "@fluentui/react-components";
 import type { RefObject } from "react";
+import {
+  formatTimestamp,
+  type TimestampDisplay,
+} from "../shared/formatTimestamp";
 import type { DraftDto, RepoLabelDto } from "./types";
 import { assignedLabelSet, parseLabelNames } from "./types";
 
@@ -21,6 +26,7 @@ type DraftInspectorProps = {
   suggestionFilter: string;
   busy: boolean;
   narrowStacked: boolean;
+  timestampDisplay: TimestampDisplay;
   editorRef: RefObject<HTMLElement | null>;
   updateButtonRef: RefObject<HTMLButtonElement | null>;
   onTitleChange: (value: string) => void;
@@ -57,6 +63,7 @@ export function DraftInspector({
   suggestionFilter,
   busy,
   narrowStacked,
+  timestampDisplay,
   editorRef,
   updateButtonRef,
   onTitleChange,
@@ -125,6 +132,9 @@ export function DraftInspector({
         <Text weight="semibold">
           {draft.owner}/{draft.name}
         </Text>
+        <Caption1 className="ib-muted">
+          {formatTimestamp(draft.created_at_millis, timestampDisplay)}
+        </Caption1>
         <span className="ib-inbox-badges">
           <Badge
             appearance={draft.linked ? "filled" : "outline"}
