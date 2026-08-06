@@ -106,3 +106,5 @@ GitHub Actions workflow `.github/workflows/security-audit.yml`:
 - PR label `agent:security-audit` (`pr`)
 
 Prompt pack: `.github/security-audit/prompt.md` (must stay aligned with this skill).
+
+Model: repo variable `SECURITY_AUDIT_MODEL` (Copilot CLI `--model`); unset = CLI default. Prefer a deep-reasoning model — see `docs/security-audit.md`.
