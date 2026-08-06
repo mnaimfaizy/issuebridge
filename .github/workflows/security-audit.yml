@@ -1,0 +1,216 @@
+# Security audit — weekly / manual / PR (Issuebridge pilot)
+# Skill: .agents/skills/security-audit/
+# Reports via draft GitHub Security Advisory (private). Never open a public issue with finding detail.
+#
+# Secrets: COPILOT_GITHUB_TOKEN must include Repository security advisories: write
+#          (fine-grained) and the token owner must be admin/security manager.
+# Vars:    SECURITY_AUDIT_ENABLED=true
+#          SECURITY_AUDIT_ALLOWLIST=mnaimfaizy (comma logins; used for label / dispatch actors)
+
+name: Security audit
+
+on:
+  schedule:
+    # Monday 06:00 UTC
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: security-audit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  copilot-requests: write
+
+jobs:
+  audit:
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'agent:security-audit')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Gate
+        id: gate
+        env:
+          ENABLED: ${{ vars.SECURITY_AUDIT_ENABLED }}
+          ALLOWLIST: ${{ vars.SECURITY_AUDIT_ALLOWLIST }}
+          ACTOR: ${{ github.actor }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number || 0 }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          MODE=full
+          if [ "$EVENT" = "pull_request" ]; then
+            MODE=pr
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+
+          if [ "${ENABLED:-}" != "true" ]; then
+            echo "SECURITY_AUDIT_ENABLED!=true — no-op."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Scheduled runs are unattended; label/dispatch require allowlist.
+          if [ "$EVENT" != "schedule" ]; then
+            IFS=',' read -r -a allowed <<< "${ALLOWLIST:-}"
+            ok=false
+            for u in "${allowed[@]}"; do
+              u_trim="$(echo "$u" | xargs)"
+              if [ -n "$u_trim" ] && [ "$u_trim" = "$ACTOR" ]; then
+                ok=true
+                break
+              fi
+            done
+            if [ "$ok" != "true" ]; then
+              echo "Actor $ACTOR not on SECURITY_AUDIT_ALLOWLIST — no-op."
+              if [ "$EVENT" = "pull_request" ] && [ "${PR:-0}" != "0" ]; then
+                gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" \
+                  --body "Security audit ignored: \`$ACTOR\` is not on \`SECURITY_AUDIT_ALLOWLIST\`."
+              fi
+              echo "proceed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          if [ "$EVENT" = "pull_request" ] && [ "${PR:-0}" != "0" ]; then
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --remove-label "agent:security-audit" || true
+          fi
+
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.proceed == 'true'
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.proceed == 'true'
+        with:
+          node-version: "22"
+
+      - name: Install Copilot CLI + jq helpers
+        if: steps.gate.outputs.proceed == 'true'
+        run: npm install -g @github/copilot
+
+      - name: Run security audit (Copilot CLI)
+        if: steps.gate.outputs.proceed == 'true'
+        id: scan
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ steps.gate.outputs.mode }}
+          BASE_REF: ${{ github.event.pull_request.base.sha || '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${COPILOT_GITHUB_TOKEN:-}" ]; then
+            export COPILOT_GITHUB_TOKEN="$GH_TOKEN"
+          fi
+
+          REPORT=/tmp/security-audit-report.md
+          : > "$REPORT"
+
+          {
+            echo "Mode: $MODE"
+            echo "Repository: $GITHUB_REPOSITORY"
+            echo "Report file (write your markdown here): $REPORT"
+            echo
+            if [ "$MODE" = "pr" ] && [ -n "${BASE_REF:-}" ]; then
+              echo "PR diff base: $BASE_REF"
+              echo "Changed files:"
+              git diff --name-only "$BASE_REF"...HEAD || true
+              echo
+              echo "Diff (truncated):"
+              git diff --unified=3 "$BASE_REF"...HEAD | head -c 200000 || true
+              echo
+            fi
+            echo "-----"
+            echo
+            cat .github/security-audit/prompt.md
+            echo
+            echo "-----"
+            echo
+            echo "Also read these files for methodology:"
+            echo "- .agents/skills/security-audit/threat-model.md"
+            echo "- .agents/skills/security-audit/report-format.md"
+          } > /tmp/security-audit-user.txt
+
+          set +e
+          copilot -p "$(cat /tmp/security-audit-user.txt)" \
+            -s \
+            --allow-tool='shell(ls:*),shell(find:*),shell(cat:*),shell(head:*),shell(rg:*),shell(git:*),shell(cargo:*),shell(npm:*)' \
+            --allow-tool=write \
+            >/tmp/security-audit-cli.log 2>&1
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ]; then
+            echo "Copilot CLI failed (exit $code). Log:"
+            tail -n 200 /tmp/security-audit-cli.log || true
+            exit "$code"
+          fi
+
+          if [ ! -s "$REPORT" ]; then
+            # Some CLI builds write only to stdout — capture fallback.
+            if grep -q '## Security audit report' /tmp/security-audit-cli.log; then
+              # Extract from first report heading to EOF-ish
+              awk '/^## Security audit report/{flag=1} flag{print}' /tmp/security-audit-cli.log > "$REPORT"
+            fi
+          fi
+
+          if [ ! -s "$REPORT" ]; then
+            echo "Empty report — failing."
+            tail -n 200 /tmp/security-audit-cli.log || true
+            exit 1
+          fi
+
+          echo "Report bytes: $(wc -c < "$REPORT")"
+          cp "$REPORT" "$GITHUB_WORKSPACE/security-audit-report.md"
+          echo "report_path=$GITHUB_WORKSPACE/security-audit-report.md" >> "$GITHUB_OUTPUT"
+
+      # Do NOT upload-artifact on a public repo — artifacts are world-readable.
+      - name: Publish draft Security Advisory (private)
+        if: steps.gate.outputs.proceed == 'true'
+        id: publish
+        env:
+          # Must be able to create draft advisories (admin/security manager + advisories:write).
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "COPILOT_GITHUB_TOKEN missing — cannot create private draft advisory."
+            exit 1
+          fi
+          chmod +x .github/security-audit/publish-draft-advisory.sh
+          .github/security-audit/publish-draft-advisory.sh "$GITHUB_WORKSPACE/security-audit-report.md"
+
+      - name: PR status comment (counts only)
+        if: >-
+          steps.gate.outputs.proceed == 'true' &&
+          github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          COUNT: ${{ steps.publish.outputs.finding_count }}
+          MAX: ${{ steps.publish.outputs.max_severity }}
+          URL: ${{ steps.publish.outputs.advisory_url }}
+        run: |
+          set -euo pipefail
+          if [ "${COUNT:-0}" = "0" ] || [ -z "${COUNT:-}" ]; then
+            BODY="Security audit (PR mode): no Medium+ findings."
+          else
+            BODY="Security audit (PR mode): **${COUNT}** Medium+ finding(s) (max **${MAX}**) filed as a **draft** Security Advisory for maintainers — details are not posted publicly."
+            if [ -n "${URL:-}" ]; then
+              BODY="${BODY} Maintainers: see Security → Advisories (draft)."
+            fi
+          fi
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "$BODY"
