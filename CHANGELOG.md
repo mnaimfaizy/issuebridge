@@ -2,6 +2,21 @@
 
 All notable changes to Issuebridge are documented here. Release notes are user-facing; see git history for full commit detail.
 
+## [0.2.0] - 2026-08-06
+
+### Added
+- Rewrite in Inbox: propose a clearer Draft title and body, then Accept or Discard
+- Real Rewrite Generate via a bundled llama.cpp sidecar (Windows-hardened)
+- Rewrite model catalog with download lifecycle
+- Hardware-tier recommendations for Rewrite models
+- Rewrite model settings section
+- Localized timestamps for Drafts
+
+### Fixed
+- Hardened llama.cpp Rewrite Generate on Windows
+- Publish: clearer GitHub failure logging and surface invalid credentials to the user
+- Backdrop click no longer closes the Rewrite dialog or confirm dialogs
+
 ## [0.2.0-rc.2] - 2026-08-03
 
 ### Fixed
