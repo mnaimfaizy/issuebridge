@@ -107,4 +107,6 @@ GitHub Actions workflow `.github/workflows/security-audit.yml`:
 
 Prompt pack: `.github/security-audit/prompt.md` (must stay aligned with this skill).
 
-Model: repo vars `SECURITY_AUDIT_MODEL` (`--model`) and `SECURITY_AUDIT_REASONING_EFFORT` (`--reasoning-effort`). Example: `gpt-5.6-sol` + `medium`. See `docs/security-audit.md`.
+Model: repo vars `SECURITY_AUDIT_MODEL` (`--model`) and `SECURITY_AUDIT_REASONING_EFFORT` (`--reasoning-effort`). Example: `gpt-5.6-sol` + `high`. See `docs/security-audit.md`.
+
+Delivery: every CI run files a **draft** Security Advisory (including clean runs) with report + agent transcript appendix. Optional email via `SECURITY_AUDIT_NOTIFY_EMAIL` + `RESEND_API_KEY`. Never dump findings/transcripts into public Actions logs.

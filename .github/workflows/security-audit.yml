@@ -8,6 +8,9 @@
 #          SECURITY_AUDIT_ALLOWLIST=mnaimfaizy (comma logins; used for label / dispatch actors)
 #          SECURITY_AUDIT_MODEL (optional Copilot CLI --model; e.g. gpt-5.6-sol)
 #          SECURITY_AUDIT_REASONING_EFFORT (optional --reasoning-effort; low|medium|high|xhigh)
+#          SECURITY_AUDIT_NOTIFY_EMAIL (optional; destination for private email delivery)
+#          SECURITY_AUDIT_EMAIL_FROM (optional; verified Resend From address)
+# Secrets: RESEND_API_KEY (optional; enables email delivery of report + transcript)
 
 name: Security audit
 
@@ -137,6 +140,8 @@ jobs:
 
           # Write inside the workspace — Copilot CLI write tools often cannot create /tmp paths.
           REPORT="$GITHUB_WORKSPACE/security-audit-report.md"
+          SESSION="$GITHUB_WORKSPACE/security-audit-session.md"
+          CLI_LOG="$GITHUB_WORKSPACE/security-audit-cli.log"
           : > "$REPORT"
 
           {
@@ -161,49 +166,66 @@ jobs:
             echo
             echo "-----"
             echo
-            echo "Also read these files for methodology:"
-            echo "- .agents/skills/security-audit/threat-model.md"
-            echo "- .agents/skills/security-audit/report-format.md"
+            echo "Threat model (inline for CI reliability):"
+            echo
+            cat .agents/skills/security-audit/threat-model.md
+            echo
+            echo "-----"
+            echo
+            echo "Report format (inline):"
+            echo
+            cat .agents/skills/security-audit/report-format.md
           } > "$GITHUB_WORKSPACE/security-audit-user.txt"
 
           set +e
           copilot -p "$(cat "$GITHUB_WORKSPACE/security-audit-user.txt")" \
             -s \
+            --no-ask-user \
             --add-dir="$GITHUB_WORKSPACE" \
+            --share="$SESSION" \
             "${MODEL_ARGS[@]}" \
-            --allow-tool='shell(ls:*),shell(find:*),shell(cat:*),shell(head:*),shell(rg:*),shell(git:*),shell(cargo:*),shell(npm:*)' \
+            --allow-tool='shell(ls:*),shell(find:*),shell(cat:*),shell(head:*),shell(rg:*),shell(grep:*),shell(git:*),shell(cargo:*),shell(npm:*)' \
             --allow-tool=write \
-            >"$GITHUB_WORKSPACE/security-audit-cli.log" 2>&1
+            --allow-tool=read \
+            >"$CLI_LOG" 2>&1
           code=$?
           set -e
           if [ "$code" -ne 0 ]; then
             echo "Copilot CLI failed (exit $code). Log (tail):"
-            tail -n 200 "$GITHUB_WORKSPACE/security-audit-cli.log" || true
+            tail -n 200 "$CLI_LOG" || true
             exit "$code"
           fi
 
           if [ ! -s "$REPORT" ]; then
             # Some CLI builds write only to stdout — capture fallback.
-            if grep -q '## Security audit report' "$GITHUB_WORKSPACE/security-audit-cli.log"; then
-              awk '/^## Security audit report/{flag=1} flag{print}' \
-                "$GITHUB_WORKSPACE/security-audit-cli.log" > "$REPORT"
+            if grep -q '## Security audit report' "$CLI_LOG"; then
+              awk '/^## Security audit report/{flag=1} flag{print}' "$CLI_LOG" > "$REPORT"
             fi
           fi
 
           if [ ! -s "$REPORT" ]; then
             echo "Empty report — failing."
-            tail -n 200 "$GITHUB_WORKSPACE/security-audit-cli.log" || true
+            tail -n 200 "$CLI_LOG" || true
             exit 1
           fi
 
           echo "Report bytes: $(wc -c < "$REPORT" | tr -d '[:space:]')"
-          # Safe metadata only — never dump finding bodies to public Actions logs.
+          echo "CLI log bytes: $(wc -c < "$CLI_LOG" | tr -d '[:space:]')"
+          if [ -f "$SESSION" ]; then
+            echo "Session transcript bytes: $(wc -c < "$SESSION" | tr -d '[:space:]')"
+          else
+            echo "Session transcript: missing (Copilot --share may be unsupported on this CLI version)."
+          fi
+          # Safe metadata only — never dump finding bodies or transcripts to public Actions logs.
           grep -E '^\- \*\*(Mode|Scope|Date|Max severity|Finding count):\*\*' "$REPORT" || true
           FCOUNT="$(grep -cE '^### F[0-9]+ [—-]' "$REPORT" || true)"
           echo "F-heading count: $(printf '%s' "$FCOUNT" | tr -d '[:space:]')"
           echo "report_path=$REPORT" >> "$GITHUB_OUTPUT"
+          echo "cli_log_path=$CLI_LOG" >> "$GITHUB_OUTPUT"
+          echo "session_path=$SESSION" >> "$GITHUB_OUTPUT"
 
       # Do NOT upload-artifact on a public repo — artifacts are world-readable.
+      # Do NOT print secret-gist URLs — they would leak via public Actions logs.
       - name: Use trusted publisher script from default branch
         if: >-
           steps.gate.outputs.proceed == 'true' &&
@@ -214,16 +236,20 @@ jobs:
           set -euo pipefail
           # Avoid executing a PR-modified publisher with the privileged PAT (F3 class).
           git fetch --no-tags origin "$BASE_SHA"
-          git checkout "$BASE_SHA" -- .github/security-audit/publish-draft-advisory.sh
-          echo "Publisher restored from PR base $BASE_SHA"
+          git checkout "$BASE_SHA" -- \
+            .github/security-audit/publish-draft-advisory.sh \
+            .github/security-audit/notify-email.sh
+          echo "Publisher + email notifier restored from PR base $BASE_SHA"
 
-      - name: Publish draft Security Advisory (private)
+      - name: Publish draft Security Advisory (private, always)
         if: steps.gate.outputs.proceed == 'true'
         id: publish
         env:
           # Must be able to create draft advisories (admin/security manager + advisories:write).
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          SECURITY_AUDIT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SECURITY_AUDIT_MODE: ${{ steps.gate.outputs.mode }}
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
@@ -231,7 +257,28 @@ jobs:
             exit 1
           fi
           chmod +x .github/security-audit/publish-draft-advisory.sh
-          .github/security-audit/publish-draft-advisory.sh "$GITHUB_WORKSPACE/security-audit-report.md"
+          .github/security-audit/publish-draft-advisory.sh \
+            "$GITHUB_WORKSPACE/security-audit-report.md" \
+            "$GITHUB_WORKSPACE/security-audit-cli.log" \
+            "$GITHUB_WORKSPACE/security-audit-session.md"
+
+      - name: Email report + transcript (optional)
+        if: steps.gate.outputs.proceed == 'true'
+        continue-on-error: true
+        env:
+          SECURITY_AUDIT_NOTIFY_EMAIL: ${{ vars.SECURITY_AUDIT_NOTIFY_EMAIL }}
+          SECURITY_AUDIT_EMAIL_FROM: ${{ vars.SECURITY_AUDIT_EMAIL_FROM }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SECURITY_AUDIT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GHSA_ID: ${{ steps.publish.outputs.ghsa_id }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/security-audit/notify-email.sh
+          .github/security-audit/notify-email.sh \
+            "$GITHUB_WORKSPACE/security-audit-report.md" \
+            "$GITHUB_WORKSPACE/security-audit-cli.log" \
+            "$GITHUB_WORKSPACE/security-audit-session.md" \
+            "${GHSA_ID:-}"
 
       - name: PR status comment (counts only)
         if: >-
@@ -242,15 +289,12 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           COUNT: ${{ steps.publish.outputs.finding_count }}
           MAX: ${{ steps.publish.outputs.max_severity }}
-          URL: ${{ steps.publish.outputs.advisory_url }}
+          PUBLISHED: ${{ steps.publish.outputs.published }}
         run: |
           set -euo pipefail
           if [ "${COUNT:-0}" = "0" ] || [ -z "${COUNT:-}" ]; then
-            BODY="Security audit (PR mode): no Medium+ findings."
+            BODY="Security audit (PR mode): no Medium+ findings. A private draft advisory with the full report/transcript was filed for maintainers (Security → Advisories)."
           else
             BODY="Security audit (PR mode): **${COUNT}** Medium+ finding(s) (max **${MAX}**) filed as a **draft** Security Advisory for maintainers — details are not posted publicly."
-            if [ -n "${URL:-}" ]; then
-              BODY="${BODY} Maintainers: see Security → Advisories (draft)."
-            fi
           fi
           gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "$BODY"
