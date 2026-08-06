@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # Publish a security-audit report as a draft repository Security Advisory (private until published).
-# Usage: publish-draft-advisory.sh <report.md>
+# Always creates a draft for full audits (including clean runs) so maintainers can see what the
+# agent produced. Finding bodies and CLI transcripts must NEVER be printed to public Actions logs.
+#
+# Usage: publish-draft-advisory.sh <report.md> [cli-log] [session.md]
 set -euo pipefail
 
 REPORT="${1:?report file required}"
+CLI_LOG="${2:-}"
+SESSION="${3:-}"
+
 if [ ! -f "$REPORT" ]; then
   echo "missing report: $REPORT" >&2
   exit 1
@@ -12,6 +18,8 @@ fi
 OWNER="${GITHUB_REPOSITORY%/*}"
 REPO="${GITHUB_REPOSITORY#*/}"
 DATE="$(date -u +%Y-%m-%d)"
+RUN_URL="${SECURITY_AUDIT_RUN_URL:-}"
+MODE="${SECURITY_AUDIT_MODE:-full}"
 
 out() {
   if [ -n "${GITHUB_OUTPUT:-}" ]; then
@@ -27,12 +35,10 @@ if grep -E '^\- \*\*(Mode|Scope|Date|Max severity|Finding count):\*\*' "$REPORT"
   grep -E '^\- \*\*(Mode|Scope|Date|Max severity|Finding count):\*\*' "$REPORT" || true
 fi
 
-# Accept em-dash or ASCII hyphen in finding headings.
 COUNT="$(grep -cE '^### F[0-9]+ [—-]' "$REPORT" || true)"
 COUNT="$(printf '%s' "$COUNT" | tr -d '[:space:]')"
 if [ -z "$COUNT" ]; then COUNT=0; fi
 
-# Secondary signal from the report header if headings were malformed.
 HEADER_COUNT="$(grep -Eie '^\- \*\*Finding count:\*\*[[:space:]]*[0-9]+' "$REPORT" | head -n1 | grep -Eo '[0-9]+$' || true)"
 HEADER_COUNT="$(printf '%s' "${HEADER_COUNT:-}" | tr -d '[:space:]')"
 echo "Parsed F-headings: $COUNT"
@@ -40,35 +46,71 @@ if [ -n "${HEADER_COUNT:-}" ]; then
   echo "Header Finding count: $HEADER_COUNT"
 fi
 
-if [ "$COUNT" = "0" ]; then
-  if [ -n "${HEADER_COUNT:-}" ] && [ "$HEADER_COUNT" != "0" ]; then
-    echo "WARNING: header Finding count=$HEADER_COUNT but no '### Fn —' headings matched — treating as format failure (no advisory)."
-    out "advisory_url="
-    out "finding_count=0"
-    out "max_severity=format_mismatch"
-    out "format_mismatch=true"
-    exit 0
+FORMAT_MISMATCH=false
+if [ "$COUNT" = "0" ] && [ -n "${HEADER_COUNT:-}" ] && [ "$HEADER_COUNT" != "0" ]; then
+  FORMAT_MISMATCH=true
+  echo "WARNING: header Finding count=$HEADER_COUNT but no '### Fn —' headings matched."
+fi
+
+MAX="low"
+if [ "$COUNT" != "0" ]; then
+  MAX="medium"
+  if grep -qiE '\*\*Severity:\*\*[[:space:]]*Critical' "$REPORT"; then
+    MAX="critical"
+  elif grep -qiE '\*\*Severity:\*\*[[:space:]]*High' "$REPORT"; then
+    MAX="high"
   fi
-  echo "No Medium+ findings — skipping advisory."
-  out "advisory_url="
-  out "finding_count=0"
-  out "max_severity=none"
-  out "format_mismatch=false"
-  exit 0
 fi
 
-MAX="medium"
-if grep -qiE '\*\*Severity:\*\*[[:space:]]*Critical' "$REPORT"; then
-  MAX="critical"
-elif grep -qiE '\*\*Severity:\*\*[[:space:]]*High' "$REPORT"; then
-  MAX="high"
+if [ "$COUNT" = "0" ]; then
+  SUMMARY="[Security audit] ${DATE} — clean run (0 Medium+ findings)"
+else
+  SUMMARY="[Security audit] ${DATE} — ${COUNT} finding(s), max=${MAX}"
 fi
-
-SUMMARY="[Security audit] ${DATE} — ${COUNT} finding(s), max=${MAX}"
+if [ "$FORMAT_MISMATCH" = "true" ]; then
+  SUMMARY="[Security audit] ${DATE} — FORMAT MISMATCH (header=${HEADER_COUNT}, headings=0)"
+fi
 SUMMARY="$(printf '%s' "$SUMMARY" | head -c 1024)"
 
-DESCRIPTION="$(cat "$REPORT")"
-DESCRIPTION="$(printf '%s' "$DESCRIPTION" | head -c 65000)"
+{
+  cat "$REPORT"
+  echo
+  echo "---"
+  echo
+  echo "## Run metadata"
+  echo
+  echo "- Mode: \`${MODE}\`"
+  if [ -n "$RUN_URL" ]; then
+    echo "- Actions run: ${RUN_URL}"
+  fi
+  echo "- Captured at (UTC): $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [ "$FORMAT_MISMATCH" = "true" ]; then
+    echo "- Format mismatch: header Finding count=${HEADER_COUNT} but F-headings=${COUNT}"
+  fi
+
+  if [ -n "$SESSION" ] && [ -f "$SESSION" ] && [ -s "$SESSION" ]; then
+    echo
+    echo "---"
+    echo
+    echo "## Agent session transcript"
+    echo
+    # Leave room under the 65535 advisory description cap.
+    head -c 40000 "$SESSION"
+    echo
+  elif [ -n "$CLI_LOG" ] && [ -f "$CLI_LOG" ] && [ -s "$CLI_LOG" ]; then
+    echo
+    echo "---"
+    echo
+    echo "## Agent CLI log (truncated)"
+    echo
+    echo '```'
+    head -c 35000 "$CLI_LOG"
+    echo
+    echo '```'
+  fi
+} > /tmp/security-audit-advisory-body.md
+
+DESCRIPTION="$(head -c 65000 /tmp/security-audit-advisory-body.md)"
 
 PAYLOAD="$(jq -n \
   --arg summary "$SUMMARY" \
@@ -96,9 +138,11 @@ RESP="$(gh api \
 
 URL="$(jq -r '.html_url // empty' <<<"$RESP")"
 GHSA="$(jq -r '.ghsa_id // empty' <<<"$RESP")"
-echo "Created draft advisory ${GHSA}: ${URL}"
-out "advisory_url=$URL"
+echo "Created draft advisory ${GHSA} (details private to admins/security managers)."
+# Do NOT echo the advisory URL — public Actions logs would leak a private handle.
+out "advisory_url="
 out "ghsa_id=$GHSA"
 out "finding_count=$COUNT"
 out "max_severity=$MAX"
-out "format_mismatch=false"
+out "format_mismatch=$FORMAT_MISMATCH"
+out "published=true"
