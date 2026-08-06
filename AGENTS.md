@@ -22,6 +22,7 @@ Windows-first Tauri app: capture GitHub issues while testing (hotkey + voice), k
 | code-review | [`.agents/skills/code-review/SKILL.md`](./.agents/skills/code-review/SKILL.md) | Review since a fixed point |
 | diagnosing-bugs | [`.agents/skills/diagnosing-bugs/SKILL.md`](./.agents/skills/diagnosing-bugs/SKILL.md) | Hard bugs / regressions |
 | grill-with-docs | [`.agents/skills/grill-with-docs/SKILL.md`](./.agents/skills/grill-with-docs/SKILL.md) | Stress-test a plan with domain modeling |
+| security-audit | [`.agents/skills/security-audit/SKILL.md`](./.agents/skills/security-audit/SKILL.md) | Medium+ threat-led security audit; draft advisory (private) |
 
 Other skills under [`.agents/skills/`](./.agents/skills/) apply when their descriptions match the task.
 
