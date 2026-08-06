@@ -62,9 +62,13 @@ Open **Security → Advisories** (drafts) after a run. Public Actions logs inten
 1. Create a [Resend](https://resend.com) API key (free tier is enough for weekly audits).
 2. Repo secret `RESEND_API_KEY`
 3. Repo variable `SECURITY_AUDIT_NOTIFY_EMAIL=you@example.com`
-4. Optional repo variable `SECURITY_AUDIT_EMAIL_FROM` — a From address verified in Resend (otherwise Resend’s onboarding default may only reach your Resend account email).
+4. Optional repo variable `SECURITY_AUDIT_EMAIL_FROM` — a From address verified in Resend, either `security@yourdomain.com` or `Issuebridge Security <security@yourdomain.com>`. A bare display name such as `Issuebridge` is **not** a valid sender; the notifier ignores it and falls back to `Issuebridge Security <onboarding@resend.dev>`.
 
-The workflow attaches `security-audit-report.md`, `security-audit-session.md` (if present), and a truncated `security-audit-cli.log`.
+Resend's `onboarding@resend.dev` sender can only deliver to the address that owns the Resend account. Verify a domain in Resend to reach any other inbox.
+
+The workflow attaches `security-audit-report.md`, `security-audit-session.md` (if present), and a truncated `security-audit-cli.log`. Each attachment is capped at 150 KB; attachments over the cap are truncated and suffixed `.truncated`. The draft advisory always holds the untruncated report.
+
+Attachment content is passed to `jq` via `--rawfile`, never as an argv value — base64 payloads of this size exceed the Linux argument limit and previously failed the step with `jq: Argument list too long`.
 
 ## Why CI ran long but looked “empty” (2026-08-06)
 
@@ -81,6 +85,8 @@ Mitigations in this pilot:
 - Inline threat-model / report-format into the prompt; mandatory hunt-area checklist
 - `--share` session transcript, `--no-ask-user`, broader read/grep tools
 - Optional email of the same package
+
+Outcome: the next scheduled-equivalent run produced 6 findings (max `high`) in draft advisory `GHSA-32qr-qvr3-vqfc`, matching the local high-effort audit. The depth gap was the prompt and the discarded-report behaviour, not the reasoning effort alone.
 
 ## Outputs
 
