@@ -31,3 +31,14 @@ src-tauri/resources/models/ggml-base.bin
 src-tauri/binaries/llama-cli-x86_64-pc-windows-msvc.exe
 # GGUF models stay out of git / NSIS — download-on-demand or ISSUEBRIDGE_REWRITE_GGUF
 *.gguf
+
+# Local scratch (security reports, experiments — never commit)
+.scratch/
+
+# Security-audit working files (never commit findings)
+security-audit-report.md
+security-audit-report.local.md
+security-audit-user.txt
+security-audit-user.local.txt
+security-audit-cli.log
+

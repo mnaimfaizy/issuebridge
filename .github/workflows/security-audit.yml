@@ -135,13 +135,16 @@ jobs:
             echo "No SECURITY_AUDIT_REASONING_EFFORT set — using model default."
           fi
 
-          REPORT=/tmp/security-audit-report.md
+          # Write inside the workspace — Copilot CLI write tools often cannot create /tmp paths.
+          REPORT="$GITHUB_WORKSPACE/security-audit-report.md"
           : > "$REPORT"
 
           {
             echo "Mode: $MODE"
             echo "Repository: $GITHUB_REPOSITORY"
-            echo "Report file (write your markdown here): $REPORT"
+            echo "Working directory: $GITHUB_WORKSPACE"
+            echo "Report file (write your FULL markdown report ONLY to this exact path): $REPORT"
+            echo "Do not write the report only to stdout — the file must contain the complete ## Security audit report."
             echo
             if [ "$MODE" = "pr" ] && [ -n "${BASE_REF:-}" ]; then
               echo "PR diff base: $BASE_REF"
@@ -161,42 +164,59 @@ jobs:
             echo "Also read these files for methodology:"
             echo "- .agents/skills/security-audit/threat-model.md"
             echo "- .agents/skills/security-audit/report-format.md"
-          } > /tmp/security-audit-user.txt
+          } > "$GITHUB_WORKSPACE/security-audit-user.txt"
 
           set +e
-          copilot -p "$(cat /tmp/security-audit-user.txt)" \
+          copilot -p "$(cat "$GITHUB_WORKSPACE/security-audit-user.txt")" \
             -s \
+            --add-dir="$GITHUB_WORKSPACE" \
             "${MODEL_ARGS[@]}" \
             --allow-tool='shell(ls:*),shell(find:*),shell(cat:*),shell(head:*),shell(rg:*),shell(git:*),shell(cargo:*),shell(npm:*)' \
             --allow-tool=write \
-            >/tmp/security-audit-cli.log 2>&1
+            >"$GITHUB_WORKSPACE/security-audit-cli.log" 2>&1
           code=$?
           set -e
           if [ "$code" -ne 0 ]; then
-            echo "Copilot CLI failed (exit $code). Log:"
-            tail -n 200 /tmp/security-audit-cli.log || true
+            echo "Copilot CLI failed (exit $code). Log (tail):"
+            tail -n 200 "$GITHUB_WORKSPACE/security-audit-cli.log" || true
             exit "$code"
           fi
 
           if [ ! -s "$REPORT" ]; then
             # Some CLI builds write only to stdout — capture fallback.
-            if grep -q '## Security audit report' /tmp/security-audit-cli.log; then
-              # Extract from first report heading to EOF-ish
-              awk '/^## Security audit report/{flag=1} flag{print}' /tmp/security-audit-cli.log > "$REPORT"
+            if grep -q '## Security audit report' "$GITHUB_WORKSPACE/security-audit-cli.log"; then
+              awk '/^## Security audit report/{flag=1} flag{print}' \
+                "$GITHUB_WORKSPACE/security-audit-cli.log" > "$REPORT"
             fi
           fi
 
           if [ ! -s "$REPORT" ]; then
             echo "Empty report — failing."
-            tail -n 200 /tmp/security-audit-cli.log || true
+            tail -n 200 "$GITHUB_WORKSPACE/security-audit-cli.log" || true
             exit 1
           fi
 
-          echo "Report bytes: $(wc -c < "$REPORT")"
-          cp "$REPORT" "$GITHUB_WORKSPACE/security-audit-report.md"
-          echo "report_path=$GITHUB_WORKSPACE/security-audit-report.md" >> "$GITHUB_OUTPUT"
+          echo "Report bytes: $(wc -c < "$REPORT" | tr -d '[:space:]')"
+          # Safe metadata only — never dump finding bodies to public Actions logs.
+          grep -E '^\- \*\*(Mode|Scope|Date|Max severity|Finding count):\*\*' "$REPORT" || true
+          FCOUNT="$(grep -cE '^### F[0-9]+ [—-]' "$REPORT" || true)"
+          echo "F-heading count: $(printf '%s' "$FCOUNT" | tr -d '[:space:]')"
+          echo "report_path=$REPORT" >> "$GITHUB_OUTPUT"
 
       # Do NOT upload-artifact on a public repo — artifacts are world-readable.
+      - name: Use trusted publisher script from default branch
+        if: >-
+          steps.gate.outputs.proceed == 'true' &&
+          github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # Avoid executing a PR-modified publisher with the privileged PAT (F3 class).
+          git fetch --no-tags origin "$BASE_SHA"
+          git checkout "$BASE_SHA" -- .github/security-audit/publish-draft-advisory.sh
+          echo "Publisher restored from PR base $BASE_SHA"
+
       - name: Publish draft Security Advisory (private)
         if: steps.gate.outputs.proceed == 'true'
         id: publish

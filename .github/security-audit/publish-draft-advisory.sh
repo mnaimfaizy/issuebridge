@@ -19,15 +19,41 @@ out() {
   fi
 }
 
-COUNT="$(grep -cE '^### F[0-9]+ —' "$REPORT" || true)"
+# Safe metadata only (no finding bodies) — helps debug false cleans in Actions logs.
+echo "Report path: $REPORT"
+echo "Report bytes: $(wc -c < "$REPORT" | tr -d '[:space:]')"
+if grep -E '^\- \*\*(Mode|Scope|Date|Max severity|Finding count):\*\*' "$REPORT" >/dev/null 2>&1; then
+  echo "Report metadata:"
+  grep -E '^\- \*\*(Mode|Scope|Date|Max severity|Finding count):\*\*' "$REPORT" || true
+fi
+
+# Accept em-dash or ASCII hyphen in finding headings.
+COUNT="$(grep -cE '^### F[0-9]+ [—-]' "$REPORT" || true)"
 COUNT="$(printf '%s' "$COUNT" | tr -d '[:space:]')"
 if [ -z "$COUNT" ]; then COUNT=0; fi
 
+# Secondary signal from the report header if headings were malformed.
+HEADER_COUNT="$(grep -Eie '^\- \*\*Finding count:\*\*[[:space:]]*[0-9]+' "$REPORT" | head -n1 | grep -Eo '[0-9]+$' || true)"
+HEADER_COUNT="$(printf '%s' "${HEADER_COUNT:-}" | tr -d '[:space:]')"
+echo "Parsed F-headings: $COUNT"
+if [ -n "${HEADER_COUNT:-}" ]; then
+  echo "Header Finding count: $HEADER_COUNT"
+fi
+
 if [ "$COUNT" = "0" ]; then
+  if [ -n "${HEADER_COUNT:-}" ] && [ "$HEADER_COUNT" != "0" ]; then
+    echo "WARNING: header Finding count=$HEADER_COUNT but no '### Fn —' headings matched — treating as format failure (no advisory)."
+    out "advisory_url="
+    out "finding_count=0"
+    out "max_severity=format_mismatch"
+    out "format_mismatch=true"
+    exit 0
+  fi
   echo "No Medium+ findings — skipping advisory."
   out "advisory_url="
   out "finding_count=0"
   out "max_severity=none"
+  out "format_mismatch=false"
   exit 0
 fi
 
@@ -75,3 +101,4 @@ out "advisory_url=$URL"
 out "ghsa_id=$GHSA"
 out "finding_count=$COUNT"
 out "max_severity=$MAX"
+out "format_mismatch=false"
