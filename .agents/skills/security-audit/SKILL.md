@@ -106,3 +106,5 @@ GitHub Actions workflow `.github/workflows/security-audit.yml`:
 - PR label `agent:security-audit` (`pr`)
 
 Prompt pack: `.github/security-audit/prompt.md` (must stay aligned with this skill).
+
+Model: repo vars `SECURITY_AUDIT_MODEL` (`--model`) and `SECURITY_AUDIT_REASONING_EFFORT` (`--reasoning-effort`). Example: `gpt-5.6-sol` + `medium`. See `docs/security-audit.md`.
