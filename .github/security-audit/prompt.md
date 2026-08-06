@@ -11,4 +11,5 @@ Rules:
 - Do NOT write weaponized exploits, exploit PoCs, or copy real secrets into the report (redact).
 - Cap at 12 findings; highest severity first.
 - If mode is `pr`, focus on the diff and adjacent call sites; still report only Medium+.
+- Write the complete markdown report to the exact report file path from the user message (workspace path). Do not rely on stdout alone.
 - Output markdown only into the report file — no chatter after the write.

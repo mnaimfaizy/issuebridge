@@ -31,11 +31,15 @@ The audit runs through Copilot CLI. Pin both via repo variables:
 | Variable | CLI flag | Example |
 |----------|----------|---------|
 | `SECURITY_AUDIT_MODEL` | `--model` | `gpt-5.6-sol` |
-| `SECURITY_AUDIT_REASONING_EFFORT` | `--reasoning-effort` | `medium` (`low` \| `medium` \| `high` \| `xhigh`) |
+| `SECURITY_AUDIT_REASONING_EFFORT` | `--reasoning-effort` | `high` (`low` \| `medium` \| `high` \| `xhigh`) |
 
 Leave either unset to use the CLI/model default. What the UI shows as `gpt-5.6-sol (medium)` is model id `gpt-5.6-sol` plus effort `medium` — not a single combined string.
 
-Run `copilot` locally and use `/model` to see the ids and effort levels your subscription offers. Prefer a deep-reasoning model for security work.
+Pilot recommendation for full/weekly runs: `SECURITY_AUDIT_MODEL=gpt-5.6-sol` and `SECURITY_AUDIT_REASONING_EFFORT=high` (or `xhigh`). `medium` is too shallow for this threat-led pass.
+
+The report file must be written inside the workspace (CI uses `$GITHUB_WORKSPACE/security-audit-report.md`). Writing only to `/tmp` is unreliable with Copilot CLI path allowlists.
+
+Run `copilot` locally and use `/model` to see the ids and effort levels your subscription offers.
 
 Gotchas:
 
