@@ -6,6 +6,8 @@
 #          (fine-grained) and the token owner must be admin/security manager.
 # Vars:    SECURITY_AUDIT_ENABLED=true
 #          SECURITY_AUDIT_ALLOWLIST=mnaimfaizy (comma logins; used for label / dispatch actors)
+#          SECURITY_AUDIT_MODEL (optional Copilot CLI --model; e.g. gpt-5.6-sol)
+#          SECURITY_AUDIT_REASONING_EFFORT (optional --reasoning-effort; low|medium|high|xhigh)
 
 name: Security audit
 
@@ -110,10 +112,27 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MODE: ${{ steps.gate.outputs.mode }}
           BASE_REF: ${{ github.event.pull_request.base.sha || '' }}
+          AUDIT_MODEL: ${{ vars.SECURITY_AUDIT_MODEL }}
+          AUDIT_EFFORT: ${{ vars.SECURITY_AUDIT_REASONING_EFFORT }}
         run: |
           set -euo pipefail
           if [ -z "${COPILOT_GITHUB_TOKEN:-}" ]; then
             export COPILOT_GITHUB_TOKEN="$GH_TOKEN"
+          fi
+
+          # Unavailable model/effort values may warn and fall back — log what we requested.
+          MODEL_ARGS=()
+          if [ -n "${AUDIT_MODEL:-}" ]; then
+            MODEL_ARGS+=(--model "$AUDIT_MODEL")
+            echo "Requested model: $AUDIT_MODEL"
+          else
+            echo "No SECURITY_AUDIT_MODEL set — using Copilot CLI default."
+          fi
+          if [ -n "${AUDIT_EFFORT:-}" ]; then
+            MODEL_ARGS+=(--reasoning-effort "$AUDIT_EFFORT")
+            echo "Requested reasoning effort: $AUDIT_EFFORT"
+          else
+            echo "No SECURITY_AUDIT_REASONING_EFFORT set — using model default."
           fi
 
           REPORT=/tmp/security-audit-report.md
@@ -147,6 +166,7 @@ jobs:
           set +e
           copilot -p "$(cat /tmp/security-audit-user.txt)" \
             -s \
+            "${MODEL_ARGS[@]}" \
             --allow-tool='shell(ls:*),shell(find:*),shell(cat:*),shell(head:*),shell(rg:*),shell(git:*),shell(cargo:*),shell(npm:*)' \
             --allow-tool=write \
             >/tmp/security-audit-cli.log 2>&1
