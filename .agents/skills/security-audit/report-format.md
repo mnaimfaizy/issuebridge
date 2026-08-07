@@ -36,6 +36,7 @@ Otherwise, for each finding (severity descending):
 - **Evidence:** what the code/config does wrong (quote or paraphrase briefly)
 - **Preconditions:** what must be true for this to matter
 - **Fix direction:** concrete remediation idea (not a full patch unless trivial)
+- **Concept id:** `<kebab-case>` (stable id for the findings ledger; required for new themes)
 ```
 
 Optional closing section:
@@ -44,6 +45,7 @@ Optional closing section:
 ### Notes
 
 - Scanner hits considered / discarded
+- Ledger concepts skipped (`concept-id` + status)
 - Areas not covered (time/scope)
 ```
 

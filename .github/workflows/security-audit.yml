@@ -166,6 +166,12 @@ jobs:
             echo
             echo "-----"
             echo
+            echo "Findings ledger (fingerprint only — mandatory dedup):"
+            echo
+            cat .agents/skills/security-audit/findings-ledger.md
+            echo
+            echo "-----"
+            echo
             echo "Threat model (inline for CI reliability):"
             echo
             cat .agents/skills/security-audit/threat-model.md

@@ -2,6 +2,8 @@
 
 Threat-led Medium+ security audit for Issuebridge. Skill: [`.agents/skills/security-audit/`](../.agents/skills/security-audit/). Workflow: [`.github/workflows/security-audit.yml`](../.github/workflows/security-audit.yml).
 
+After a draft advisory exists, triage findings with **security-finding-triage** and follow [security-response.md](./security-response.md). Dedup memory: [findings-ledger.md](../.agents/skills/security-audit/findings-ledger.md).
+
 ## Why draft advisories (not issues / artifacts / gists-in-logs)
 
 Issuebridge is **public**. Normal GitHub issues, Actions artifacts, and gist URLs printed in Actions logs are world-readable. Delivery channels:
@@ -93,4 +95,8 @@ Outcome: the next scheduled-equivalent run produced 6 findings (max `high`) in d
 - **Every run:** private draft advisory (report + transcript appendix)
 - **Optional:** email to `SECURITY_AUDIT_NOTIFY_EMAIL`
 - **PR label runs:** public comment with **counts only**
-- **No auto-fix PRs** in this pilot
+- **No auto-fix PRs** in this pilot — confirm via **security-finding-triage**, then implement
+
+## Dedup
+
+CI and Cursor audits must read `findings-ledger.md` and skip concepts already `open` / `fixed` / `rejected` / `accepted-risk` unless a regression is evidenced. That stops the same High themes from spawning duplicate drafts every week.

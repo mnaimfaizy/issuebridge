@@ -23,8 +23,11 @@ Windows-first Tauri app: capture GitHub issues while testing (hotkey + voice), k
 | diagnosing-bugs | [`.agents/skills/diagnosing-bugs/SKILL.md`](./.agents/skills/diagnosing-bugs/SKILL.md) | Hard bugs / regressions |
 | grill-with-docs | [`.agents/skills/grill-with-docs/SKILL.md`](./.agents/skills/grill-with-docs/SKILL.md) | Stress-test a plan with domain modeling |
 | security-audit | [`.agents/skills/security-audit/SKILL.md`](./.agents/skills/security-audit/SKILL.md) | Medium+ threat-led security audit; draft advisory (private) |
+| security-finding-triage | [`.agents/skills/security-finding-triage/SKILL.md`](./.agents/skills/security-finding-triage/SKILL.md) | Stress-check one draft GHSA finding; confirm/reject; update ledger |
 
 Other skills under [`.agents/skills/`](./.agents/skills/) apply when their descriptions match the task.
+
+Security response playbook: [`docs/security-response.md`](./docs/security-response.md). Public reporting: [`SECURITY.md`](./SECURITY.md).
 
 ## Hard constraints (short)
 

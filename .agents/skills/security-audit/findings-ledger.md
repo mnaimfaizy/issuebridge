@@ -1,0 +1,37 @@
+# Security findings ledger
+
+Fingerprint-only registry for Issuebridge security findings. **Public repo safe:** no attack paths, no exploit detail, no secrets. Full write-ups live in draft GitHub Security Advisories (admins only).
+
+The **security-audit** agent must read this file before filing findings and must not re-file a concept that already has status `open`, `fixed`, `rejected`, or `accepted-risk` unless evidence shows a **regression** or material change (document why in Notes).
+
+The **security-finding-triage** skill updates rows after stress-check.
+
+## Status values
+
+| Status | Meaning |
+|--------|---------|
+| `open` | Confirmed or not yet triaged; still in scope for fixes |
+| `fixed` | Remediation merged; auditor should only refile on regression |
+| `rejected` | Not a real Medium+ issue for Issuebridge (with rationale in triage notes / GHSA) |
+| `accepted-risk` | Real but deferred / accepted by maintainer |
+
+## Ledger
+
+| concept-id | title | path | severity | status | ghsa | updated |
+|------------|-------|------|----------|--------|------|---------|
+| `client-secret-in-release-binary` | GitHub client secret embedded in release binary | `src-tauri/src/adapters/github_http.rs` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `mutable-copilot-cli` | Mutable Copilot CLI package with privileged CI tokens | `.github/workflows/security-audit.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `mutable-third-party-release-actions` | Mutable third-party actions in privileged release pipeline | `.github/workflows/release-windows.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `pr-controlled-audit-privileged-token` | PR-controlled audit agent + privileged advisory token | `.github/workflows/security-audit.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `relative-sidecar-cwd-exec` | Relative sidecar discovery → cwd code execution | `src-tauri/src/adapters/whisper_voice.rs` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `sidecar-download-no-integrity` | Release sidecars downloaded without integrity verification | `scripts/fetch-whisper-assets.ps1` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `unprotected-tag-release-secrets` | Unprotected tag builds expose release secrets | `.github/workflows/release-windows.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `agent-pipeline-plan-injection` | Untrusted issue text can prompt-inject / replace agent plan | `.github/workflows/agent-pipeline.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `publish-app-visible-boundary` | Publish path does not enforce App-visible repo boundary | `src/capture/CapturePopup.tsx` | medium | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+
+## How to update
+
+1. Prefer editing the matching row in place (same `concept-id`).
+2. New themes from a fresh audit → add a row with status `open` and the new GHSA id.
+3. After triage: set `status`, bump `updated` (UTC `YYYY-MM-DD`), keep `title`/`path` fingerprint-only.
+4. Never paste attack-path text, PoCs, or tokens into this file.

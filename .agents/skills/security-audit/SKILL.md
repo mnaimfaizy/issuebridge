@@ -27,16 +27,24 @@ Pilot skill lives in this repo; later extract to a shared skills repository with
 ## Before you start
 
 1. Read [threat-model.md](threat-model.md) (Issuebridge assets & attack paths).
-2. Read [report-format.md](report-format.md) (required output shape).
-3. Prefer evidence over speculation. No finding without `file:line` (or clear “missing control” with where it should live).
-4. **Never** write weaponized exploits, exploit PoCs, or public step-by-step attack recipes. Impact = narrative + conditions only.
-5. **Never** post finding detail on public issues/PR bodies. Private channel = **draft repository Security Advisory**.
+2. Read [findings-ledger.md](findings-ledger.md) (fingerprint registry — **mandatory**).
+3. Read [report-format.md](report-format.md) (required output shape).
+4. Prefer evidence over speculation. No finding without `file:line` (or clear “missing control” with where it should live).
+5. **Never** write weaponized exploits, exploit PoCs, or public step-by-step attack recipes. Impact = narrative + conditions only.
+6. **Never** post finding detail on public issues/PR bodies. Private channel = **draft repository Security Advisory**.
+
+## Dedup (ledger)
+
+Do **not** file a finding whose `concept-id` (or clear same path + failure mode) already appears in the ledger with status `open`, `fixed`, `rejected`, or `accepted-risk`, unless you have evidence of a **regression** or material change. If you skip ledger hits, list them under Notes (`Skipped ledger: <concept-id> (<status>)`).
+
+New themes only → new findings. After the run, triage (not this skill) updates the ledger — see **security-finding-triage**.
 
 ## Process
 
 ### 1. Orient
 
 - Confirm mode (`full` / `pr`).
+- Read the ledger and note which concepts are already tracked.
 - For `pr`: `git diff <base>...HEAD` and list changed paths; still open adjacent auth/IPC/store files when the diff touches them.
 - Skim `CONTEXT.md` only for domain terms if findings mention product concepts (Draft, Publish, Capture, …).
 
@@ -89,13 +97,14 @@ Cap the report at **12** findings (highest severity first). If more exist, keep 
 
 ### 6. Out of scope for auto-fix
 
-Do **not** open fix PRs or `@copilot` fix rounds unless the user explicitly asks after triage.
+Do **not** open fix PRs or `@copilot` fix rounds unless the user explicitly asks after triage (**security-finding-triage** → then implement).
 
 ## Cursor invocation examples
 
 - “Run a full security audit”
 - “Security-audit this PR”
 - “Hunt for IPC / token vulnerabilities”
+- After a draft exists: “Triage F3” → **security-finding-triage**
 
 ## CI / automation
 
@@ -110,3 +119,5 @@ Prompt pack: `.github/security-audit/prompt.md` (must stay aligned with this ski
 Model: repo vars `SECURITY_AUDIT_MODEL` (`--model`) and `SECURITY_AUDIT_REASONING_EFFORT` (`--reasoning-effort`). Example: `gpt-5.6-sol` + `high`. See `docs/security-audit.md`.
 
 Delivery: every CI run files a **draft** Security Advisory (including clean runs) with report + agent transcript appendix. Optional email via `SECURITY_AUDIT_NOTIFY_EMAIL` + `RESEND_API_KEY`. Never dump findings/transcripts into public Actions logs.
+
+Response loop: [docs/security-response.md](../../../docs/security-response.md) and skill **security-finding-triage**.
