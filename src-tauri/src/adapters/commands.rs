@@ -1222,7 +1222,7 @@ fn auth_error_message(err: AuthError) -> String {
         AuthError::InvalidCredentials => "GitHub rejected those credentials.".into(),
         AuthError::StorageUnavailable => "Could not access the OS credential vault.".into(),
         AuthError::ProviderUnavailable => {
-            "GitHub App sign-in needs the client secret. Set ISSUEBRIDGE_GITHUB_CLIENT_SECRET in this terminal (from the issuebridge-dev App / 1Password), restart npm run tauri dev, then try Sign in with GitHub again.".into()
+            "GitHub App sign-in could not complete the token exchange. For local `tauri dev`, set ISSUEBRIDGE_OAUTH_EXCHANGE_URL or ISSUEBRIDGE_GITHUB_CLIENT_SECRET in this terminal, restart, then try Sign in with GitHub again. Official builds use the exchange URL baked at compile time.".into()
         }
     }
 }

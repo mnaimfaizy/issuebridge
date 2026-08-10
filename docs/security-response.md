@@ -36,6 +36,11 @@ How Issuebridge handles Medium+ findings after discovery. Complements [security-
 - Close superseded drafts with a pointer to the canonical GHSA.
 - Do not turn every weekly audit into a published CVE.
 
-## Reporter path
+## F1 follow-through (`client-secret-in-release-binary`)
 
-External reports: see [SECURITY.md](../SECURITY.md) (private vulnerability reporting).
+Ledger status: **fixed** (code + Worker deployed). Remaining maintainer steps before publishing the GHSA:
+
+1. Set Actions secret `ISSUEBRIDGE_OAUTH_EXCHANGE_URL` to the Worker URL
+2. Ship a Release that does not bake `ISSUEBRIDGE_GITHUB_CLIENT_SECRET`
+3. Rotate the GitHub App client secret (update Worker secret afterward)
+4. Publish GHSA when users need the upgrade notice

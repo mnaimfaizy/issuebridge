@@ -1,0 +1,7 @@
+name = "issuebridge-oauth-exchange"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+
+# Set secrets (never commit):
+#   npx wrangler secret put GITHUB_CLIENT_ID
+#   npx wrangler secret put GITHUB_CLIENT_SECRET

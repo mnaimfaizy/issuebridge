@@ -202,7 +202,8 @@ export function checkPackagingContract(config) {
 }
 
 /**
- * Official release builds inject GitHub App credentials at compile time.
+ * Official release builds bake the public client id and OAuth exchange URL.
+ * The App client secret must never be injected into the installer.
  * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
  * @returns {{ ok: boolean, errors: string[] }}
  */
@@ -213,9 +214,14 @@ export function checkReleaseCredentials(env) {
       "ISSUEBRIDGE_GITHUB_CLIENT_ID must be set for official release builds",
     );
   }
-  if (!env.ISSUEBRIDGE_GITHUB_CLIENT_SECRET?.trim()) {
+  if (!env.ISSUEBRIDGE_OAUTH_EXCHANGE_URL?.trim()) {
     errors.push(
-      "ISSUEBRIDGE_GITHUB_CLIENT_SECRET must be set for official release builds (never commit)",
+      "ISSUEBRIDGE_OAUTH_EXCHANGE_URL must be set for official release builds (HTTPS exchange backend; never bake the client secret)",
+    );
+  }
+  if (env.ISSUEBRIDGE_GITHUB_CLIENT_SECRET?.trim()) {
+    errors.push(
+      "ISSUEBRIDGE_GITHUB_CLIENT_SECRET must not be set for official release builds (use the OAuth exchange backend instead)",
     );
   }
   return { ok: errors.length === 0, errors };

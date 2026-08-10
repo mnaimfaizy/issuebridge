@@ -17,10 +17,12 @@ Path on this machine: `%LOCALAPPDATA%\Issuebridge\settings.json`.
    - Windows Credential Manager → **Windows Credentials**
    - Remove entries for service / target `com.issuebridge.app`
 
-4. **Restart with the GitHub App client secret** (required for OAuth):
+4. **Restart with OAuth exchange configured** (required for Sign in):
 
 ```powershell
-$env:ISSUEBRIDGE_GITHUB_CLIENT_SECRET = "<secret from issuebridge-dev App / 1Password>"
+$env:ISSUEBRIDGE_OAUTH_EXCHANGE_URL = "https://oauth-exchange.example.workers.dev/"
+# Or local/dev only:
+# $env:ISSUEBRIDGE_GITHUB_CLIENT_SECRET = "<secret from issuebridge-dev App / 1Password>"
 npm run tauri dev
 ```
 
