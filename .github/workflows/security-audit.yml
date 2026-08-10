@@ -103,9 +103,9 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install Copilot CLI + jq helpers
+      - name: Install locked Copilot CLI
         if: steps.gate.outputs.proceed == 'true'
-        run: npm install -g @github/copilot
+        run: npm ci --prefix .github/copilot-cli --ignore-scripts --install-strategy=nested
 
       - name: Run security audit (Copilot CLI)
         if: steps.gate.outputs.proceed == 'true'
@@ -184,7 +184,7 @@ jobs:
           } > "$GITHUB_WORKSPACE/security-audit-user.txt"
 
           set +e
-          copilot -p "$(cat "$GITHUB_WORKSPACE/security-audit-user.txt")" \
+          ./.github/copilot-cli/node_modules/.bin/copilot -p "$(cat "$GITHUB_WORKSPACE/security-audit-user.txt")" \
             -s \
             --no-ask-user \
             --add-dir="$GITHUB_WORKSPACE" \

@@ -20,7 +20,7 @@ The **security-finding-triage** skill updates rows after stress-check.
 | concept-id | title | path | severity | status | ghsa | updated |
 |------------|-------|------|----------|--------|------|---------|
 | `client-secret-in-release-binary` | GitHub client secret embedded in release binary | `src-tauri/src/adapters/github_http.rs` | high | fixed | GHSA-97vr-qxvw-88gr | 2026-08-10 |
-| `mutable-copilot-cli` | Mutable Copilot CLI package with privileged CI tokens | `.github/workflows/security-audit.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `mutable-copilot-cli` | Mutable Copilot CLI package with privileged CI tokens | `.github/workflows/security-audit.yml` | high | fixed | GHSA-97vr-qxvw-88gr | 2026-08-10 |
 | `mutable-third-party-release-actions` | Mutable third-party actions in privileged release pipeline | `.github/workflows/release-windows.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
 | `pr-controlled-audit-privileged-token` | PR-controlled audit agent + privileged advisory token | `.github/workflows/security-audit.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
 | `relative-sidecar-cwd-exec` | Relative sidecar discovery → cwd code execution | `src-tauri/src/adapters/whisper_voice.rs` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
@@ -32,6 +32,7 @@ The **security-finding-triage** skill updates rows after stress-check.
 ## Remediation notes
 
 - `client-secret-in-release-binary` (F1): **fixed** in code — release builds bake `ISSUEBRIDGE_OAUTH_EXCHANGE_URL` only; Worker deployed (`issuebridge-oauth-exchange.mnaim-faizy.workers.dev`). Maintainer still: set Actions secret `ISSUEBRIDGE_OAUTH_EXCHANGE_URL`, ship a Release without the client secret, **rotate** the App client secret, then publish GHSA when ready.
+- `mutable-copilot-cli` (F2): **fixed** — privileged Copilot workflows install exact version `1.0.78` from a dedicated npm lockfile with registry integrity hashes and invoke only the locked local binary.
 
 ## How to update
 

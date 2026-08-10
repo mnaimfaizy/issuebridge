@@ -84,8 +84,8 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install Copilot CLI
-        run: npm install -g @github/copilot
+      - name: Install locked Copilot CLI
+        run: npm ci --prefix .github/copilot-cli --ignore-scripts --install-strategy=nested
 
       - name: Run planner (Copilot CLI)
         id: plan
@@ -114,7 +114,7 @@ jobs:
 
           # Minimal tools: read repo via shell listing/cat only; write plan to runner file.
           set +e
-          copilot -p "$(cat /tmp/planner-user.txt)" \
+          ./.github/copilot-cli/node_modules/.bin/copilot -p "$(cat /tmp/planner-user.txt)" \
             -s \
             --allow-tool='shell(ls:*),shell(find:*),shell(cat:*),shell(head:*),shell(rg:*),shell(git:*)' \
             --allow-tool=write \
