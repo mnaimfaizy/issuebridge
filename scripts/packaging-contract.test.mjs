@@ -226,26 +226,39 @@ describe("resourcesIncludeGguf", () => {
 });
 
 describe("release credential injection", () => {
-  it("accepts client id and secret from env", () => {
+  it("accepts client id and exchange URL from env", () => {
     const result = checkReleaseCredentials({
       ISSUEBRIDGE_GITHUB_CLIENT_ID: "Iv23li6Ao8URyrvbNZOq",
-      ISSUEBRIDGE_GITHUB_CLIENT_SECRET: "not-a-real-secret",
+      ISSUEBRIDGE_OAUTH_EXCHANGE_URL:
+        "https://oauth-exchange.example.workers.dev/",
     });
     assert.equal(result.ok, true);
     assert.deepEqual(result.errors, []);
   });
 
-  it("rejects missing client secret for official release builds", () => {
+  it("rejects missing exchange URL for official release builds", () => {
     const result = checkReleaseCredentials({
       ISSUEBRIDGE_GITHUB_CLIENT_ID: "Iv23li6Ao8URyrvbNZOq",
     });
     assert.equal(result.ok, false);
-    assert.match(result.errors.join("\n"), /CLIENT_SECRET/);
+    assert.match(result.errors.join("\n"), /OAUTH_EXCHANGE_URL/);
+  });
+
+  it("rejects client secret present on official release builds", () => {
+    const result = checkReleaseCredentials({
+      ISSUEBRIDGE_GITHUB_CLIENT_ID: "Iv23li6Ao8URyrvbNZOq",
+      ISSUEBRIDGE_OAUTH_EXCHANGE_URL:
+        "https://oauth-exchange.example.workers.dev/",
+      ISSUEBRIDGE_GITHUB_CLIENT_SECRET: "must-not-be-baked",
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join("\n"), /CLIENT_SECRET must not be set/);
   });
 
   it("rejects missing client id for official release builds", () => {
     const result = checkReleaseCredentials({
-      ISSUEBRIDGE_GITHUB_CLIENT_SECRET: "not-a-real-secret",
+      ISSUEBRIDGE_OAUTH_EXCHANGE_URL:
+        "https://oauth-exchange.example.workers.dev/",
     });
     assert.equal(result.ok, false);
     assert.match(result.errors.join("\n"), /CLIENT_ID/);

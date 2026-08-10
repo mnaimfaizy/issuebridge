@@ -23,15 +23,19 @@ npm run tauri dev
 
 ### Sign in with GitHub (required for Install App)
 
-**Sign in with GitHub** (App OAuth + PKCE) is the supported path for first-run. Local `tauri dev` needs the App **client secret** or the browser can succeed while the app still fails the token exchange:
+**Sign in with GitHub** (App OAuth + PKCE) is the supported path for first-run. Local `tauri dev` needs either the OAuth **exchange URL** (same as release) or a runtime App **client secret** — otherwise the browser can succeed while the app still fails the token exchange:
 
 ```powershell
-$env:ISSUEBRIDGE_GITHUB_CLIENT_SECRET = "<secret from issuebridge-dev App / 1Password>"
+# Preferred (matches release): point at your exchange Worker / cPanel PHP
+$env:ISSUEBRIDGE_OAUTH_EXCHANGE_URL = "https://oauth-exchange.example.workers.dev/"
+# Or local/dev only — never bake this into official NSIS builds:
+# $env:ISSUEBRIDGE_GITHUB_CLIENT_SECRET = "<secret from issuebridge-dev App / 1Password>"
 # optional; default client id is already set for issuebridge-dev
 # $env:ISSUEBRIDGE_GITHUB_CLIENT_ID = "Iv23li6Ao8URyrvbNZOq"
 npm run tauri dev
 ```
 
+See [`services/oauth-exchange/README.md`](services/oauth-exchange/README.md) to deploy the exchange backend.
 Terminal should show `OAuth exchange ok`, then Install App → **Continue**.
 
 **PAT is identity-only.** Fine-grained and classic PATs can sign in (`GET /user`) but **cannot** call `GET /user/installations`. Continue will fail until you use App OAuth. Prefer **Sign in with GitHub**; do not reinstall the App if it is already installed — fix sign-in, then Continue.
@@ -100,18 +104,17 @@ v0.1 ships a **per-user NSIS** installer (`*-setup.exe`) only — `installMode: 
 
 The build is **unsigned** for v0.1. Browser downloads may show a Windows SmartScreen warning; that is expected until code signing is added. Users can proceed via “More info → Run anyway.”
 
-### Official release build (inject credentials; never commit secrets)
+### Official release build (bake public id + exchange URL; never the client secret)
 
 ```powershell
 $env:ISSUEBRIDGE_GITHUB_CLIENT_ID = "<client-id>"
-$env:ISSUEBRIDGE_GITHUB_CLIENT_SECRET = "<client-secret>"
+$env:ISSUEBRIDGE_OAUTH_EXCHANGE_URL = "https://oauth-exchange.example.workers.dev/"
 powershell -ExecutionPolicy Bypass -File scripts/release-build.ps1
 ```
 
-`scripts/release-build.ps1` checks the packaging contract, refuses to build without both env vars, fetches Whisper + llama.cpp assets (unless `-SkipWhisperFetch` / `-SkipLlamaFetch`), and runs `npm run tauri -- build`. CI: `.github/workflows/release-windows.yml` (tag `v*` or workflow_dispatch).
+`scripts/release-build.ps1` checks the packaging contract, refuses to build without client id + exchange URL (and refuses if `ISSUEBRIDGE_GITHUB_CLIENT_SECRET` is set), fetches Whisper + llama.cpp assets (unless `-SkipWhisperFetch` / `-SkipLlamaFetch`), and runs `npm run tauri -- build`. CI: `.github/workflows/release-windows.yml` (tag `v*` or workflow_dispatch). Add repo secret `ISSUEBRIDGE_OAUTH_EXCHANGE_URL`.
 
-Dev/`tauri build` without those env vars still packages; OAuth secret can also be supplied at **runtime** via `ISSUEBRIDGE_GITHUB_CLIENT_SECRET` for local `tauri dev` (compile-time `option_env!` remains for release injection).
-
+Dev/`tauri build` without those env vars still packages. Local `tauri dev` may use runtime `ISSUEBRIDGE_OAUTH_EXCHANGE_URL` or runtime `ISSUEBRIDGE_GITHUB_CLIENT_SECRET` — the client secret is **never** compile-time-injected into release binaries.
 ## Architecture
 
 - `src-tauri/src/core` — Issuebridge application core (use-cases + ports)

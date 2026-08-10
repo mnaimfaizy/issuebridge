@@ -7,7 +7,7 @@ Windows-first Tauri app: capture GitHub issues while testing (hotkey + voice), k
 1. Read [`CONTEXT.md`](./CONTEXT.md) before naming domain concepts in code, commits, or docs.
 2. Commits follow the **commit** skill (conventional types). Do not invent extra types.
 3. Releases follow the **release** skill (suggest SemVer → confirm → prepare changelog/versions). Do not invent a release-branch workflow.
-4. Never commit secrets, client secrets, or `.env` files. Release builds inject GitHub App credentials via env/CI only.
+4. Never commit secrets, client secrets, or `.env` files. Official Release builds bake the public client id and OAuth exchange URL via env/CI only — never the App client secret (see `services/oauth-exchange/`).
 5. Keep domain logic in `src-tauri/src/core`; UI/IPC stay in adapters / `src`.
 
 ## Skills

@@ -19,7 +19,7 @@ The **security-finding-triage** skill updates rows after stress-check.
 
 | concept-id | title | path | severity | status | ghsa | updated |
 |------------|-------|------|----------|--------|------|---------|
-| `client-secret-in-release-binary` | GitHub client secret embedded in release binary | `src-tauri/src/adapters/github_http.rs` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `client-secret-in-release-binary` | GitHub client secret embedded in release binary | `src-tauri/src/adapters/github_http.rs` | high | fixed | GHSA-97vr-qxvw-88gr | 2026-08-10 |
 | `mutable-copilot-cli` | Mutable Copilot CLI package with privileged CI tokens | `.github/workflows/security-audit.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
 | `mutable-third-party-release-actions` | Mutable third-party actions in privileged release pipeline | `.github/workflows/release-windows.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
 | `pr-controlled-audit-privileged-token` | PR-controlled audit agent + privileged advisory token | `.github/workflows/security-audit.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
@@ -28,6 +28,10 @@ The **security-finding-triage** skill updates rows after stress-check.
 | `unprotected-tag-release-secrets` | Unprotected tag builds expose release secrets | `.github/workflows/release-windows.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
 | `agent-pipeline-plan-injection` | Untrusted issue text can prompt-inject / replace agent plan | `.github/workflows/agent-pipeline.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
 | `publish-app-visible-boundary` | Publish path does not enforce App-visible repo boundary | `src/capture/CapturePopup.tsx` | medium | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+
+## Remediation notes
+
+- `client-secret-in-release-binary` (F1): **fixed** in code — release builds bake `ISSUEBRIDGE_OAUTH_EXCHANGE_URL` only; Worker deployed (`issuebridge-oauth-exchange.mnaim-faizy.workers.dev`). Maintainer still: set Actions secret `ISSUEBRIDGE_OAUTH_EXCHANGE_URL`, ship a Release without the client secret, **rotate** the App client secret, then publish GHSA when ready.
 
 ## How to update
 

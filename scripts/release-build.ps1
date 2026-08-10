@@ -1,9 +1,9 @@
 # Official v0.1 Windows NSIS release build.
-# Injects GitHub App credentials at compile time (never commit secrets).
+# Bakes public client id + OAuth exchange URL at compile time (never the client secret).
 #
 # Required env:
 #   ISSUEBRIDGE_GITHUB_CLIENT_ID
-#   ISSUEBRIDGE_GITHUB_CLIENT_SECRET
+#   ISSUEBRIDGE_OAUTH_EXCHANGE_URL
 #
 # Optional:
 #   -SkipWhisperFetch  skip scripts/fetch-whisper-assets.ps1 when assets already present

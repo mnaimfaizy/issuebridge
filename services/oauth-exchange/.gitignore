@@ -1,0 +1,7 @@
+# Local / deploy artifacts for oauth-exchange — never commit secrets
+node_modules/
+.wrangler/
+dist/
+cpanel/config.php
+.env
+.dev.vars

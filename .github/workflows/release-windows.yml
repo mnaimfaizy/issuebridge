@@ -1,9 +1,9 @@
 # Official Windows NSIS release build (v0.1).
-# Injects GitHub App credentials at compile time; never commit secrets.
+# Bakes public client id + OAuth exchange URL at compile time; never the client secret.
 #
-# Repository secrets (Settings -> Secrets and variables -> Actions):
+# Repository secrets / vars (Settings -> Secrets and variables -> Actions):
 #   ISSUEBRIDGE_GITHUB_CLIENT_ID
-#   ISSUEBRIDGE_GITHUB_CLIENT_SECRET
+#   ISSUEBRIDGE_OAUTH_EXCHANGE_URL  (HTTPS URL of the exchange Worker or cPanel PHP)
 
 name: Release Windows NSIS
 
@@ -41,7 +41,7 @@ jobs:
       - name: Official NSIS release build
         env:
           ISSUEBRIDGE_GITHUB_CLIENT_ID: ${{ secrets.ISSUEBRIDGE_GITHUB_CLIENT_ID }}
-          ISSUEBRIDGE_GITHUB_CLIENT_SECRET: ${{ secrets.ISSUEBRIDGE_GITHUB_CLIENT_SECRET }}
+          ISSUEBRIDGE_OAUTH_EXCHANGE_URL: ${{ secrets.ISSUEBRIDGE_OAUTH_EXCHANGE_URL }}
         run: powershell -ExecutionPolicy Bypass -File scripts/release-build.ps1
 
       - name: Upload setup.exe (Actions artifact)

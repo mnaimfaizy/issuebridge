@@ -26,13 +26,21 @@ pub fn github_client_id() -> String {
         .unwrap_or_else(|| "Iv23li6Ao8URyrvbNZOq".to_string())
 }
 
-/// GitHub App client secret. Prefer runtime env for local `tauri dev`; release builds
-/// can also inject via `option_env!` at compile time. Never commit the value.
+/// GitHub App client secret for **local/dev only** (runtime env).
+/// Never bake into release binaries — official builds use [`oauth_exchange_url`].
 pub fn github_client_secret() -> Option<String> {
     std::env::var("ISSUEBRIDGE_GITHUB_CLIENT_SECRET")
         .ok()
         .filter(|s| !s.is_empty())
-        .or_else(|| option_env!("ISSUEBRIDGE_GITHUB_CLIENT_SECRET").map(str::to_string))
+}
+
+/// HTTPS endpoint that holds the App client secret and exchanges OAuth codes.
+/// Release builds bake this via `option_env!`; local override via runtime env.
+pub fn oauth_exchange_url() -> Option<String> {
+    std::env::var("ISSUEBRIDGE_OAUTH_EXCHANGE_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| option_env!("ISSUEBRIDGE_OAUTH_EXCHANGE_URL").map(str::to_string))
 }
 
 pub const OAUTH_REDIRECT_URI: &str = "http://127.0.0.1:17863/oauth/callback";
@@ -42,16 +50,25 @@ pub struct HttpGitHub {
     client: Client,
     client_id: String,
     client_secret: Option<String>,
+    exchange_url: Option<String>,
 }
 
 impl Default for HttpGitHub {
     fn default() -> Self {
-        Self::new(github_client_id(), github_client_secret())
+        Self::new(
+            github_client_id(),
+            github_client_secret(),
+            oauth_exchange_url(),
+        )
     }
 }
 
 impl HttpGitHub {
-    pub fn new(client_id: String, client_secret: Option<String>) -> Self {
+    pub fn new(
+        client_id: String,
+        client_secret: Option<String>,
+        exchange_url: Option<String>,
+    ) -> Self {
         let client = Client::builder()
             .user_agent(USER_AGENT_VALUE)
             .timeout(std::time::Duration::from_secs(15))
@@ -62,6 +79,7 @@ impl HttpGitHub {
             client,
             client_id,
             client_secret,
+            exchange_url,
         }
     }
 }
@@ -148,17 +166,22 @@ impl GitHub for HttpGitHub {
         code: &str,
         code_verifier: &str,
     ) -> Result<StoredCredentials, GitHubError> {
+        if let Some(exchange_url) = self.exchange_url.as_deref() {
+            return self.exchange_via_backend(exchange_url, code, code_verifier);
+        }
+
         let secret = match self.client_secret.as_deref() {
             Some(secret) => secret,
             None => {
                 eprintln!(
-                    "[issuebridge] OAuth exchange blocked: ISSUEBRIDGE_GITHUB_CLIENT_SECRET is not set"
+                    "[issuebridge] OAuth exchange blocked: set ISSUEBRIDGE_OAUTH_EXCHANGE_URL \
+                     (release) or ISSUEBRIDGE_GITHUB_CLIENT_SECRET (local/dev)"
                 );
                 return Err(GitHubError::Unavailable);
             }
         };
 
-        eprintln!("[issuebridge] OAuth POST access_token …");
+        eprintln!("[issuebridge] OAuth POST access_token (direct, local/dev) …");
         let response = self
             .client
             .post(TOKEN_URL)
@@ -176,44 +199,7 @@ impl GitHub for HttpGitHub {
                 GitHubError::Unavailable
             })?;
 
-        let status = response.status().as_u16();
-        eprintln!("[issuebridge] OAuth token status={status}");
-        if !response.status().is_success() {
-            let body = response.text().unwrap_or_default();
-            eprintln!(
-                "[issuebridge] OAuth token error body={}",
-                truncate_for_log(&body)
-            );
-            return Err(GitHubError::Unavailable);
-        }
-
-        let body: TokenResponse = response.json().map_err(|err| {
-            eprintln!("[issuebridge] OAuth token JSON parse failed: {err}");
-            GitHubError::Unavailable
-        })?;
-
-        if let Some(ref err) = body.error {
-            eprintln!(
-                "[issuebridge] OAuth token error={} desc={}",
-                err,
-                body.error_description.as_deref().unwrap_or("")
-            );
-            return Err(GitHubError::InvalidCredentials);
-        }
-
-        let access_token = body.access_token.ok_or(GitHubError::InvalidCredentials)?;
-        if access_token.is_empty() {
-            return Err(GitHubError::InvalidCredentials);
-        }
-
-        eprintln!(
-            "[issuebridge] OAuth exchange ok (access_len={})",
-            access_token.len()
-        );
-        Ok(StoredCredentials {
-            access_token,
-            refresh_token: body.refresh_token.filter(|t| !t.is_empty()),
-        })
+        self.parse_token_response(response)
     }
 
     fn list_app_install_snapshot(&self, token: &str) -> Result<AppInstallSnapshot, GitHubError> {
@@ -463,6 +449,74 @@ fn issue_from_response(issue: IssueResponse) -> CreatedIssue {
 }
 
 impl HttpGitHub {
+    fn exchange_via_backend(
+        &self,
+        exchange_url: &str,
+        code: &str,
+        code_verifier: &str,
+    ) -> Result<StoredCredentials, GitHubError> {
+        eprintln!("[issuebridge] OAuth POST exchange backend …");
+        let response = self
+            .client
+            .post(exchange_url)
+            .header(ACCEPT, "application/json")
+            .json(&oauth_exchange_request_body(
+                &self.client_id,
+                code,
+                code_verifier,
+            ))
+            .send()
+            .map_err(|err| {
+                eprintln!("[issuebridge] OAuth exchange backend request failed: {err}");
+                GitHubError::Unavailable
+            })?;
+        self.parse_token_response(response)
+    }
+
+    fn parse_token_response(
+        &self,
+        response: reqwest::blocking::Response,
+    ) -> Result<StoredCredentials, GitHubError> {
+        let status = response.status().as_u16();
+        eprintln!("[issuebridge] OAuth token status={status}");
+        if !response.status().is_success() {
+            let body = response.text().unwrap_or_default();
+            eprintln!(
+                "[issuebridge] OAuth token error body={}",
+                truncate_for_log(&body)
+            );
+            return Err(GitHubError::Unavailable);
+        }
+
+        let body: TokenResponse = response.json().map_err(|err| {
+            eprintln!("[issuebridge] OAuth token JSON parse failed: {err}");
+            GitHubError::Unavailable
+        })?;
+
+        if let Some(ref err) = body.error {
+            eprintln!(
+                "[issuebridge] OAuth token error={} desc={}",
+                err,
+                body.error_description.as_deref().unwrap_or("")
+            );
+            return Err(GitHubError::InvalidCredentials);
+        }
+
+        let access_token = body.access_token.ok_or(GitHubError::InvalidCredentials)?;
+        if access_token.is_empty() {
+            return Err(GitHubError::InvalidCredentials);
+        }
+
+        eprintln!(
+            "[issuebridge] OAuth exchange ok (access_len={})",
+            access_token.len()
+        );
+        Ok(StoredCredentials {
+            access_token,
+            refresh_token: body.refresh_token.filter(|t| !t.is_empty()),
+        })
+    }
+
     fn fetch_installations(&self, token: &str) -> Result<Vec<Installation>, GitHubError> {
         let mut url = Some(format!("{INSTALLATIONS_URL}?per_page=100"));
         let mut all = Vec::new();
@@ -588,4 +642,48 @@ fn next_link(header: Option<&str>) -> Option<String> {
 
 fn truncate_for_log(body: &str) -> String {
     body.chars().take(300).collect()
+}
+
+/// JSON body posted to the OAuth exchange backend (no client secret).
+pub fn oauth_exchange_request_body(
+    client_id: &str,
+    code: &str,
+    code_verifier: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "client_id": client_id,
+        "code": code,
+        "code_verifier": code_verifier,
+        "redirect_uri": OAUTH_REDIRECT_URI,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exchange_request_body_has_no_client_secret() {
+        let body = oauth_exchange_request_body("cid", "auth-code", "verifier");
+        assert_eq!(body["client_id"], "cid");
+        assert_eq!(body["code"], "auth-code");
+        assert_eq!(body["code_verifier"], "verifier");
+        assert_eq!(body["redirect_uri"], OAUTH_REDIRECT_URI);
+        assert!(body.get("client_secret").is_none());
+    }
+
+    #[test]
+    fn client_secret_resolver_ignores_compile_time_injection() {
+        // Release builds must not embed secrets via option_env!; only runtime env.
+        // This assertion documents the API: github_client_secret reads env only.
+        let src = include_str!("github_http.rs");
+        assert!(
+            !src.contains("option_env!(\"ISSUEBRIDGE_GITHUB_CLIENT_SECRET\")"),
+            "client secret must not use option_env!"
+        );
+        assert!(
+            src.contains("option_env!(\"ISSUEBRIDGE_OAUTH_EXCHANGE_URL\")"),
+            "exchange URL should support compile-time bake for release"
+        );
+    }
 }
