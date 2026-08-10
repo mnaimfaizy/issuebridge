@@ -147,3 +147,26 @@ describe("Copilot CLI workflow supply-chain contract", () => {
     });
   }
 });
+
+describe("Release workflow supply-chain contract", () => {
+  it("pins every third-party action to a full commit SHA", () => {
+    const yml = readWorkflow("release-windows.yml");
+    const thirdPartyActions = [
+      ...yml.matchAll(/^\s*uses:\s*([^/\s]+\/[^@\s]+)@([^\s#]+)/gm),
+    ]
+      .map(([, action, ref]) => ({ action, ref }))
+      .filter(({ action }) => !action.startsWith("actions/"));
+
+    assert.deepEqual(thirdPartyActions.map(({ action }) => action).sort(), [
+      "dtolnay/rust-toolchain",
+      "softprops/action-gh-release",
+    ]);
+    for (const { action, ref } of thirdPartyActions) {
+      assert.match(
+        ref,
+        /^[0-9a-f]{40}$/,
+        `${action} must use an immutable commit SHA`,
+      );
+    }
+  });
+});

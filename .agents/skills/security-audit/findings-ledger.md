@@ -8,31 +8,32 @@ The **security-finding-triage** skill updates rows after stress-check.
 
 ## Status values
 
-| Status | Meaning |
-|--------|---------|
-| `open` | Confirmed or not yet triaged; still in scope for fixes |
-| `fixed` | Remediation merged; auditor should only refile on regression |
-| `rejected` | Not a real Medium+ issue for Issuebridge (with rationale in triage notes / GHSA) |
-| `accepted-risk` | Real but deferred / accepted by maintainer |
+| Status          | Meaning                                                                          |
+| --------------- | -------------------------------------------------------------------------------- |
+| `open`          | Confirmed or not yet triaged; still in scope for fixes                           |
+| `fixed`         | Remediation merged; auditor should only refile on regression                     |
+| `rejected`      | Not a real Medium+ issue for Issuebridge (with rationale in triage notes / GHSA) |
+| `accepted-risk` | Real but deferred / accepted by maintainer                                       |
 
 ## Ledger
 
-| concept-id | title | path | severity | status | ghsa | updated |
-|------------|-------|------|----------|--------|------|---------|
-| `client-secret-in-release-binary` | GitHub client secret embedded in release binary | `src-tauri/src/adapters/github_http.rs` | high | fixed | GHSA-97vr-qxvw-88gr | 2026-08-10 |
-| `mutable-copilot-cli` | Mutable Copilot CLI package with privileged CI tokens | `.github/workflows/security-audit.yml` | high | fixed | GHSA-97vr-qxvw-88gr | 2026-08-10 |
-| `mutable-third-party-release-actions` | Mutable third-party actions in privileged release pipeline | `.github/workflows/release-windows.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
-| `pr-controlled-audit-privileged-token` | PR-controlled audit agent + privileged advisory token | `.github/workflows/security-audit.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
-| `relative-sidecar-cwd-exec` | Relative sidecar discovery → cwd code execution | `src-tauri/src/adapters/whisper_voice.rs` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
-| `sidecar-download-no-integrity` | Release sidecars downloaded without integrity verification | `scripts/fetch-whisper-assets.ps1` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
-| `unprotected-tag-release-secrets` | Unprotected tag builds expose release secrets | `.github/workflows/release-windows.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
-| `agent-pipeline-plan-injection` | Untrusted issue text can prompt-inject / replace agent plan | `.github/workflows/agent-pipeline.yml` | high | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
-| `publish-app-visible-boundary` | Publish path does not enforce App-visible repo boundary | `src/capture/CapturePopup.tsx` | medium | open | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| concept-id                             | title                                                       | path                                      | severity | status | ghsa                | updated    |
+| -------------------------------------- | ----------------------------------------------------------- | ----------------------------------------- | -------- | ------ | ------------------- | ---------- |
+| `client-secret-in-release-binary`      | GitHub client secret embedded in release binary             | `src-tauri/src/adapters/github_http.rs`   | high     | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-10 |
+| `mutable-copilot-cli`                  | Mutable Copilot CLI package with privileged CI tokens       | `.github/workflows/security-audit.yml`    | high     | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-10 |
+| `mutable-third-party-release-actions`  | Mutable third-party actions in privileged release pipeline  | `.github/workflows/release-windows.yml`   | high     | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-10 |
+| `pr-controlled-audit-privileged-token` | PR-controlled audit agent + privileged advisory token       | `.github/workflows/security-audit.yml`    | high     | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `relative-sidecar-cwd-exec`            | Relative sidecar discovery → cwd code execution             | `src-tauri/src/adapters/whisper_voice.rs` | high     | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `sidecar-download-no-integrity`        | Release sidecars downloaded without integrity verification  | `scripts/fetch-whisper-assets.ps1`        | high     | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `unprotected-tag-release-secrets`      | Unprotected tag builds expose release secrets               | `.github/workflows/release-windows.yml`   | high     | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `agent-pipeline-plan-injection`        | Untrusted issue text can prompt-inject / replace agent plan | `.github/workflows/agent-pipeline.yml`    | high     | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `publish-app-visible-boundary`         | Publish path does not enforce App-visible repo boundary     | `src/capture/CapturePopup.tsx`            | medium   | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
 
 ## Remediation notes
 
 - `client-secret-in-release-binary` (F1): **fixed** in code — release builds bake `ISSUEBRIDGE_OAUTH_EXCHANGE_URL` only; Worker deployed (`issuebridge-oauth-exchange.mnaim-faizy.workers.dev`). Maintainer still: set Actions secret `ISSUEBRIDGE_OAUTH_EXCHANGE_URL`, ship a Release without the client secret, **rotate** the App client secret, then publish GHSA when ready.
 - `mutable-copilot-cli` (F2): **fixed** — privileged Copilot workflows install exact version `1.0.78` from a dedicated npm lockfile with registry integrity hashes and invoke only the locked local binary.
+- `mutable-third-party-release-actions` (F3): **fixed** — third-party actions in the privileged Release job are pinned to reviewed full commit SHAs, with a contract preventing mutable refs from returning.
 
 ## How to update
 
