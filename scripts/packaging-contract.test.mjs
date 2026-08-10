@@ -229,7 +229,8 @@ describe("release credential injection", () => {
   it("accepts client id and exchange URL from env", () => {
     const result = checkReleaseCredentials({
       ISSUEBRIDGE_GITHUB_CLIENT_ID: "Iv23li6Ao8URyrvbNZOq",
-      ISSUEBRIDGE_OAUTH_EXCHANGE_URL: "https://oauth-exchange.example.workers.dev/",
+      ISSUEBRIDGE_OAUTH_EXCHANGE_URL:
+        "https://oauth-exchange.example.workers.dev/",
     });
     assert.equal(result.ok, true);
     assert.deepEqual(result.errors, []);
@@ -246,7 +247,8 @@ describe("release credential injection", () => {
   it("rejects client secret present on official release builds", () => {
     const result = checkReleaseCredentials({
       ISSUEBRIDGE_GITHUB_CLIENT_ID: "Iv23li6Ao8URyrvbNZOq",
-      ISSUEBRIDGE_OAUTH_EXCHANGE_URL: "https://oauth-exchange.example.workers.dev/",
+      ISSUEBRIDGE_OAUTH_EXCHANGE_URL:
+        "https://oauth-exchange.example.workers.dev/",
       ISSUEBRIDGE_GITHUB_CLIENT_SECRET: "must-not-be-baked",
     });
     assert.equal(result.ok, false);
@@ -255,7 +257,8 @@ describe("release credential injection", () => {
 
   it("rejects missing client id for official release builds", () => {
     const result = checkReleaseCredentials({
-      ISSUEBRIDGE_OAUTH_EXCHANGE_URL: "https://oauth-exchange.example.workers.dev/",
+      ISSUEBRIDGE_OAUTH_EXCHANGE_URL:
+        "https://oauth-exchange.example.workers.dev/",
     });
     assert.equal(result.ok, false);
     assert.match(result.errors.join("\n"), /CLIENT_ID/);
