@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-function readWorkflow() {
-  return readFileSync(join(root, ".github", "workflows", "ci.yml"), "utf8");
+function readWorkflow(name = "ci.yml") {
+  return readFileSync(join(root, ".github", "workflows", name), "utf8");
 }
 
 function readPackageJson() {
@@ -106,4 +106,44 @@ describe("PR CI workflow contract (#24)", () => {
     assert.match(pkg.scripts.format, /--write/);
     assert.doesNotMatch(pkg.scripts.lint, /--write/);
   });
+});
+
+describe("Copilot CLI workflow supply-chain contract", () => {
+  it("locks one exact Copilot CLI dependency with registry integrity", () => {
+    const manifest = JSON.parse(
+      readFileSync(
+        join(root, ".github", "copilot-cli", "package.json"),
+        "utf8",
+      ),
+    );
+    const lock = JSON.parse(
+      readFileSync(
+        join(root, ".github", "copilot-cli", "package-lock.json"),
+        "utf8",
+      ),
+    );
+
+    assert.deepEqual(manifest.dependencies, { "@github/copilot": "1.0.78" });
+    assert.deepEqual(lock.packages[""].dependencies, manifest.dependencies);
+    assert.match(
+      lock.packages["node_modules/@github/copilot"].integrity,
+      /^sha512-/,
+    );
+  });
+
+  for (const workflowName of ["security-audit.yml", "agent-pipeline.yml"]) {
+    it(`${workflowName} installs and runs the lockfile-backed CLI`, () => {
+      const yml = readWorkflow(workflowName);
+
+      assert.match(
+        yml,
+        /npm ci --prefix \.github\/copilot-cli --ignore-scripts --install-strategy=nested/,
+      );
+      assert.match(
+        yml,
+        /\.\/\.github\/copilot-cli\/node_modules\/\.bin\/copilot\b/,
+      );
+      assert.doesNotMatch(yml, /npm install -g @github\/copilot(?:\s|$)/m);
+    });
+  }
 });
