@@ -2,6 +2,11 @@
 
 All notable changes to Issuebridge are documented here. Release notes are user-facing; see git history for full commit detail.
 
+## [0.2.1] - 2026-08-10
+
+### Security
+- Official Windows Releases no longer embed the GitHub App client secret in the installer. Sign in with GitHub exchanges tokens via a maintained OAuth exchange service.
+
 ## [0.2.0] - 2026-08-06
 
 ### Added
