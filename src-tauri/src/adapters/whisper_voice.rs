@@ -260,17 +260,17 @@ fn extract_transcript(stdout: &str) -> String {
 
 fn resolve_sidecar_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("ISSUEBRIDGE_WHISPER_CLI") {
-        let p = PathBuf::from(path);
-        if p.is_file() {
-            return Some(p);
+        if let Some(path) = canonical_file(PathBuf::from(path)) {
+            return Some(path);
         }
     }
 
     // Prefer a copy that sits next to ggml/whisper DLLs (dev binaries folder).
     sidecar_candidates()
         .into_iter()
-        .find(|p| p.is_file() && sidecar_has_dlls(p))
-        .or_else(|| sidecar_candidates().into_iter().find(|p| p.is_file()))
+        .find(|path| path.is_file() && sidecar_has_dlls(path))
+        .or_else(|| sidecar_candidates().into_iter().find(|path| path.is_file()))
+        .and_then(canonical_file)
 }
 
 fn sidecar_has_dlls(exe: &Path) -> bool {
@@ -279,25 +279,21 @@ fn sidecar_has_dlls(exe: &Path) -> bool {
 
 fn resolve_model_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("ISSUEBRIDGE_WHISPER_MODEL") {
-        let p = PathBuf::from(path);
-        if p.is_file() {
-            return Some(p);
+        if let Some(path) = canonical_file(PathBuf::from(path)) {
+            return Some(path);
         }
     }
 
-    model_candidates().into_iter().find(|p| p.is_file())
+    model_candidates()
+        .into_iter()
+        .find(|path| path.is_file())
+        .and_then(canonical_file)
 }
 
 fn sidecar_candidates() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    // Dev layout first so we pick the DLL-complete binaries folder over a bare
-    // target/debug/whisper-cli.exe copy from Tauri.
-    out.push(PathBuf::from(
-        "src-tauri/binaries/whisper-cli-x86_64-pc-windows-msvc.exe",
-    ));
-    out.push(PathBuf::from(
-        "binaries/whisper-cli-x86_64-pc-windows-msvc.exe",
-    ));
+    let mut out = vec![manifest_dir()
+        .join("binaries")
+        .join("whisper-cli-x86_64-pc-windows-msvc.exe")];
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             out.push(dir.join("whisper-cli.exe"));
@@ -312,9 +308,10 @@ fn sidecar_candidates() -> Vec<PathBuf> {
 }
 
 fn model_candidates() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    out.push(PathBuf::from("src-tauri/resources/models/ggml-base.bin"));
-    out.push(PathBuf::from("resources/models/ggml-base.bin"));
+    let mut out = vec![manifest_dir()
+        .join("resources")
+        .join("models")
+        .join("ggml-base.bin")];
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             out.push(dir.join("resources").join("models").join("ggml-base.bin"));
@@ -325,9 +322,7 @@ fn model_candidates() -> Vec<PathBuf> {
 }
 
 fn dll_search_dirs() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    out.push(PathBuf::from("src-tauri/binaries"));
-    out.push(PathBuf::from("binaries"));
+    let mut out = vec![manifest_dir().join("binaries")];
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             // Install root first (DLLs colocated with whisper-cli after #55),
@@ -337,6 +332,16 @@ fn dll_search_dirs() -> Vec<PathBuf> {
         }
     }
     out.into_iter().filter(|p| p.is_dir()).collect()
+}
+
+fn manifest_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn canonical_file(path: PathBuf) -> Option<PathBuf> {
+    path.is_file()
+        .then(|| std::fs::canonicalize(path).ok().map(strip_verbatim_prefix))
+        .flatten()
 }
 
 fn absolute_path(path: &Path) -> PathBuf {
@@ -456,6 +461,28 @@ more words
         assert!(resolve_dll_dir_near_sidecar(&cli).is_none());
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn implicit_asset_candidates_use_absolute_trusted_roots() {
+        let build_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let executable_root = std::env::current_exe()
+            .expect("current executable")
+            .parent()
+            .expect("executable directory")
+            .to_path_buf();
+        for candidate in sidecar_candidates()
+            .into_iter()
+            .chain(model_candidates())
+            .chain(dll_search_dirs())
+        {
+            assert!(candidate.is_absolute(), "candidate={}", candidate.display());
+            assert!(
+                candidate.starts_with(build_root) || candidate.starts_with(&executable_root),
+                "untrusted candidate={}",
+                candidate.display()
+            );
+        }
     }
 
     #[test]
