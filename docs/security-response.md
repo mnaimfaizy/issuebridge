@@ -64,9 +64,7 @@ If a safe repeatable check cannot establish the finding, the agent stops with
 
 ## F1 follow-through (`client-secret-in-release-binary`)
 
-Ledger status: **fixed** (code + Worker deployed). Remaining maintainer steps before publishing the GHSA:
-
-1. Set Actions secret `ISSUEBRIDGE_OAUTH_EXCHANGE_URL` to the Worker URL
-2. Ship a Release that does not bake `ISSUEBRIDGE_GITHUB_CLIENT_SECRET`
-3. Rotate the GitHub App client secret (update Worker secret afterward)
-4. Publish GHSA when users need the upgrade notice
+Response complete: the code and exchange Worker are deployed, Release `v0.2.1`
+ships without the client secret, and the GitHub App client secret was rotated.
+The Release notes provide the user notice; the maintainer decided separate GHSA
+publication is not required.
