@@ -456,37 +456,33 @@ fn kill_process(pid: u32) {
 
 fn resolve_sidecar_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("ISSUEBRIDGE_REWRITE_CLI") {
-        let p = PathBuf::from(path);
-        if p.is_file() {
-            return Some(p);
+        if let Some(path) = canonical_file(PathBuf::from(path)) {
+            return Some(path);
         }
     }
 
     sidecar_candidates()
         .into_iter()
-        .find(|p| p.is_file() && resolve_dll_dir(p).is_some())
-        .or_else(|| sidecar_candidates().into_iter().find(|p| p.is_file()))
+        .find(|path| path.is_file() && resolve_dll_dir(path).is_some())
+        .or_else(|| sidecar_candidates().into_iter().find(|path| path.is_file()))
+        .and_then(canonical_file)
 }
 
 fn resolve_model_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("ISSUEBRIDGE_REWRITE_GGUF") {
-        let p = PathBuf::from(path);
-        if p.is_file() {
-            return Some(p);
+        if let Some(path) = canonical_file(PathBuf::from(path)) {
+            return Some(path);
         }
     }
     // Active catalog download (#69); env override above wins for local/dev.
     crate::adapters::file_rewrite_model_store::resolve_active_catalog_gguf()
+        .and_then(canonical_file)
 }
 
 fn sidecar_candidates() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    out.push(PathBuf::from(
-        "src-tauri/binaries/llama-cli-x86_64-pc-windows-msvc.exe",
-    ));
-    out.push(PathBuf::from(
-        "binaries/llama-cli-x86_64-pc-windows-msvc.exe",
-    ));
+    let mut out = vec![manifest_dir()
+        .join("binaries")
+        .join("llama-cli-x86_64-pc-windows-msvc.exe")];
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             out.push(dir.join("llama-cli.exe"));
@@ -501,16 +497,28 @@ fn sidecar_candidates() -> Vec<PathBuf> {
 }
 
 fn dll_search_dirs() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    out.push(PathBuf::from("src-tauri/binaries"));
-    out.push(PathBuf::from("binaries"));
+    let mut out = vec![manifest_dir().join("binaries")];
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             out.push(dir.to_path_buf());
             out.push(dir.join("binaries"));
         }
     }
-    out
+    out.into_iter().filter(|path| path.is_dir()).collect()
+}
+
+fn manifest_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn canonical_file(path: PathBuf) -> Option<PathBuf> {
+    path.is_file()
+        .then(|| {
+            std::fs::canonicalize(path)
+                .ok()
+                .map(|path| strip_verbatim_prefix(&path))
+        })
+        .flatten()
 }
 
 fn absolute_path(path: &Path) -> PathBuf {
@@ -667,6 +675,24 @@ JSON:\n\
 
         assert!(resolve_dll_dir_near_sidecar(&cli).is_none());
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn implicit_asset_candidates_use_absolute_trusted_roots() {
+        let build_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let executable_root = std::env::current_exe()
+            .expect("current executable")
+            .parent()
+            .expect("executable directory")
+            .to_path_buf();
+        for candidate in sidecar_candidates().into_iter().chain(dll_search_dirs()) {
+            assert!(candidate.is_absolute(), "candidate={}", candidate.display());
+            assert!(
+                candidate.starts_with(build_root) || candidate.starts_with(&executable_root),
+                "untrusted candidate={}",
+                candidate.display()
+            );
+        }
     }
 
     #[test]
