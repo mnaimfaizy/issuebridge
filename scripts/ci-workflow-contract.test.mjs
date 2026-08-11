@@ -148,6 +148,44 @@ describe("Copilot CLI workflow supply-chain contract", () => {
   }
 });
 
+describe("PR security-audit privilege contract", () => {
+  it("keeps the advisory PAT and PR-controlled runtime out of the audit scan", () => {
+    const yml = readWorkflow("security-audit.yml");
+    const trustedRuntime = yml.indexOf(
+      "Restore trusted audit runtime from PR base",
+    );
+    const installCli = yml.indexOf("Install locked Copilot CLI");
+    const runAudit = yml.indexOf("Run security audit (Copilot CLI)");
+
+    assert.ok(trustedRuntime >= 0, "expected trusted PR runtime restore step");
+    assert.ok(trustedRuntime < installCli, "restore must precede CLI install");
+    assert.ok(installCli < runAudit, "CLI install must precede audit scan");
+    assert.match(
+      yml,
+      /COPILOT_GITHUB_TOKEN:\s*\$\{\{\s*github\.event_name == 'pull_request'\s*&&\s*github\.token\s*\|\|\s*secrets\.COPILOT_GITHUB_TOKEN\s*\}\}/,
+    );
+
+    const restore = yml.slice(trustedRuntime, installCli);
+    for (const trustedPath of [
+      "AGENTS.md",
+      ".github/copilot-instructions.md",
+      ".github/copilot-cli",
+      ".github/security-audit/prompt.md",
+      ".agents/skills/security-audit",
+    ]) {
+      assert.match(restore, new RegExp(trustedPath.replaceAll(".", "\\.")));
+    }
+
+    const scan = yml.slice(runAudit, yml.indexOf("Use trusted publisher"));
+    assert.match(scan, /if \[ "\$MODE" = "pr" \]/);
+    assert.match(scan, /PR_TOOL_ARGS=/);
+    assert.doesNotMatch(
+      scan.match(/PR_TOOL_ARGS=[^\n]*/)?.[0] ?? "",
+      /shell\((?:cargo|npm|git|find):/,
+    );
+  });
+});
+
 describe("Release workflow supply-chain contract", () => {
   it("pins every third-party action to a full commit SHA", () => {
     const yml = readWorkflow("release-windows.yml");

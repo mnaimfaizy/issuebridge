@@ -98,6 +98,38 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      - name: Restore trusted audit runtime from PR base
+        if: >-
+          steps.gate.outputs.proceed == 'true' &&
+          github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BASE_SHA"
+
+          restore_from_base() {
+            local path="$1"
+            if git cat-file -e "$BASE_SHA:$path" 2>/dev/null; then
+              git restore --source="$BASE_SHA" --staged --worktree -- "$path"
+            else
+              rm -rf -- "$path"
+            fi
+          }
+
+          # Copilot CLI may auto-load AGENTS.md; the remaining paths supply its
+          # executable and the explicit security-audit prompt pack.
+          for path in \
+            AGENTS.md \
+            .github/copilot-instructions.md \
+            .github/copilot-cli \
+            .github/security-audit/prompt.md \
+            .agents/skills/security-audit
+          do
+            restore_from_base "$path"
+          done
+          echo "Audit runtime restored from PR base $BASE_SHA"
+
       - uses: actions/setup-node@v4
         if: steps.gate.outputs.proceed == 'true'
         with:
@@ -111,7 +143,9 @@ jobs:
         if: steps.gate.outputs.proceed == 'true'
         id: scan
         env:
-          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          # PR code receives only the short-lived job token. The advisory PAT is
+          # introduced later, after the agent exits, to the trusted publisher.
+          COPILOT_GITHUB_TOKEN: ${{ github.event_name == 'pull_request' && github.token || secrets.COPILOT_GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MODE: ${{ steps.gate.outputs.mode }}
           BASE_REF: ${{ github.event.pull_request.base.sha || '' }}
@@ -136,6 +170,14 @@ jobs:
             echo "Requested reasoning effort: $AUDIT_EFFORT"
           else
             echo "No SECURITY_AUDIT_REASONING_EFFORT set — using model default."
+          fi
+
+          PR_TOOL_ARGS=(--allow-tool=read --allow-tool=write '--allow-tool=shell(ls:*),shell(cat:*),shell(head:*),shell(rg:*),shell(grep:*)')
+          FULL_TOOL_ARGS=(--allow-tool=read --allow-tool=write '--allow-tool=shell(ls:*),shell(find:*),shell(cat:*),shell(head:*),shell(rg:*),shell(grep:*),shell(git:*),shell(cargo:*),shell(npm:*)')
+          if [ "$MODE" = "pr" ]; then
+            TOOL_ARGS=("${PR_TOOL_ARGS[@]}")
+          else
+            TOOL_ARGS=("${FULL_TOOL_ARGS[@]}")
           fi
 
           # Write inside the workspace — Copilot CLI write tools often cannot create /tmp paths.
@@ -190,9 +232,7 @@ jobs:
             --add-dir="$GITHUB_WORKSPACE" \
             --share="$SESSION" \
             "${MODEL_ARGS[@]}" \
-            --allow-tool='shell(ls:*),shell(find:*),shell(cat:*),shell(head:*),shell(rg:*),shell(grep:*),shell(git:*),shell(cargo:*),shell(npm:*)' \
-            --allow-tool=write \
-            --allow-tool=read \
+            "${TOOL_ARGS[@]}" \
             >"$CLI_LOG" 2>&1
           code=$?
           set -e
