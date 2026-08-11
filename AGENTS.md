@@ -12,18 +12,19 @@ Windows-first Tauri app: capture GitHub issues while testing (hotkey + voice), k
 
 ## Skills
 
-| Skill | Path | Use when |
-|-------|------|----------|
-| commit | [`.agents/skills/commit/SKILL.md`](./.agents/skills/commit/SKILL.md) | Writing or checking commit messages |
-| release | [`.agents/skills/release/SKILL.md`](./.agents/skills/release/SKILL.md) | Cutting a Release / SemVer / changelog |
-| domain-modeling | [`.agents/skills/domain-modeling/SKILL.md`](./.agents/skills/domain-modeling/SKILL.md) | Glossary / ADRs |
-| implement | [`.agents/skills/implement/SKILL.md`](./.agents/skills/implement/SKILL.md) | Building from a spec or tickets |
-| tdd | [`.agents/skills/tdd/SKILL.md`](./.agents/skills/tdd/SKILL.md) | Test-first work |
-| code-review | [`.agents/skills/code-review/SKILL.md`](./.agents/skills/code-review/SKILL.md) | Review since a fixed point |
-| diagnosing-bugs | [`.agents/skills/diagnosing-bugs/SKILL.md`](./.agents/skills/diagnosing-bugs/SKILL.md) | Hard bugs / regressions |
-| grill-with-docs | [`.agents/skills/grill-with-docs/SKILL.md`](./.agents/skills/grill-with-docs/SKILL.md) | Stress-test a plan with domain modeling |
-| security-audit | [`.agents/skills/security-audit/SKILL.md`](./.agents/skills/security-audit/SKILL.md) | Medium+ threat-led security audit; draft advisory (private) |
+| Skill                   | Path                                                                                                   | Use when                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| commit                  | [`.agents/skills/commit/SKILL.md`](./.agents/skills/commit/SKILL.md)                                   | Writing or checking commit messages                                |
+| release                 | [`.agents/skills/release/SKILL.md`](./.agents/skills/release/SKILL.md)                                 | Cutting a Release / SemVer / changelog                             |
+| domain-modeling         | [`.agents/skills/domain-modeling/SKILL.md`](./.agents/skills/domain-modeling/SKILL.md)                 | Glossary / ADRs                                                    |
+| implement               | [`.agents/skills/implement/SKILL.md`](./.agents/skills/implement/SKILL.md)                             | Building from a spec or tickets                                    |
+| tdd                     | [`.agents/skills/tdd/SKILL.md`](./.agents/skills/tdd/SKILL.md)                                         | Test-first work                                                    |
+| code-review             | [`.agents/skills/code-review/SKILL.md`](./.agents/skills/code-review/SKILL.md)                         | Review since a fixed point                                         |
+| diagnosing-bugs         | [`.agents/skills/diagnosing-bugs/SKILL.md`](./.agents/skills/diagnosing-bugs/SKILL.md)                 | Hard bugs / regressions                                            |
+| grill-with-docs         | [`.agents/skills/grill-with-docs/SKILL.md`](./.agents/skills/grill-with-docs/SKILL.md)                 | Stress-test a plan with domain modeling                            |
+| security-audit          | [`.agents/skills/security-audit/SKILL.md`](./.agents/skills/security-audit/SKILL.md)                   | Medium+ threat-led security audit; draft advisory (private)        |
 | security-finding-triage | [`.agents/skills/security-finding-triage/SKILL.md`](./.agents/skills/security-finding-triage/SKILL.md) | Stress-check one draft GHSA finding; confirm/reject; update ledger |
+| security-response       | [`.agents/skills/security-response/SKILL.md`](./.agents/skills/security-response/SKILL.md)             | Reconcile/prioritize advisory backlog; guarded end-to-end fix PR   |
 
 Other skills under [`.agents/skills/`](./.agents/skills/) apply when their descriptions match the task.
 

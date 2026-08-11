@@ -6,39 +6,45 @@ The **security-audit** agent must read this file before filing findings and must
 
 The **security-finding-triage** skill updates rows after stress-check.
 
-## Status values
+## Evidence and status values
+
+| Evidence    | Meaning                                                         |
+| ----------- | --------------------------------------------------------------- |
+| `untriaged` | Advisory claim has not been stress-checked against current code |
+| `confirmed` | Repeatable safe evidence supports a reachable Medium+ finding   |
+| `rejected`  | Claim is false, duplicate, out of threat model, or below Medium |
 
 | Status          | Meaning                                                                          |
 | --------------- | -------------------------------------------------------------------------------- |
-| `open`          | Confirmed or not yet triaged; still in scope for fixes                           |
+| `open`          | Still in scope for triage or remediation                                         |
 | `fixed`         | Remediation merged; auditor should only refile on regression                     |
 | `rejected`      | Not a real Medium+ issue for Issuebridge (with rationale in triage notes / GHSA) |
-| `accepted-risk` | Real but deferred / accepted by maintainer                                       |
+| `accepted-risk` | Confirmed but explicitly deferred / accepted by maintainer                       |
 
 ## Ledger
 
-| concept-id                             | title                                                       | path                                      | severity | status | ghsa                | updated    |
-| -------------------------------------- | ----------------------------------------------------------- | ----------------------------------------- | -------- | ------ | ------------------- | ---------- |
-| `client-secret-in-release-binary`      | GitHub client secret embedded in release binary             | `src-tauri/src/adapters/github_http.rs`   | high     | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-10 |
-| `mutable-copilot-cli`                  | Mutable Copilot CLI package with privileged CI tokens       | `.github/workflows/security-audit.yml`    | high     | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-10 |
-| `mutable-third-party-release-actions`  | Mutable third-party actions in privileged release pipeline  | `.github/workflows/release-windows.yml`   | high     | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-10 |
-| `pr-controlled-audit-privileged-token` | PR-controlled audit agent + privileged advisory token       | `.github/workflows/security-audit.yml`    | high     | open   | GHSA-97vr-qxvw-88gr | 2026-08-11 |
-| `relative-sidecar-cwd-exec`            | Relative sidecar discovery → cwd code execution             | `src-tauri/src/adapters/whisper_voice.rs` | high     | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
-| `sidecar-download-no-integrity`        | Release sidecars downloaded without integrity verification  | `scripts/fetch-whisper-assets.ps1`        | high     | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
-| `unprotected-tag-release-secrets`      | Unprotected tag builds expose release secrets               | `.github/workflows/release-windows.yml`   | high     | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
-| `agent-pipeline-plan-injection`        | Untrusted issue text can prompt-inject / replace agent plan | `.github/workflows/agent-pipeline.yml`    | high     | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
-| `publish-app-visible-boundary`         | Publish path does not enforce App-visible repo boundary     | `src/capture/CapturePopup.tsx`            | medium   | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| concept-id                             | title                                                       | path                                      | severity | evidence  | status | ghsa                | updated    |
+| -------------------------------------- | ----------------------------------------------------------- | ----------------------------------------- | -------- | --------- | ------ | ------------------- | ---------- |
+| `client-secret-in-release-binary`      | GitHub client secret embedded in release binary             | `src-tauri/src/adapters/github_http.rs`   | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-10 |
+| `mutable-copilot-cli`                  | Mutable Copilot CLI package with privileged CI tokens       | `.github/workflows/security-audit.yml`    | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-10 |
+| `mutable-third-party-release-actions`  | Mutable third-party actions in privileged release pipeline  | `.github/workflows/release-windows.yml`   | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-10 |
+| `pr-controlled-audit-privileged-token` | PR-controlled audit agent + privileged advisory token       | `.github/workflows/security-audit.yml`    | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-11 |
+| `relative-sidecar-cwd-exec`            | Relative sidecar discovery → cwd code execution             | `src-tauri/src/adapters/whisper_voice.rs` | high     | untriaged | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `sidecar-download-no-integrity`        | Release sidecars downloaded without integrity verification  | `scripts/fetch-whisper-assets.ps1`        | high     | untriaged | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `unprotected-tag-release-secrets`      | Unprotected tag builds expose release secrets               | `.github/workflows/release-windows.yml`   | high     | untriaged | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `agent-pipeline-plan-injection`        | Untrusted issue text can prompt-inject / replace agent plan | `.github/workflows/agent-pipeline.yml`    | high     | untriaged | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `publish-app-visible-boundary`         | Publish path does not enforce App-visible repo boundary     | `src/capture/CapturePopup.tsx`            | medium   | untriaged | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
 
 ## Remediation notes
 
 - `client-secret-in-release-binary` (F1): **fixed** in code — release builds bake `ISSUEBRIDGE_OAUTH_EXCHANGE_URL` only; Worker deployed (`issuebridge-oauth-exchange.mnaim-faizy.workers.dev`). Maintainer still: set Actions secret `ISSUEBRIDGE_OAUTH_EXCHANGE_URL`, ship a Release without the client secret, **rotate** the App client secret, then publish GHSA when ready.
 - `mutable-copilot-cli` (F2): **fixed** — privileged Copilot workflows install exact version `1.0.78` from a dedicated npm lockfile with registry integrity hashes and invoke only the locked local binary.
 - `mutable-third-party-release-actions` (F3): **fixed** — third-party actions in the privileged Release job are pinned to reviewed full commit SHAs, with a contract preventing mutable refs from returning.
-- `pr-controlled-audit-privileged-token` (F4): **confirmed; fix implemented, awaiting merge** — PR scans use the short-lived job token, restore the trusted audit runtime before execution, and exclude repository-code execution tools. Keep `open` until merged.
+- `pr-controlled-audit-privileged-token` (F4): **fixed** — PR scans use the short-lived job token, restore the trusted audit runtime before execution, and exclude repository-code execution tools. Merged in PR #116.
 
 ## How to update
 
 1. Prefer editing the matching row in place (same `concept-id`).
-2. New themes from a fresh audit → add a row with status `open` and the new GHSA id.
-3. After triage: set `status`, bump `updated` (UTC `YYYY-MM-DD`), keep `title`/`path` fingerprint-only.
+2. New themes from a fresh audit → add a row with evidence `untriaged`, status `open`, and the new GHSA id.
+3. After triage: set both `evidence` and `status`, bump `updated` (UTC `YYYY-MM-DD`), and keep `title`/`path` fingerprint-only.
 4. Never paste attack-path text, PoCs, or tokens into this file.

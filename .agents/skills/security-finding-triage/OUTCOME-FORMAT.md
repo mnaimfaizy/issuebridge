@@ -42,7 +42,7 @@ Short implementable brief:
 
 ### Ledger update
 
-- Previous status → new status
+- Previous evidence/status → new evidence/status
 - Confirm the ledger row was edited (or say blocked)
 
 ### Notes
