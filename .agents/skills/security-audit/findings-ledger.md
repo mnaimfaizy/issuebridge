@@ -8,15 +8,15 @@ The **security-finding-triage** skill updates rows after stress-check.
 
 ## Evidence and status values
 
-| Evidence     | Meaning                                                        |
-| ------------ | -------------------------------------------------------------- |
-| `untriaged`  | Advisory claim has not been stress-checked against current code |
-| `confirmed`  | Repeatable safe evidence supports a reachable Medium+ finding   |
-| `rejected`   | Claim is false, duplicate, out of threat model, or below Medium |
+| Evidence    | Meaning                                                         |
+| ----------- | --------------------------------------------------------------- |
+| `untriaged` | Advisory claim has not been stress-checked against current code |
+| `confirmed` | Repeatable safe evidence supports a reachable Medium+ finding   |
+| `rejected`  | Claim is false, duplicate, out of threat model, or below Medium |
 
 | Status          | Meaning                                                                          |
 | --------------- | -------------------------------------------------------------------------------- |
-| `open`          | Still in scope for triage or remediation                                          |
+| `open`          | Still in scope for triage or remediation                                         |
 | `fixed`         | Remediation merged; auditor should only refile on regression                     |
 | `rejected`      | Not a real Medium+ issue for Issuebridge (with rationale in triage notes / GHSA) |
 | `accepted-risk` | Confirmed but explicitly deferred / accepted by maintainer                       |

@@ -11,9 +11,9 @@ or private transcript text.
 - **Default branch:** <branch>@<short-sha>
 - **Date:** YYYY-MM-DD
 
-| Concept | Severity | Evidence | Delivery state | Bucket | Next action |
-|---------|----------|----------|----------------|--------|-------------|
-| `<concept-id>` | high | confirmed | fix PR open | ci-maintainer | merge PR #… |
+| Concept        | Severity | Evidence  | Delivery state | Bucket        | Next action |
+| -------------- | -------- | --------- | -------------- | ------------- | ----------- |
+| `<concept-id>` | high     | confirmed | fix PR open    | ci-maintainer | merge PR #… |
 
 ### Reconciliation
 

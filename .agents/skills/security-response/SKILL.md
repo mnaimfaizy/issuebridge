@@ -24,13 +24,13 @@ Actions logs, or terminal summaries.
 
 ## Modes
 
-| Invocation | Action | Mutates? |
-|------------|--------|----------|
-| `/security-response` or `status` | Reconcile and show the backlog dashboard | No |
-| `/security-response next` | Dashboard plus one prioritized recommendation | No |
-| `/security-response triage <target>` | Stress-check one exact finding and update its ledger evidence state | Ledger only |
-| `/security-response fix <target>` | Re-triage, then fix through assigned PR when all auto-work gates pass | Yes |
-| `/security-response reconcile` | Verify merged fixes/Releases and correct stale ledger status | Ledger only unless a PR is requested |
+| Invocation                           | Action                                                                | Mutates?                             |
+| ------------------------------------ | --------------------------------------------------------------------- | ------------------------------------ |
+| `/security-response` or `status`     | Reconcile and show the backlog dashboard                              | No                                   |
+| `/security-response next`            | Dashboard plus one prioritized recommendation                         | No                                   |
+| `/security-response triage <target>` | Stress-check one exact finding and update its ledger evidence state   | Ledger only                          |
+| `/security-response fix <target>`    | Re-triage, then fix through assigned PR when all auto-work gates pass | Yes                                  |
+| `/security-response reconcile`       | Verify merged fixes/Releases and correct stale ledger status          | Ledger only unless a PR is requested |
 
 `target` may be a `concept-id`, an explicit `<GHSA-id>:F<n>`, or `next`.
 Prefer `concept-id`: finding numbers are report-local and can change when
@@ -43,9 +43,9 @@ advisories are merged. A bare `F<n>` is always ambiguous; stop and ask for the
   secret change, deployment, Release, or advisory publication.
 - `fix` explicitly authorizes a branch, code/test/docs changes, commit, push,
   non-draft PR, assignment to the invoking GitHub user, and safe classification
-   labels, but only after the finding is confirmed in the current tree. It also
-   authorizes creating exactly the neutral `security` label when absent and no
-   conflicting repository convention exists.
+  labels, but only after the finding is confirmed in the current tree. It also
+  authorizes creating exactly the neutral `security` label when absent and no
+  conflicting repository convention exists.
 - Always stop for HITL before changes involving secrets or rotation, deployment,
   OAuth/App configuration, data migration, destructive operations, public
   disclosure, publishing an advisory, cutting a Release, or choosing between
@@ -134,10 +134,10 @@ changed, the reproducer no longer discriminates, or prior evidence is missing.
    - a benign failing regression/contract test,
    - a deterministic configuration assertion, or
    - a non-destructive local demonstration of the violated security property.
-   For a CI/release/credential path that is unsafe to trigger live, a static
-   contract that fails on the missing control plus a complete controlling-path
-   trace is repeatable evidence. Do not run a release, expose a token, execute a
-   substituted binary, or weaken production configuration to prove the claim.
+     For a CI/release/credential path that is unsafe to trigger live, a static
+     contract that fails on the missing control plus a complete controlling-path
+     trace is repeatable evidence. Do not run a release, expose a token, execute a
+     substituted binary, or weaken production configuration to prove the claim.
 6. Never create or publish a weaponized exploit. If safe reproduction would
    require harmful behavior, prove the violated property at the nearest safe
    boundary instead.
@@ -160,7 +160,7 @@ Continue automatically in `fix` mode only when all are true:
 - no mandatory HITL condition above applies
 - repository tests can falsify the proposed fix
 - the current worktree is clean and the user approved switching from any
-   non-default branch
+  non-default branch
 
 Otherwise present a concise plan with the unresolved decision, recommended
 option, alternatives, security consequence, and exact user input needed. Stop.
@@ -218,7 +218,7 @@ For `reconcile` mode:
    ledger remains `open`, prepare the fingerprint-only ledger correction.
 4. For `shipped-product`, determine whether a Release tag containing the fix
    commit exists and whether its installer is available. Report `fixed; Release
-   pending` until both are true; do not publish the advisory or cut the Release.
+pending` until both are true; do not publish the advisory or cut the Release.
 5. If an advisory was superseded, present old-to-new concept mappings and get
    HITL confirmation before replacing GHSA ids. Never infer mappings from `F<n>`.
 

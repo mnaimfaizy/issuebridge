@@ -27,8 +27,8 @@ Maintainer playbook: [../../../docs/security-response.md](../../../docs/security
 2. **Never** put attack-path detail into the public ledger — status + fingerprints only.
 3. Prefer evidence from the current tree (`file:line`) over the advisory text alone.
 4. Do **not** open fix PRs unless the user explicitly asks after the outcome, or
-  invokes `security-response fix <target>` and all of that skill's auto-work
-  gates pass.
+   invokes `security-response fix <target>` and all of that skill's auto-work
+   gates pass.
 5. Issuebridge is public: keep full reasoning in chat / draft GHSA notes; ledger stays safe.
 
 ## Invocation
@@ -57,23 +57,23 @@ Against the **current** codebase:
 
 1. Open every `Location` path; verify the claimed behaviour still exists.
 2. Trace who can trigger it and from where (local user, PR author, issue body, release tag, …).
-3. Ask: is this Medium+ for Issuebridge *as shipped or as CI runs today*? Apply the same severity floor as security-audit.
+3. Ask: is this Medium+ for Issuebridge _as shipped or as CI runs today_? Apply the same severity floor as security-audit.
 4. Check ledger for a sibling concept (same path / same failure mode) already `fixed` / `rejected`.
 
 Outcomes:
 
-| Outcome | When |
-|---------|------|
-| `confirmed` | Reachable Medium+ with concrete evidence |
-| `rejected` | False positive, out of threat model, or below Medium |
-| `accepted-risk` | Real, but maintainer explicitly defers |
-| `duplicate` | Same concept already ledgered under another id |
+| Outcome         | When                                                 |
+| --------------- | ---------------------------------------------------- |
+| `confirmed`     | Reachable Medium+ with concrete evidence             |
+| `rejected`      | False positive, out of threat model, or below Medium |
+| `accepted-risk` | Real, but maintainer explicitly defers               |
+| `duplicate`     | Same concept already ledgered under another id       |
 
 ### 3. Produce the outcome
 
 Emit markdown matching [OUTCOME-FORMAT.md](OUTCOME-FORMAT.md).
 
-- **confirmed** → fix direction + optional agent brief (enough for `implement` / a human PR). Bucket: *shipped product* vs *CI/maintainer-only* (see security-response.md) — that drives later publish vs quiet fix.
+- **confirmed** → fix direction + optional agent brief (enough for `implement` / a human PR). Bucket: _shipped product_ vs _CI/maintainer-only_ (see security-response.md) — that drives later publish vs quiet fix.
 - **rejected** / **accepted-risk** → durable rationale (why; what would change the decision).
 - **duplicate** → point at the surviving `concept-id`.
 
