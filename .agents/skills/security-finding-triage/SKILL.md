@@ -12,6 +12,8 @@ disable-model-invocation: true
 # Security finding triage
 
 One finding at a time. Discovery is **security-audit**; this skill is the response loop.
+Use **security-response** when the user wants backlog status, prioritization, or
+the guarded end-to-end path through an assigned fix PR.
 
 Canonical advisory for the current backlog: **GHSA-97vr-qxvw-88gr** (unless the user names another).
 
@@ -24,7 +26,9 @@ Maintainer playbook: [../../../docs/security-response.md](../../../docs/security
 1. **Never** write weaponized exploits, exploit PoCs, or public step-by-step attack recipes.
 2. **Never** put attack-path detail into the public ledger — status + fingerprints only.
 3. Prefer evidence from the current tree (`file:line`) over the advisory text alone.
-4. Do **not** open fix PRs unless the user explicitly asks after the outcome.
+4. Do **not** open fix PRs unless the user explicitly asks after the outcome, or
+  invokes `security-response fix <target>` and all of that skill's auto-work
+  gates pass.
 5. Issuebridge is public: keep full reasoning in chat / draft GHSA notes; ledger stays safe.
 
 ## Invocation
@@ -77,11 +81,15 @@ Emit markdown matching [OUTCOME-FORMAT.md](OUTCOME-FORMAT.md).
 
 Edit [../security-audit/findings-ledger.md](../security-audit/findings-ledger.md):
 
-- Set `status` to `open` (still confirmed, awaiting fix), `fixed`, `rejected`, or `accepted-risk`
+- Set `evidence` to `confirmed` or `rejected`
+- Set `status` to `open` (confirmed, awaiting fix), `fixed`, `rejected`, or `accepted-risk`
 - Bump `updated` to today (UTC `YYYY-MM-DD`)
 - Keep title/path fingerprint-only
 
-After a **confirmed** stress-check where work remains, leave status `open` unless the user already merged a fix in this session.
+After a **confirmed** stress-check where work remains, use evidence `confirmed`
+and status `open` unless the user already merged a fix in this session. Accepted
+risk uses evidence `confirmed` and status `accepted-risk`; duplicates and false
+positives use evidence/status `rejected`.
 
 ### 5. Optional GHSA note
 
