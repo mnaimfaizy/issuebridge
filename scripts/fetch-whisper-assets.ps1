@@ -7,6 +7,7 @@ $BinDir = Join-Path $Root "src-tauri\binaries"
 $ModelDir = Join-Path $Root "src-tauri\resources\models"
 $TripleExe = Join-Path $BinDir "whisper-cli-x86_64-pc-windows-msvc.exe"
 $ModelPath = Join-Path $ModelDir "ggml-base.bin"
+$ExpectedZipSha256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539"
 $ExpectedSha = "465707469ff3a37a2b9b8d8f89f2f99de7299dac"
 
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
@@ -22,6 +23,10 @@ $BinExtract = Join-Path $Temp "bin"
 
 Write-Host "Downloading whisper-cli zip..."
 Invoke-WebRequest -Uri $ZipUrl -OutFile $ZipPath
+$ZipHash = (Get-FileHash -Algorithm SHA256 -Path $ZipPath).Hash.ToLowerInvariant()
+if ($ZipHash -ne $ExpectedZipSha256) {
+    throw "Whisper archive SHA-256 mismatch: expected $ExpectedZipSha256, got $ZipHash"
+}
 if (Test-Path $BinExtract) { Remove-Item -Recurse -Force $BinExtract }
 Expand-Archive -Path $ZipPath -DestinationPath $BinExtract -Force
 
