@@ -230,6 +230,59 @@ describe("Agent pipeline trust-boundary contract", () => {
   });
 });
 
+describe("Agent pipeline review authorization contract", () => {
+  it("authorizes the trigger actor and PR author before privileged automation", () => {
+    const review = jobBlock(
+      readWorkflow("agent-pipeline-review.yml"),
+      "review-loop",
+    );
+    const authorization = review.indexOf("Authorize actor and PR author");
+    const pipelineClassification = review.indexOf("PIPELINE=false");
+    const privilegedToken = review.indexOf(
+      "COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}",
+    );
+
+    assert.match(review, /ACTOR:\s*\$\{\{\s*github\.actor\s*\}\}/);
+    assert.match(review, /is_authorized_login\(\)/);
+    for (const trustedAutomation of [
+      "github-actions[bot]",
+      "copilot[bot]",
+      "copilot-pull-request-reviewer[bot]",
+      "copilot-swe-agent[bot]",
+    ]) {
+      assert.match(
+        review,
+        new RegExp(
+          trustedAutomation.replaceAll("[", "\\[").replaceAll("]", "\\]"),
+        ),
+      );
+    }
+    assert.doesNotMatch(review, /\(\\\[bot\\\]\)\?/);
+    assert.doesNotMatch(review, /grep[^\n]*['"]copilot['"]/i);
+    assert.doesNotMatch(review, /REVIEW_LOGIN" != "mnaimfaizy"/);
+    assert.match(review, /\[\[ "\$\{entry,,\}" == "\$candidate" \]\]/);
+    assert.doesNotMatch(review, /grep[^\n]*ALLOWLIST/);
+    assert.match(
+      review,
+      /if ! is_authorized_login "\$ACTOR" \|\| ! is_authorized_login "\$AUTHOR"/,
+    );
+    assert.match(review, /if \[ "\$EVENT_NAME" = "workflow_dispatch" \]/);
+    assert.match(
+      review,
+      /if ! is_authorized_login "\$ACTOR" \|\| ! is_authorized_login "\$AUTHOR"; then[\s\S]*?action=skip[\s\S]*?exit 0/,
+    );
+    assert.ok(authorization >= 0, "expected an authorization guard");
+    assert.ok(
+      authorization < pipelineClassification,
+      "authorization must precede pipeline classification",
+    );
+    assert.ok(
+      pipelineClassification < privilegedToken,
+      "pipeline classification must precede privileged token use",
+    );
+  });
+});
+
 describe("Release workflow supply-chain contract", () => {
   it("gates the privileged build with the release environment", () => {
     const releaseJob = jobBlock(
