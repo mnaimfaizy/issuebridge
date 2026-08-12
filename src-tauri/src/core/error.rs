@@ -23,6 +23,7 @@ pub enum PublishError {
     NotSignedIn,
     TitleRequired,
     AlreadyLinked,
+    NotAppVisible,
     NotFound,
     StorageUnavailable,
     /// Stored token rejected by GitHub (401/403) — user must sign in again.

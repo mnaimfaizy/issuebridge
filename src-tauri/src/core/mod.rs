@@ -660,6 +660,14 @@ where
             return Err(PublishError::TitleRequired);
         }
 
+        let settings = self
+            .settings_store
+            .load()
+            .map_err(|_| PublishError::StorageUnavailable)?;
+        if !settings.app_visible_repos.contains(&draft.repo) {
+            return Err(PublishError::NotAppVisible);
+        }
+
         let label_names = self
             .ensure_remote_labels(&credentials.access_token, &draft.repo, &draft.label_names)
             .map_err(map_publish_github_error)?;
@@ -2178,6 +2186,29 @@ mod tests {
             .expect_err("Publish without title must be refused");
         assert_eq!(err, PublishError::TitleRequired);
 
+        let loaded = core.get_draft(&saved.id).expect("get");
+        assert!(loaded.local_link.is_none());
+        assert!(loaded.remote_snapshot.is_none());
+    }
+
+    #[test]
+    fn publish_outside_app_visible_repos_is_refused_before_github_write() {
+        let (mut core, github) = ready_core_with_github();
+        let outside_repo = repo("acme", "private-admin");
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: outside_repo.clone(),
+                title: "Unexpected Publish target".into(),
+                body: "This Draft must remain local.".into(),
+            })
+            .expect("capture");
+
+        let err = core
+            .publish_draft(&saved.id)
+            .expect_err("Publish outside App-visible repos must be refused");
+
+        assert_eq!(err, PublishError::NotAppVisible);
+        assert!(github.issues.lock().expect("FakeGitHub issues").is_empty());
         let loaded = core.get_draft(&saved.id).expect("get");
         assert!(loaded.local_link.is_none());
         assert!(loaded.remote_snapshot.is_none());

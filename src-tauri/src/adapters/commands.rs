@@ -1186,6 +1186,10 @@ fn publish_error_message(err: PublishError) -> String {
         PublishError::AlreadyLinked => {
             "This Draft is already linked. Use Update to send changes to GitHub.".into()
         }
+        PublishError::NotAppVisible => {
+            "This Draft's repository is no longer App-visible. Refresh your GitHub App access before Publishing."
+                .into()
+        }
         PublishError::NotFound => "That Draft was not found.".into(),
         PublishError::StorageUnavailable => "Could not save Draft after Publish.".into(),
         PublishError::InvalidCredentials => {

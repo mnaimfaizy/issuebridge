@@ -34,7 +34,7 @@ The **security-finding-triage** skill updates rows after stress-check.
 | `unprotected-tag-release-secrets`      | Unprotected tag builds expose release secrets               | `.github/workflows/release-windows.yml`       | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-12 |
 | `agent-pipeline-plan-injection`        | Untrusted issue text can prompt-inject / replace agent plan | `.github/workflows/agent-pipeline.yml`        | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-12 |
 | `review-pipeline-missing-actor-gate`   | Review pipeline lacks actor authorization gate              | `.github/workflows/agent-pipeline-review.yml` | medium   | confirmed | fixed  | GHSA-g2j5-62w4-2gfm | 2026-08-12 |
-| `publish-app-visible-boundary`         | Publish path does not enforce App-visible repo boundary     | `src/capture/CapturePopup.tsx`                | medium   | untriaged | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `publish-app-visible-boundary`         | Publish path does not enforce App-visible repo boundary     | `src-tauri/src/core/mod.rs`                   | medium   | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-12 |
 
 ## Remediation notes
 
