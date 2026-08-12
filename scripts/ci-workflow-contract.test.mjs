@@ -231,6 +231,15 @@ describe("Agent pipeline trust-boundary contract", () => {
 });
 
 describe("Release workflow supply-chain contract", () => {
+  it("gates the privileged build with the release environment", () => {
+    const releaseJob = jobBlock(
+      readWorkflow("release-windows.yml"),
+      "windows-nsis",
+    );
+
+    assert.match(releaseJob, /^ {4}environment:\s*release\s*$/m);
+  });
+
   it("pins every third-party action to a full commit SHA", () => {
     const yml = readWorkflow("release-windows.yml");
     const thirdPartyActions = [

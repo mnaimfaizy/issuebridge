@@ -19,6 +19,7 @@ permissions:
 jobs:
   windows-nsis:
     runs-on: windows-latest
+    environment: release
     steps:
       - name: Checkout
         uses: actions/checkout@v4
