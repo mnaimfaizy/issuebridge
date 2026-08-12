@@ -32,7 +32,7 @@ The **security-finding-triage** skill updates rows after stress-check.
 | `relative-sidecar-cwd-exec`            | Relative sidecar discovery → cwd code execution             | `src-tauri/src/adapters/whisper_voice.rs` | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-11 |
 | `sidecar-download-no-integrity`        | Release sidecars downloaded without integrity verification  | `scripts/fetch-whisper-assets.ps1`        | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-12 |
 | `unprotected-tag-release-secrets`      | Unprotected tag builds expose release secrets               | `.github/workflows/release-windows.yml`   | high     | untriaged | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
-| `agent-pipeline-plan-injection`        | Untrusted issue text can prompt-inject / replace agent plan | `.github/workflows/agent-pipeline.yml`    | high     | untriaged | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `agent-pipeline-plan-injection`        | Untrusted issue text can prompt-inject / replace agent plan | `.github/workflows/agent-pipeline.yml`    | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-12 |
 | `publish-app-visible-boundary`         | Publish path does not enforce App-visible repo boundary     | `src/capture/CapturePopup.tsx`            | medium   | untriaged | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
 
 ## Remediation notes
