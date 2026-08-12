@@ -54,6 +54,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ALLOWLIST: ${{ vars.AGENT_PIPELINE_ALLOWLIST }}
+          ACTOR: ${{ github.actor }}
           EVENT_NAME: ${{ github.event_name }}
           PR_FROM_EVENT: ${{ github.event.pull_request.number }}
           PR_FROM_INPUT: ${{ inputs.pr_number }}
@@ -80,7 +81,27 @@ jobs:
             printf '%s' "$v"
           }
           is_copilot_login() {
-            echo "$1" | grep -qiE '^(copilot|copilot-pull-request-reviewer|copilot-swe-agent)(\[bot\])?$'
+            local login="${1,,}"
+            [[ "$login" == "copilot[bot]" ]] ||
+              [[ "$login" == "copilot-pull-request-reviewer[bot]" ]] ||
+              [[ "$login" == "copilot-swe-agent[bot]" ]]
+          }
+          is_allowlisted_login() {
+            local candidate="${1,,}"
+            local entry
+            local -a entries
+            IFS=',' read -ra entries <<<"${ALLOWLIST:-}"
+            for entry in "${entries[@]}"; do
+              entry=$(echo "$entry" | xargs)
+              if [[ "${entry,,}" == "$candidate" ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+          is_authorized_login() {
+            local login="${1,,}"
+            [[ "$login" == "github-actions[bot]" ]] || is_copilot_login "$login" || is_allowlisted_login "$login"
           }
 
           PR=""
@@ -94,8 +115,8 @@ jobs:
                 --jq '.[0].number // empty' || true)
             fi
           elif [ "$EVENT_NAME" = "pull_request_review" ]; then
-            # Only act on Copilot (or any) reviews for pipeline PRs — filter login loosely.
-            if [ -n "${REVIEW_LOGIN:-}" ] && ! is_copilot_login "$REVIEW_LOGIN" && [ "$REVIEW_LOGIN" != "mnaimfaizy" ]; then
+            # Non-authorized reviews still resolve the PR, then no-op after authorization.
+            if [ -n "${REVIEW_LOGIN:-}" ] && ! is_authorized_login "$REVIEW_LOGIN"; then
               # Still allow non-Copilot reviews to no-op after resolve; don't exit before PR set
               :
             fi
@@ -123,8 +144,15 @@ jobs:
           HEAD_SHA=$(jq -r '.headRefOid' <<<"$META")
           echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
+          # Authorize actor and PR author before branch names or markers can classify the PR.
+          if ! is_authorized_login "$ACTOR" || ! is_authorized_login "$AUTHOR"; then
+            echo "Review automation is not authorized for this actor or PR author."
+            echo "action=skip" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           PIPELINE=false
-          if echo "$AUTHOR" | grep -qi 'copilot'; then PIPELINE=true; fi
+          if is_copilot_login "$AUTHOR"; then PIPELINE=true; fi
           if echo "$HEAD_REF" | grep -q '^copilot/'; then PIPELINE=true; fi
 
           HAS_PLAN=false
@@ -205,7 +233,9 @@ jobs:
           REVIEW_FINDINGS=false
           COPILOT_REVIEW_COUNT=$(as_int "$(jq '
             [.reviews[]?
-              | select(.author.login | test("copilot"; "i"))
+              | select((.author.login | ascii_downcase) as $login
+                | ["copilot[bot]", "copilot-pull-request-reviewer[bot]", "copilot-swe-agent[bot]"]
+                | index($login))
             ] | length
           ' <<<"$META")")
 
@@ -226,7 +256,9 @@ jobs:
             }" -f o="$OWNER" -f n="$REPO" -F p="$PR" \
             --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
               | select(.isResolved==false and .isOutdated==false)
-              | select(.comments.nodes[0].author.login | test("copilot"; "i"))
+              | select((.comments.nodes[0].author.login | ascii_downcase) as $login
+                | ["copilot[bot]", "copilot-pull-request-reviewer[bot]", "copilot-swe-agent[bot]"]
+                | index($login))
               | {path, body: .comments.nodes[0].body}]' || echo '[]')
 
           UNRESOLVED=$(as_int "$(jq 'length' <<<"$THREADS_JSON")")
@@ -255,7 +287,10 @@ jobs:
           fi
 
           REVIEW_REQUESTED=$(as_int "$(count_matches '<!-- agent-pipeline-review-requested -->' "$COMMENT_BODIES")")
-          HAS_REVIEW_REQ=$(as_int "$(jq '[.reviewRequests[]?.login // empty | select(test("copilot";"i"))] | length' <<<"$META")")
+          HAS_REVIEW_REQ=$(as_int "$(jq '[.reviewRequests[]?.login // empty
+            | ascii_downcase
+            | select(. == "copilot[bot]" or . == "copilot-pull-request-reviewer[bot]" or . == "copilot-swe-agent[bot]")
+          ] | length' <<<"$META")")
 
           ALREADY_FIX_THIS_SHA=false
           if echo "$COMMENT_BODIES" | grep -q "<!-- agent-pipeline-fix-round:.*sha:${HEAD_SHA}.*invoked:user"; then
