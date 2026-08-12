@@ -2,14 +2,22 @@
 
 All notable changes to Issuebridge are documented here. Release notes are user-facing; see git history for full commit detail.
 
+## [0.2.2] - 2026-08-12
+
+### Fixed
+
+- Hardened bundled Rewrite and voice sidecar startup by resolving executables and supporting libraries from trusted application roots instead of the current working directory.
+
 ## [0.2.1] - 2026-08-10
 
 ### Security
+
 - Official Windows Releases no longer embed the GitHub App client secret in the installer. Sign in with GitHub exchanges tokens via a maintained OAuth exchange service.
 
 ## [0.2.0] - 2026-08-06
 
 ### Added
+
 - Rewrite in Inbox: propose a clearer Draft title and body, then Accept or Discard
 - Real Rewrite Generate via a bundled llama.cpp sidecar (Windows-hardened)
 - Rewrite model catalog with download lifecycle
@@ -18,6 +26,7 @@ All notable changes to Issuebridge are documented here. Release notes are user-f
 - Localized timestamps for Drafts
 
 ### Fixed
+
 - Hardened llama.cpp Rewrite Generate on Windows
 - Publish: clearer GitHub failure logging and surface invalid credentials to the user
 - Backdrop click no longer closes the Rewrite dialog or confirm dialogs
@@ -25,11 +34,13 @@ All notable changes to Issuebridge are documented here. Release notes are user-f
 ## [0.2.0-rc.2] - 2026-08-03
 
 ### Fixed
+
 - Publish: clearer GitHub failure logging and surface invalid credentials to the user
 
 ## [0.2.0-rc.1] - 2026-08-01
 
 ### Added
+
 - Rewrite in Inbox: propose a clearer Draft title and body, then Accept or Discard
 - Real Rewrite Generate via a bundled llama.cpp sidecar (Windows-hardened)
 - Rewrite model catalog with download lifecycle
@@ -37,17 +48,20 @@ All notable changes to Issuebridge are documented here. Release notes are user-f
 - Rewrite model settings section
 
 ### Fixed
+
 - Hardened llama.cpp Rewrite Generate on Windows
 
 ## [0.1.1] - 2026-07-31
 
 ### Fixed
+
 - Voice Capture (hold-to-talk) on installed Windows builds: Whisper DLLs are installed next to whisper-cli so transcription can find them (#55)
 - No console window flash when Whisper runs after releasing the mic
 
 ## [0.1.0] - 2026-07-30
 
 ### Added
+
 - GitHub sign-in (App OAuth + PKCE) with PAT identity fallback
 - First-run Install App and Testing set, with configurable Testing set max in Settings
 - Fluent main-window shell with Inbox Draft workbench, Settings, and Help
@@ -60,15 +74,18 @@ All notable changes to Issuebridge are documented here. Release notes are user-f
 - Issuebridge logo across the app, README, and repo
 
 ### Fixed
+
 - Hardened first-run auth, Capture window behavior, and Whisper PTT after QA
 - Status MessageBars wrap instead of scrolling sideways
 
 ### Changed
+
 - NSIS installer attaches to GitHub Releases automatically on version tags
 
 ## [0.1.0-rc.1] - 2026-07-28
 
 ### Added
+
 - GitHub sign-in (App OAuth + PKCE) with PAT identity fallback
 - First-run Install App and Testing set (up to three repos)
 - Capture popup for text Drafts, plus Inbox list and editor
@@ -78,4 +95,5 @@ All notable changes to Issuebridge are documented here. Release notes are user-f
 - Per-user Windows NSIS installer bundling the app, Whisper CLI, and base model
 
 ### Fixed
+
 - Hardened first-run auth, Capture window behavior, and Whisper PTT after QA
