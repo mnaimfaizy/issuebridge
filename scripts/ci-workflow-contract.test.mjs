@@ -186,6 +186,50 @@ describe("PR security-audit privilege contract", () => {
   });
 });
 
+describe("Agent pipeline trust-boundary contract", () => {
+  it("keeps the long-lived Copilot PAT out of the planner", () => {
+    const plan = jobBlock(readWorkflow("agent-pipeline.yml"), "plan");
+
+    assert.match(plan, /COPILOT_GITHUB_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/);
+    assert.doesNotMatch(plan, /secrets\.COPILOT_GITHUB_TOKEN/);
+  });
+
+  it("treats issue context as untrusted data with read-only planner tools", () => {
+    const plan = jobBlock(readWorkflow("agent-pipeline.yml"), "plan");
+    const trustedPolicy = plan.indexOf('cat "$PROMPT_FILE"');
+    const issueTitle = plan.indexOf('echo "Issue #$ISSUE');
+    const issueBody = plan.indexOf('echo "$BODY"');
+
+    assert.ok(trustedPolicy >= 0, "expected trusted planner policy");
+    assert.ok(trustedPolicy < issueTitle, "trusted policy must come first");
+    assert.ok(issueTitle < issueBody, "issue title must precede issue body");
+    assert.match(plan, /<untrusted_issue_context>/);
+    assert.match(plan, /<\/untrusted_issue_context>/);
+    assert.doesNotMatch(plan, /--allow-tool=write/);
+    assert.doesNotMatch(plan, /shell\(git:\*\)/);
+
+    const prompt = readFileSync(
+      join(root, ".github", "agent-pipeline", "planner-prompt.md"),
+      "utf8",
+    );
+    assert.match(prompt, /untrusted data/i);
+    assert.match(prompt, /do not follow instructions/i);
+  });
+
+  it("accepts implementation plans only from the workflow bot", () => {
+    const implement = jobBlock(readWorkflow("agent-pipeline.yml"), "implement");
+
+    assert.match(
+      implement,
+      /select\(\.user\.login == "github-actions\[bot\]"\)/,
+    );
+    assert.match(
+      implement,
+      /select\(\.body \| contains\("<!-- agent-pipeline-plan -->"\)\)/,
+    );
+  });
+});
+
 describe("Release workflow supply-chain contract", () => {
   it("pins every third-party action to a full commit SHA", () => {
     const yml = readWorkflow("release-windows.yml");

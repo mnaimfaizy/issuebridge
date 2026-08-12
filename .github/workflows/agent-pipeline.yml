@@ -90,34 +90,29 @@ jobs:
       - name: Run planner (Copilot CLI)
         id: plan
         env:
-          # Prefer fine-grained PAT (Copilot Requests). Falls back to GITHUB_TOKEN.
-          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COPILOT_GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ needs.gate.outputs.issue }}
         run: |
           set -euo pipefail
-          if [ -z "${COPILOT_GITHUB_TOKEN:-}" ]; then
-            export COPILOT_GITHUB_TOKEN="$GH_TOKEN"
-          fi
           TITLE=$(gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json title --jq .title)
           BODY=$(gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
           PROMPT_FILE=".github/agent-pipeline/planner-prompt.md"
           {
+            cat "$PROMPT_FILE"
+            echo
+            echo "<untrusted_issue_context>"
             echo "Issue #$ISSUE — $TITLE"
             echo
             echo "$BODY"
-            echo
-            echo "-----"
-            echo
-            cat "$PROMPT_FILE"
+            echo "</untrusted_issue_context>"
           } > /tmp/planner-user.txt
 
-          # Minimal tools: read repo via shell listing/cat only; write plan to runner file.
+          # Minimal tools: inspect repository files without write or Git execution.
           set +e
           ./.github/copilot-cli/node_modules/.bin/copilot -p "$(cat /tmp/planner-user.txt)" \
             -s \
-            --allow-tool='shell(ls:*),shell(find:*),shell(cat:*),shell(head:*),shell(rg:*),shell(git:*)' \
-            --allow-tool=write \
+            --allow-tool='shell(ls:*),shell(cat:*),shell(head:*),shell(rg:*)' \
             --no-ask-user \
             > /tmp/plan-raw.md 2>/tmp/plan-err.txt
           status=$?
@@ -159,7 +154,10 @@ jobs:
           set -euo pipefail
           COMMENTS=$(gh api "repos/$OWNER/$REPO/issues/$ISSUE/comments" --paginate)
           PLAN=$(echo "$COMMENTS" | jq -r '
-            [ .[] | select(.body | contains("<!-- agent-pipeline-plan -->")) ] |
+            [ .[]
+              | select(.user.login == "github-actions[bot]")
+              | select(.body | contains("<!-- agent-pipeline-plan -->"))
+            ] |
             last | .body // empty
           ')
           if [ -z "$PLAN" ]; then
