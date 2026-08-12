@@ -30,7 +30,7 @@ The **security-finding-triage** skill updates rows after stress-check.
 | `mutable-third-party-release-actions`  | Mutable third-party actions in privileged release pipeline  | `.github/workflows/release-windows.yml`   | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-10 |
 | `pr-controlled-audit-privileged-token` | PR-controlled audit agent + privileged advisory token       | `.github/workflows/security-audit.yml`    | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-11 |
 | `relative-sidecar-cwd-exec`            | Relative sidecar discovery → cwd code execution             | `src-tauri/src/adapters/whisper_voice.rs` | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-11 |
-| `sidecar-download-no-integrity`        | Release sidecars downloaded without integrity verification  | `scripts/fetch-whisper-assets.ps1`        | high     | untriaged | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
+| `sidecar-download-no-integrity`        | Release sidecars downloaded without integrity verification  | `scripts/fetch-whisper-assets.ps1`        | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-12 |
 | `unprotected-tag-release-secrets`      | Unprotected tag builds expose release secrets               | `.github/workflows/release-windows.yml`   | high     | untriaged | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
 | `agent-pipeline-plan-injection`        | Untrusted issue text can prompt-inject / replace agent plan | `.github/workflows/agent-pipeline.yml`    | high     | untriaged | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
 | `publish-app-visible-boundary`         | Publish path does not enforce App-visible repo boundary     | `src/capture/CapturePopup.tsx`            | medium   | untriaged | open   | GHSA-97vr-qxvw-88gr | 2026-08-06 |
@@ -42,6 +42,7 @@ The **security-finding-triage** skill updates rows after stress-check.
 - `mutable-third-party-release-actions` (F3): **fixed** — third-party actions in the privileged Release job are pinned to reviewed full commit SHAs, with a contract preventing mutable refs from returning.
 - `pr-controlled-audit-privileged-token` (F4): **fixed** — PR scans use the short-lived job token, restore the trusted audit runtime before execution, and exclude repository-code execution tools. Merged in PR #116.
 - `relative-sidecar-cwd-exec` (F5): **fixed** — implicit voice and Rewrite sidecar, model, and DLL discovery is anchored to trusted application and build roots; regression tests reject relative candidates.
+- `sidecar-download-no-integrity` (F6): **fixed** — official Release fetches verify reviewed SHA-256 digests for both executable sidecar archives before extraction.
 
 ## How to update
 

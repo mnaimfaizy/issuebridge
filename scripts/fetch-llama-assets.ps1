@@ -8,6 +8,7 @@ $BinDir = Join-Path $Root "src-tauri\binaries"
 $TripleExe = Join-Path $BinDir "llama-cli-x86_64-pc-windows-msvc.exe"
 $Pin = "b10199"
 $ZipUrl = "https://github.com/ggml-org/llama.cpp/releases/download/$Pin/llama-$Pin-bin-win-vulkan-x64.zip"
+$ExpectedZipSha256 = "ca7e53a15f6956a3627c7f1d462a4877b70878680ae1db482346e1c8bb22e67e"
 
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
@@ -18,6 +19,10 @@ $BinExtract = Join-Path $Temp "bin"
 
 Write-Host "Downloading llama.cpp $Pin Windows Vulkan zip..."
 Invoke-WebRequest -Uri $ZipUrl -OutFile $ZipPath
+$ZipHash = (Get-FileHash -Algorithm SHA256 -Path $ZipPath).Hash.ToLowerInvariant()
+if ($ZipHash -ne $ExpectedZipSha256) {
+    throw "llama.cpp archive SHA-256 mismatch: expected $ExpectedZipSha256, got $ZipHash"
+}
 if (Test-Path $BinExtract) { Remove-Item -Recurse -Force $BinExtract }
 Expand-Archive -Path $ZipPath -DestinationPath $BinExtract -Force
 

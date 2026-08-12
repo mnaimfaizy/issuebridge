@@ -20,6 +20,36 @@ const validResourcesMap = {
   "binaries/*.dll": "./",
 };
 
+function assertArchiveIntegrity(
+  scriptName,
+  expectedSha256,
+  mutate = (script) => script,
+) {
+  const script = mutate(
+    readFileSync(join(root, "scripts", scriptName), "utf8"),
+  );
+  const download = script.indexOf("Invoke-WebRequest");
+  const verify = script.indexOf("$ZipHash =", download);
+  const extract = script.indexOf("Expand-Archive", download);
+
+  assert.match(
+    script,
+    new RegExp(`\\$ExpectedZipSha256\\s*=\\s*"${expectedSha256}"`),
+  );
+  assert.ok(download >= 0, `${scriptName} must download the archive`);
+  assert.ok(verify > download, `${scriptName} must verify after download`);
+  assert.ok(extract > verify, `${scriptName} must verify before extraction`);
+  const gate = script.slice(verify, extract);
+  assert.match(
+    gate,
+    /\$ZipHash\s*=\s*\(Get-FileHash -Algorithm SHA256 -Path \$ZipPath\)\.Hash\.ToLowerInvariant\(\)/,
+  );
+  assert.match(
+    gate,
+    /if \(\$ZipHash -ne \$ExpectedZipSha256\) \{\s*throw .*SHA-256 mismatch.*\s*\}/,
+  );
+}
+
 describe("packaging contract", () => {
   it("requires NSIS-only targets and currentUser installMode with whisper + llama assets", () => {
     const result = checkPackagingContract({
@@ -160,6 +190,36 @@ describe("packaging contract", () => {
     );
     const result = checkPackagingContract(config);
     assert.equal(result.ok, true, result.errors.join("\n"));
+  });
+});
+
+describe("release sidecar archive integrity", () => {
+  it("verifies the pinned Whisper archive before extraction", () => {
+    assertArchiveIntegrity(
+      "fetch-whisper-assets.ps1",
+      "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539",
+    );
+  });
+
+  it("verifies the pinned llama.cpp archive before extraction", () => {
+    assertArchiveIntegrity(
+      "fetch-llama-assets.ps1",
+      "ca7e53a15f6956a3627c7f1d462a4877b70878680ae1db482346e1c8bb22e67e",
+    );
+  });
+
+  it("rejects an inverted archive integrity guard", () => {
+    assert.throws(() =>
+      assertArchiveIntegrity(
+        "fetch-whisper-assets.ps1",
+        "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539",
+        (script) =>
+          script.replace(
+            "$ZipHash -ne $ExpectedZipSha256",
+            "$ZipHash -eq $ExpectedZipSha256",
+          ),
+      ),
+    );
   });
 });
 
