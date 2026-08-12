@@ -237,7 +237,7 @@ describe("Release workflow supply-chain contract", () => {
       "windows-nsis",
     );
 
-    assert.match(releaseJob, /^ {4}environment:\s*release\s*$/m);
+    assert.match(releaseJob, /^ {4}environment:\s*\n {6}name:\s*release\s*$/m);
   });
 
   it("pins every third-party action to a full commit SHA", () => {
