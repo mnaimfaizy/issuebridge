@@ -109,6 +109,10 @@ team setup would use an API key or workload identity federation instead.
 
 ## Known limitations
 
+- **The implementer cannot touch `.github/workflows`.** The Claude GitHub App has no
+  workflow-write permission in this job, so issues asking for workflow changes (such as
+  #126 and #127) will come back with those files skipped and a note in the PR body. Drive
+  those yourself using the plan.
 - **Monthly cron is best-effort.** GitHub disables scheduled workflows on public repos
   after 60 days without repository activity. `workflow_dispatch` is the manual fallback.
 - **No automated review loop.** The archived pipeline ran up to two `@copilot` fix rounds
