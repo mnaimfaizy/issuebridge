@@ -227,9 +227,22 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     assert.match(implement, /TAURI_CONFIG:/);
 
     const allowed = implement.match(/--allowedTools "[^"]*"/)?.[0] ?? "";
-    for (const tool of ["Edit", "Write", "Bash(npm:*)", "Bash(cargo:*)"]) {
+    for (const tool of [
+      "Edit",
+      "Write",
+      "Bash(npm:*)",
+      "Bash(cargo:*)",
+      // Without this the agent implements and pushes, then stalls at the very
+      // last step and hands back a compare link instead of a PR.
+      "Bash(gh pr create:*)",
+    ]) {
       assert.ok(allowed.includes(tool), `implementer must be granted ${tool}`);
     }
+
+    // Scoped gh only. Bash(gh:*) would also grant `gh api` - merging, deleting
+    // branches, reading secrets - which is far beyond opening a draft PR.
+    assert.doesNotMatch(allowed, /Bash\(gh:\*\)/);
+    assert.doesNotMatch(allowed, /Bash\(gh api/);
   });
 
   it("lets the Claude App open the PR so CI actually runs", () => {
