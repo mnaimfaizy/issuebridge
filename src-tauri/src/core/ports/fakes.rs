@@ -21,8 +21,9 @@ fn repo_key(repo: &RepoId) -> String {
 
 #[derive(Debug, Clone)]
 pub struct FakeGitHub {
-    /// When true, `validate_pat` fails with InvalidCredentials.
-    pub reject_pat: bool,
+    /// When set, `validate_pat` fails with this error.
+    /// Shared so a test can revoke (or un-revoke) the token mid-session.
+    pub validate_pat_error: Arc<Mutex<Option<GitHubError>>>,
     /// Result returned by `exchange_oauth_code`.
     pub oauth_result: Result<StoredCredentials, GitHubError>,
     /// Result returned by `list_app_install_snapshot`.
@@ -36,14 +37,16 @@ pub struct FakeGitHub {
     pub update_seq: Arc<Mutex<u64>>,
     /// Labels per `owner/name` for `list_labels` / `create_label`.
     pub repo_labels: Arc<Mutex<HashMap<String, Vec<RepoLabel>>>>,
-    /// When true, `list_labels` fails with Unavailable.
-    pub list_labels_unavailable: Arc<Mutex<bool>>,
+    /// When set, `list_labels` fails with this error.
+    pub list_labels_error: Arc<Mutex<Option<GitHubError>>>,
+    /// When set, `get_issue` / `update_issue` fail with this error.
+    pub issue_error: Arc<Mutex<Option<GitHubError>>>,
 }
 
 impl Default for FakeGitHub {
     fn default() -> Self {
         Self {
-            reject_pat: false,
+            validate_pat_error: Arc::new(Mutex::new(None)),
             oauth_result: Err(GitHubError::Unavailable),
             install_snapshot: Ok(AppInstallSnapshot {
                 has_install: false,
@@ -55,7 +58,8 @@ impl Default for FakeGitHub {
             issues: Arc::new(Mutex::new(HashMap::new())),
             update_seq: Arc::new(Mutex::new(0)),
             repo_labels: Arc::new(Mutex::new(HashMap::new())),
-            list_labels_unavailable: Arc::new(Mutex::new(false)),
+            list_labels_error: Arc::new(Mutex::new(None)),
+            issue_error: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -96,14 +100,50 @@ impl FakeGitHub {
         let mut map = self.repo_labels.lock().expect("FakeGitHub repo_labels");
         map.insert(repo_key(repo), labels);
     }
+
+    /// Simulate GitHub revoking (or restoring) the stored token mid-session.
+    pub fn set_reject_pat(&self, reject: bool) {
+        self.set_validate_pat_error(reject.then_some(GitHubError::InvalidCredentials));
+    }
+
+    /// Simulate GitHub being unreachable (or any other `validate_pat` outcome).
+    pub fn set_validate_pat_error(&self, error: Option<GitHubError>) {
+        *self
+            .validate_pat_error
+            .lock()
+            .expect("FakeGitHub validate_pat_error") = error;
+    }
+
+    pub fn set_list_labels_error(&self, error: Option<GitHubError>) {
+        *self
+            .list_labels_error
+            .lock()
+            .expect("FakeGitHub list_labels_error") = error;
+    }
+
+    pub fn set_issue_error(&self, error: Option<GitHubError>) {
+        *self.issue_error.lock().expect("FakeGitHub issue_error") = error;
+    }
+
+    fn issue_error(&self) -> Option<GitHubError> {
+        self.issue_error.lock().ok().and_then(|e| e.clone())
+    }
 }
 
 impl GitHub for FakeGitHub {
     fn validate_pat(&self, pat: &str) -> Result<(), GitHubError> {
-        if pat.is_empty() || self.reject_pat {
+        if pat.is_empty() {
             return Err(GitHubError::InvalidCredentials);
         }
-        Ok(())
+        match self
+            .validate_pat_error
+            .lock()
+            .map_err(|_| GitHubError::Unavailable)?
+            .clone()
+        {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     fn exchange_oauth_code(
@@ -161,6 +201,9 @@ impl GitHub for FakeGitHub {
         repo: &RepoId,
         number: u64,
     ) -> Result<CreatedIssue, GitHubError> {
+        if let Some(error) = self.issue_error() {
+            return Err(error);
+        }
         let issues = self.issues.lock().map_err(|_| GitHubError::Unavailable)?;
         issues
             .get(&issue_key(repo, number))
@@ -177,6 +220,9 @@ impl GitHub for FakeGitHub {
         body: &str,
         label_names: &[String],
     ) -> Result<CreatedIssue, GitHubError> {
+        if let Some(error) = self.issue_error() {
+            return Err(error);
+        }
         let mut issues = self.issues.lock().map_err(|_| GitHubError::Unavailable)?;
         let issue = issues
             .get_mut(&issue_key(repo, number))
@@ -194,12 +240,13 @@ impl GitHub for FakeGitHub {
     }
 
     fn list_labels(&self, _token: &str, repo: &RepoId) -> Result<Vec<RepoLabel>, GitHubError> {
-        if *self
-            .list_labels_unavailable
+        if let Some(error) = self
+            .list_labels_error
             .lock()
             .map_err(|_| GitHubError::Unavailable)?
+            .clone()
         {
-            return Err(GitHubError::Unavailable);
+            return Err(error);
         }
         let map = self
             .repo_labels

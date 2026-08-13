@@ -226,8 +226,10 @@ export function InboxWorkbench() {
       if (next) await restoreSelection(next);
       try {
         await invoke("prefetch_testing_set_label_catalogs");
-      } catch {
-        // Soft: Inbox still works without Testing set prefetch.
+      } catch (error) {
+        // Transient refresh failures come back as Ok with refresh_failed, so an error
+        // here is real (e.g. a rejected session) — surface it instead of retrying quietly.
+        showError(formatInvokeError(error));
       }
     })();
 
@@ -250,7 +252,7 @@ export function InboxWorkbench() {
       window.removeEventListener("focus", onFocus);
       clearSuccessTimer();
     };
-  }, [clearSuccessTimer, loadInbox]);
+  }, [clearSuccessTimer, loadInbox, showError]);
 
   function noteFieldEdit() {
     setStatus((current) => clearSuccessOnEdit(current));

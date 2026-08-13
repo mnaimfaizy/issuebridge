@@ -14,7 +14,8 @@ use adapters::{
     set_active_rewrite_model, set_testing_set_max, setup_tray, show_capture,
     show_capture_window_detached, sign_in_with_github, sign_in_with_pat, sign_out,
     skip_try_capture, start_rewrite_model_download, testing_set, testing_set_max,
-    update_linked_draft, use_theirs, AppState, ModelDownloadHandle, RewriteJobHandle,
+    update_linked_draft, use_theirs, validate_session, validate_session_and_emit, AppState,
+    ModelDownloadHandle, RewriteJobHandle,
 };
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
@@ -34,6 +35,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             auth_state,
+            validate_session,
             first_run_step,
             sign_in_with_github,
             sign_in_with_pat,
@@ -115,6 +117,17 @@ pub fn run() {
 
             register_open_hotkey(app.handle()).map_err(|err| err.to_string())?;
             register_ptt_hotkey(app.handle()).map_err(|err| err.to_string())?;
+
+            // Launch validation: a vaulted token GitHub no longer accepts must not read as
+            // signed-in. Off the main thread (GET /user can hang) and independent of the
+            // window, so tray-first launches are covered too.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let core = Arc::clone(&handle.state::<AppState>().core);
+                if let Err(err) = validate_session_and_emit(&handle, &core) {
+                    eprintln!("[issuebridge] launch session validation failed: {err}");
+                }
+            });
 
             Ok(())
         })

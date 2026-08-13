@@ -4,6 +4,7 @@ import {
   webLightTheme,
 } from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import type { AuthStateDto } from "./firstrun/types";
 import { dispatchAppState } from "./firstrun/types";
@@ -44,6 +45,16 @@ export function App() {
 
   useEffect(() => {
     void refreshShellAccount();
+    // The vault only proves a token exists; GitHub decides whether it still works.
+    // A rejected token signs out in the core, so this routes back to Sign in.
+    void invoke<AuthStateDto>("validate_session")
+      .then((state) => {
+        setAuth(state === "signed_in" ? "signed_in" : "signed_out");
+        return refreshShellAccount();
+      })
+      .catch((error) => {
+        console.error("[issuebridge] validate_session failed", error);
+      });
     const onAppState = (event: Event) => {
       const detail = (
         event as CustomEvent<{ auth?: AuthStateDto; step?: FirstRunStepDto }>
@@ -63,9 +74,18 @@ export function App() {
     };
     window.addEventListener("issuebridge:app-state", onAppState);
     window.addEventListener("focus", onFocus);
+    // Forced Sign out from the backend (rejected credentials) — route to Sign in now,
+    // not at the next window focus.
+    let unlistenAuth: (() => void) | undefined;
+    void listen("auth-changed", () => {
+      void refreshShellAccount();
+    }).then((fn) => {
+      unlistenAuth = fn;
+    });
     return () => {
       window.removeEventListener("issuebridge:app-state", onAppState);
       window.removeEventListener("focus", onFocus);
+      unlistenAuth?.();
     };
   }, []);
 

@@ -254,6 +254,39 @@ pub fn sign_out(state: State<'_, AppState>) -> Result<AuthStateDto, String> {
     Ok(AuthStateDto::SignedOut)
 }
 
+/// Confirm the vaulted session with GitHub, then broadcast the result.
+///
+/// Must be `async`: `GET /user` can hang, and the core lock is held while it runs.
+#[tauri::command]
+pub async fn validate_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AuthStateDto, String> {
+    let core = Arc::clone(&state.core);
+    tauri::async_runtime::spawn_blocking(move || validate_session_and_emit(&app, &core))
+        .await
+        .map_err(|err| format!("session validation task failed: {err}"))?
+}
+
+/// Validate the vaulted session and emit `auth-changed`; shared with launch validation.
+pub fn validate_session_and_emit(
+    app: &AppHandle,
+    core: &Arc<Mutex<AppCore>>,
+) -> Result<AuthStateDto, String> {
+    let auth = {
+        let mut core = core.lock().map_err(|_| "core lock poisoned".to_string())?;
+        AuthStateDto::from(core.validate_session())
+    };
+    eprintln!("[issuebridge] validate_session: {auth:?}");
+    let _ = app.emit("auth-changed", auth.clone());
+    Ok(auth)
+}
+
+/// Tell the shell to re-read auth after a command found the session gone.
+fn emit_signed_out(app: &AppHandle) {
+    let _ = app.emit("auth-changed", AuthStateDto::SignedOut);
+}
+
 /// Primary GitHub App sign-in: PKCE S256 + fixed loopback callback, then core exchange.
 #[tauri::command]
 pub fn sign_in_with_github(
@@ -291,12 +324,21 @@ pub fn open_app_install(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn continue_install(state: State<'_, AppState>) -> Result<InstallContinueOutcomeDto, String> {
+pub fn continue_install(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<InstallContinueOutcomeDto, String> {
     let mut core = state
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    core.continue_install()
+    let result = core.continue_install();
+    let signed_out = result.is_err() && core.auth_state() == AuthState::SignedOut;
+    drop(core);
+    if signed_out {
+        emit_signed_out(&app);
+    }
+    result
         .map(InstallContinueOutcomeDto::from)
         .map_err(install_error_message)
 }
@@ -515,6 +557,7 @@ pub struct EnsuredLabelCatalogDto {
 
 #[tauri::command]
 pub fn ensure_label_catalog(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     repo: RepoIdDto,
 ) -> Result<EnsuredLabelCatalogDto, String> {
@@ -522,9 +565,17 @@ pub fn ensure_label_catalog(
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    let ensured = core
-        .ensure_label_catalog(&RepoId::from(repo))
-        .map_err(label_catalog_error_message)?;
+    let result = core.ensure_label_catalog(&RepoId::from(repo));
+    let ensured = match result {
+        Ok(ensured) => ensured,
+        Err(err) => {
+            drop(core);
+            if err == LabelCatalogError::SessionExpired {
+                emit_signed_out(&app);
+            }
+            return Err(label_catalog_error_message(err));
+        }
+    };
     Ok(EnsuredLabelCatalogDto {
         owner: ensured.repo.owner,
         name: ensured.repo.name,
@@ -541,13 +592,25 @@ pub fn ensure_label_catalog(
 }
 
 #[tauri::command]
-pub fn prefetch_testing_set_label_catalogs(state: State<'_, AppState>) -> Result<(), String> {
+pub fn prefetch_testing_set_label_catalogs(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let mut core = state
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    core.prefetch_testing_set_label_catalogs()
-        .map_err(label_catalog_error_message)
+    let result = core.prefetch_testing_set_label_catalogs();
+    drop(core);
+    match result {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            if err == LabelCatalogError::SessionExpired {
+                emit_signed_out(&app);
+            }
+            Err(label_catalog_error_message(err))
+        }
+    }
 }
 
 #[tauri::command]
@@ -583,10 +646,19 @@ pub fn publish_draft(
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    let draft = core.publish_draft(&id).map_err(|err| {
-        eprintln!("[issuebridge] publish_draft failed: {err:?}");
-        publish_error_message(err)
-    })?;
+    let result = core.publish_draft(&id);
+    let draft = match result {
+        Ok(draft) => draft,
+        Err(err) => {
+            let signed_out = core.auth_state() == AuthState::SignedOut;
+            drop(core);
+            eprintln!("[issuebridge] publish_draft failed: {err:?}");
+            if signed_out {
+                emit_signed_out(&app);
+            }
+            return Err(publish_error_message(err));
+        }
+    };
     drop(core);
     let _ = app.emit("inbox-changed", ());
     Ok(draft_to_dto(draft))
@@ -615,7 +687,8 @@ pub fn update_linked_draft(
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    match core.update_linked_draft(&id) {
+    let result = core.update_linked_draft(&id);
+    match result {
         Ok(draft) => {
             drop(core);
             let _ = app.emit("inbox-changed", ());
@@ -631,7 +704,12 @@ pub fn update_linked_draft(
             })
         }
         Err(err) => {
+            let signed_out = core.auth_state() == AuthState::SignedOut;
+            drop(core);
             eprintln!("[issuebridge] update_linked_draft failed: {err:?}");
+            if signed_out {
+                emit_signed_out(&app);
+            }
             Err(update_error_message(err))
         }
     }
@@ -1175,6 +1253,10 @@ fn inbox_error_message(err: InboxError) -> String {
 fn label_catalog_error_message(err: LabelCatalogError) -> String {
     match err {
         LabelCatalogError::NotSignedIn => "Sign in to load labels.".into(),
+        LabelCatalogError::SessionExpired => {
+            "GitHub rejected your sign-in, so Issuebridge signed you out. Sign in with GitHub again."
+                .into()
+        }
         LabelCatalogError::StorageUnavailable => "Could not load Label catalog.".into(),
     }
 }
