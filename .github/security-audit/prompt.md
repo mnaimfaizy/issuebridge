@@ -24,6 +24,6 @@ Mandatory process (full mode):
    - `src-tauri/src/adapters/commands.rs` IPC surface
    - `src-tauri/src/adapters/file_*_store.rs` path handling
    - `src-tauri/src/adapters/whisper_voice.rs` / `llama_rewrite.rs` and `scripts/fetch-*-assets.ps1`
-   - `.github/workflows/release-windows.yml` and `.github/workflows/agent-pipeline.yml` / `security-audit.yml`
+   - every live workflow under `.github/workflows/` (currently `release-windows.yml`, `ci.yml`, and the `claude-*.yml` agent workflows) — token scope, `permissions:` blocks, untrusted-input handling, and anything executed from a PR-controlled path. Files under `.github/workflows-archive/` are inert and out of scope.
 4. A clean report (`Finding count: 0`) is only valid if Notes lists each hunt area reviewed with a one-line rationale AND notes ledger skips. Otherwise keep hunting for **new** themes.
 5. Prefer under-reporting noise over missing a High CI/OAuth finding — when evidence is concrete and **not** already ledgered, file it.

@@ -1,6 +1,8 @@
 # Security audit (pilot)
 
-Threat-led Medium+ security audit for Issuebridge. Skill: [`.agents/skills/security-audit/`](../.agents/skills/security-audit/). Workflow: [`.github/workflows/security-audit.yml`](../.github/workflows/security-audit.yml).
+Threat-led Medium+ security audit for Issuebridge. Skill: [`.agents/skills/security-audit/`](../.agents/skills/security-audit/). Workflow: [`.github/workflows/claude-security-audit.yml`](../.github/workflows/claude-security-audit.yml).
+
+> The Copilot CLI implementation of this audit is archived at [`.github/workflows-archive/copilot/security-audit.yml`](../.github/workflows-archive/copilot/README.md) and no longer runs. The reporting path is unchanged — the audit still publishes to a **private draft Security Advisory** via `publish-draft-advisory.sh`, never to a public issue, artifact, or log.
 
 After a draft advisory exists, triage findings with **security-finding-triage** and follow [security-response.md](./security-response.md). Dedup memory: [findings-ledger.md](../.agents/skills/security-audit/findings-ledger.md).
 

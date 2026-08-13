@@ -8,6 +8,8 @@ This document is the single source of truth for *what to build* in the pilot. Pr
 
 > **Revision (2026-08-04):** GitHub Models was [retired 2026-07-30](https://github.blog/changelog/2026-07-30-github-models-is-now-retired/). Pilot planner is **Copilot CLI in Actions** (not Models / OpenAI / Cursor). Cursor and other BYOK providers remain later adapters only.
 
+> **Revision (2026-08-13) — superseded:** the Copilot implementation described below is **archived and no longer runs**. Its workflows live in [`.github/workflows-archive/copilot/`](../.github/workflows-archive/copilot/README.md), preserved for reference and rollback. The live pipeline is Claude Code in Actions, authenticated with a Claude subscription OAuth token. The gating model in this document (kill switch → allowlist → label consumption) carried over unchanged; the agent invocation and the implement step did not — Claude pushes its own branch and opens the PR instead of assigning a cloud agent.
+
 ---
 
 ## 1. Goal (prototype acceptance)
@@ -105,7 +107,7 @@ Mocked-only orchestration does **not** count. Prototype invoke is **label-only**
 
 ### 4.4 Reviewer loop (orchestrator policy)
 
-Implemented by `.github/workflows/agent-pipeline-review.yml` (triggers: PR open/sync, Copilot review submitted, CI `workflow_run` completed, plus manual `workflow_dispatch`).
+Implemented by `.github/workflows-archive/copilot/agent-pipeline-review.yml` (archived; triggers were PR open/sync, Copilot review submitted, CI `workflow_run` completed, plus manual `workflow_dispatch`).
 
 1. Detect pipeline PRs: Copilot author / `copilot/*` head **and** a linked issue (or prior loop comment) with `<!-- agent-pipeline-plan -->`.
 2. Request review from `copilot-pull-request-reviewer[bot]` (GraphQL `requestReviews` + `botIds`, REST fallback). Marker: `<!-- agent-pipeline-review-requested -->`.
@@ -163,9 +165,9 @@ State is PR-comment markers (no extra DB). Kill-switch `AGENT_PIPELINE_ENABLED` 
 1. Labels `agent:plan`, `agent:implement`.
 2. Vars: `AGENT_PIPELINE_ENABLED=true`, `AGENT_PIPELINE_ALLOWLIST=mnaimfaizy` (adjust).
 3. Secret: fine-grained PAT → `COPILOT_GITHUB_TOKEN` (Copilot Requests + repo issues/contents/PRs as needed).
-4. Workflow: `.github/workflows/agent-pipeline.yml` on default branch (`issues: [labeled]`, concurrency `agent-pipeline`).
-5. Review loop: `.github/workflows/agent-pipeline-review.yml` on default branch.
-6. Copilot env: `.github/workflows/copilot-setup-steps.yml` on default branch (Node 22 + `npm ci`, Rust toolchain, Tauri Linux deps, `cargo check --all-targets`) so cloud agent / code review can build before the firewall session, and rust-analyzer has macro/build-script artifacts.
+4. Workflow: `.github/workflows-archive/copilot/agent-pipeline.yml` (archived; ran from the default branch on `issues: [labeled]`, concurrency `agent-pipeline`).
+5. Review loop: `.github/workflows-archive/copilot/agent-pipeline-review.yml` (archived).
+6. Copilot env: `.github/workflows-archive/copilot/copilot-setup-steps.yml` (archived; Node 22 + `npm ci`, Rust toolchain, Tauri Linux deps, `cargo check --all-targets`) so cloud agent / code review could build before the firewall session, and rust-analyzer had macro/build-script artifacts. Restoring this file requires moving it back to `.github/workflows/copilot-setup-steps.yml` — GitHub reads it by exact path.
 7. Prompts under `.github/agent-pipeline/`.
 8. Dry-run kill-switch / allowlist miss; then one tiny real E2E issue.
 
