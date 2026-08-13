@@ -2,6 +2,12 @@
 
 All notable changes to Issuebridge are documented here. Release notes are user-facing; see git history for full commit detail.
 
+## [Unreleased]
+
+### Fixed
+
+- Sign in state now follows GitHub, not just the credential vault: Issuebridge validates the stored token on launch and signs you out (routing to Sign in) when GitHub rejects it, instead of showing the Inbox against a dead session. A still-valid token keeps you signed in across a machine restart, and being offline no longer signs you out. (#111)
+
 ## [0.2.3] - 2026-08-12
 
 ### Fixed

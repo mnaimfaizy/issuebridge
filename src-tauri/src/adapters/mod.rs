@@ -30,7 +30,8 @@ pub use commands::{
     respond_rewrite_hardware_prompt, save_capture, save_timestamp_display,
     set_active_rewrite_model, set_testing_set_max, show_capture, sign_in_with_github,
     sign_in_with_pat, sign_out, skip_try_capture, start_rewrite_model_download, testing_set,
-    testing_set_max, update_linked_draft, use_theirs, AppState, ModelDownloadHandle,
+    testing_set_max, update_linked_draft, use_theirs, validate_session, validate_session_on_launch,
+    AppState, ModelDownloadHandle,
 };
 pub(crate) use file_draft_store::system_time_millis;
 pub use llama_rewrite::RewriteJobHandle;

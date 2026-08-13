@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::adapters::app_core::AppCore;
@@ -208,6 +208,58 @@ pub fn auth_state(state: State<'_, AppState>) -> Result<AuthStateDto, String> {
     Ok(AuthStateDto::from(core.auth_state()))
 }
 
+/// Tell the shell the session changed underneath it (forced Sign out after a rejected
+/// token), so routing to Sign in does not wait for the next window focus.
+fn emit_auth_changed(app: &AppHandle, state: AuthStateDto) {
+    let _ = app.emit("auth-changed", state);
+}
+
+/// Emit `auth-changed` when a failed command left the core signed out.
+fn emit_if_signed_out(app: &AppHandle, auth: AuthState) {
+    if auth == AuthState::SignedOut {
+        emit_auth_changed(app, AuthStateDto::SignedOut);
+    }
+}
+
+/// Prove the vaulted credentials against GitHub. Rejected credentials are signed out here.
+#[tauri::command]
+pub async fn validate_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AuthStateDto, String> {
+    let core = Arc::clone(&state.core);
+    let auth = tauri::async_runtime::spawn_blocking(move || {
+        let mut core = core.lock().map_err(|_| "core lock poisoned".to_string())?;
+        Ok::<AuthState, String>(core.validate_session())
+    })
+    .await
+    .map_err(|err| format!("session validation task failed: {err}"))??;
+    emit_if_signed_out(&app, auth);
+    Ok(AuthStateDto::from(auth))
+}
+
+/// Launch-time session validation. Runs off the main thread so a slow or offline
+/// `GET /user` never blocks window creation, and still runs on a tray-first launch.
+pub fn validate_session_on_launch(app: &AppHandle) {
+    let handle = app.clone();
+    let core = Arc::clone(&app.state::<AppState>().core);
+    tauri::async_runtime::spawn(async move {
+        let validated = tauri::async_runtime::spawn_blocking(move || {
+            let mut core = core.lock().ok()?;
+            Some(core.validate_session())
+        })
+        .await;
+        match validated {
+            Ok(Some(auth)) => {
+                eprintln!("[issuebridge] launch session validation: {auth:?}");
+                emit_if_signed_out(&handle, auth);
+            }
+            Ok(None) => eprintln!("[issuebridge] launch session validation: core lock poisoned"),
+            Err(err) => eprintln!("[issuebridge] launch session validation failed: {err}"),
+        }
+    });
+}
+
 #[tauri::command]
 pub fn first_run_step(state: State<'_, AppState>) -> Result<FirstRunStepDto, String> {
     let core = state
@@ -291,14 +343,23 @@ pub fn open_app_install(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn continue_install(state: State<'_, AppState>) -> Result<InstallContinueOutcomeDto, String> {
+pub fn continue_install(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<InstallContinueOutcomeDto, String> {
     let mut core = state
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    core.continue_install()
-        .map(InstallContinueOutcomeDto::from)
-        .map_err(install_error_message)
+    match core.continue_install() {
+        Ok(outcome) => Ok(InstallContinueOutcomeDto::from(outcome)),
+        Err(err) => {
+            let auth = core.auth_state();
+            drop(core);
+            emit_if_signed_out(&app, auth);
+            Err(install_error_message(err))
+        }
+    }
 }
 
 #[tauri::command]
@@ -515,6 +576,7 @@ pub struct EnsuredLabelCatalogDto {
 
 #[tauri::command]
 pub fn ensure_label_catalog(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     repo: RepoIdDto,
 ) -> Result<EnsuredLabelCatalogDto, String> {
@@ -522,9 +584,15 @@ pub fn ensure_label_catalog(
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    let ensured = core
-        .ensure_label_catalog(&RepoId::from(repo))
-        .map_err(label_catalog_error_message)?;
+    let ensured = match core.ensure_label_catalog(&RepoId::from(repo)) {
+        Ok(ensured) => ensured,
+        Err(err) => {
+            let auth = core.auth_state();
+            drop(core);
+            emit_if_signed_out(&app, auth);
+            return Err(label_catalog_error_message(err));
+        }
+    };
     Ok(EnsuredLabelCatalogDto {
         owner: ensured.repo.owner,
         name: ensured.repo.name,
@@ -541,13 +609,23 @@ pub fn ensure_label_catalog(
 }
 
 #[tauri::command]
-pub fn prefetch_testing_set_label_catalogs(state: State<'_, AppState>) -> Result<(), String> {
+pub fn prefetch_testing_set_label_catalogs(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let mut core = state
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    core.prefetch_testing_set_label_catalogs()
-        .map_err(label_catalog_error_message)
+    match core.prefetch_testing_set_label_catalogs() {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let auth = core.auth_state();
+            drop(core);
+            emit_if_signed_out(&app, auth);
+            Err(label_catalog_error_message(err))
+        }
+    }
 }
 
 #[tauri::command]
@@ -583,10 +661,16 @@ pub fn publish_draft(
         .core
         .lock()
         .map_err(|_| "core lock poisoned".to_string())?;
-    let draft = core.publish_draft(&id).map_err(|err| {
-        eprintln!("[issuebridge] publish_draft failed: {err:?}");
-        publish_error_message(err)
-    })?;
+    let draft = match core.publish_draft(&id) {
+        Ok(draft) => draft,
+        Err(err) => {
+            eprintln!("[issuebridge] publish_draft failed: {err:?}");
+            let auth = core.auth_state();
+            drop(core);
+            emit_if_signed_out(&app, auth);
+            return Err(publish_error_message(err));
+        }
+    };
     drop(core);
     let _ = app.emit("inbox-changed", ());
     Ok(draft_to_dto(draft))
@@ -632,6 +716,9 @@ pub fn update_linked_draft(
         }
         Err(err) => {
             eprintln!("[issuebridge] update_linked_draft failed: {err:?}");
+            let auth = core.auth_state();
+            drop(core);
+            emit_if_signed_out(&app, auth);
             Err(update_error_message(err))
         }
     }
@@ -1175,6 +1262,9 @@ fn inbox_error_message(err: InboxError) -> String {
 fn label_catalog_error_message(err: LabelCatalogError) -> String {
     match err {
         LabelCatalogError::NotSignedIn => "Sign in to load labels.".into(),
+        LabelCatalogError::SessionExpired => {
+            "GitHub rejected your sign-in. Sign in with GitHub again.".into()
+        }
         LabelCatalogError::StorageUnavailable => "Could not load Label catalog.".into(),
     }
 }
