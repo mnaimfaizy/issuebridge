@@ -212,6 +212,26 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     assert.match(gate, /Implementer aborted/);
   });
 
+  it("gives the implementer a toolchain and the tools to use it", () => {
+    const implement = jobBlock(
+      readWorkflow("claude-agent-pipeline.yml"),
+      "implement",
+    );
+
+    // Regression guard: the first implement run died on error_max_turns after
+    // 8 permission denials, because the runner had no node_modules or Rust
+    // toolchain and npm/cargo were not in the allowlist - while the system
+    // prompt ordered it to run lint, typecheck and clippy.
+    assert.match(implement, /npm ci/);
+    assert.match(implement, /dtolnay\/rust-toolchain/);
+    assert.match(implement, /TAURI_CONFIG:/);
+
+    const allowed = implement.match(/--allowedTools "[^"]*"/)?.[0] ?? "";
+    for (const tool of ["Edit", "Write", "Bash(npm:*)", "Bash(cargo:*)"]) {
+      assert.ok(allowed.includes(tool), `implementer must be granted ${tool}`);
+    }
+  });
+
   it("lets the Claude App open the PR so CI actually runs", () => {
     const implement = jobBlock(
       readWorkflow("claude-agent-pipeline.yml"),
