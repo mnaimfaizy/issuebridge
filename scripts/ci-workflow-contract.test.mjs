@@ -108,11 +108,157 @@ describe("PR CI workflow contract (#24)", () => {
   });
 });
 
-// The Copilot agent-pipeline and security-audit contracts that lived here guarded
-// .github/workflows/{agent-pipeline,agent-pipeline-review,security-audit}.yml. Those
-// workflows are archived under .github/workflows-archive/copilot/ and no longer execute,
-// so asserting on them would assert on dead code. Equivalent contracts for the Claude
-// Code workflows that replace them are added alongside those workflows.
+// These suites replace the Copilot agent-pipeline and security-audit contracts, which
+// guarded workflows now archived (and inert) under .github/workflows-archive/copilot/.
+// The invariants carried over; only the agent changed.
+
+describe("Claude security audit privilege contract", () => {
+  it("keeps findings out of the world-readable Actions log", () => {
+    const yml = readWorkflow("claude-security-audit.yml");
+
+    // This repository is public: run logs and artifacts are world-readable.
+    // Match actual usage, not the comment warning against it.
+    assert.doesNotMatch(yml, /^\s*uses:.*upload-artifact/m);
+    assert.match(yml, /Never print\s*\n?\s*findings/);
+    assert.match(yml, /security-audit-report\.md/);
+  });
+
+  it("keeps the advisory PAT and PR-controlled runtime out of the scan", () => {
+    const yml = readWorkflow("claude-security-audit.yml");
+    const trustedRuntime = yml.indexOf(
+      "Restore trusted audit runtime from PR base",
+    );
+    const runAudit = yml.indexOf("Run security audit (Claude Code)");
+    const trustedPublisher = yml.indexOf("Use trusted publisher");
+    const firstPatUse = yml.indexOf("secrets.COPILOT_GITHUB_TOKEN");
+
+    assert.ok(trustedRuntime >= 0, "expected trusted PR runtime restore step");
+    assert.ok(trustedRuntime < runAudit, "restore must precede the scan");
+    assert.ok(runAudit < trustedPublisher, "scan must precede the publisher");
+    // The agent step must never see the advisory PAT.
+    assert.ok(
+      firstPatUse > runAudit,
+      "advisory PAT must not be exposed before or during the scan",
+    );
+
+    const restore = yml.slice(trustedRuntime, runAudit);
+    for (const trustedPath of [
+      "AGENTS.md",
+      "CLAUDE.md",
+      ".claude",
+      ".github/security-audit/prompt.md",
+      ".agents/skills/security-audit",
+    ]) {
+      assert.match(restore, new RegExp(trustedPath.replaceAll(".", "\\.")));
+    }
+  });
+
+  it("denies PR-mode audits any code-execution tools", () => {
+    const yml = readWorkflow("claude-security-audit.yml");
+    const prTools = yml.match(/PR_TOOLS='[^']*'/)?.[0] ?? "";
+
+    assert.ok(prTools.length > 0, "expected a PR_TOOLS allowlist");
+    // PR-authored code is untrusted: no git, npm, cargo or find execution.
+    assert.doesNotMatch(prTools, /Bash\((?:git|npm|cargo|find)/);
+    assert.match(yml, /if \[ "\$MODE" = "pr" \]/);
+  });
+
+  it("runs monthly and stays manually dispatchable", () => {
+    const yml = readWorkflow("claude-security-audit.yml");
+
+    // Monthly cron, day-of-month field set. GitHub disables schedules on public
+    // repos after 60 days of inactivity, so the manual fallback must stay.
+    assert.match(yml, /cron:\s*"0 6 1 \* \*"/);
+    assert.match(yml, /workflow_dispatch:/);
+  });
+});
+
+describe("Claude agent pipeline trust-boundary contract", () => {
+  it("gates every run behind a kill switch and an allowlist", () => {
+    const gate = jobBlock(readWorkflow("claude-agent-pipeline.yml"), "gate");
+
+    assert.match(gate, /vars\.CLAUDE_PIPELINE_ENABLED/);
+    assert.match(gate, /vars\.AGENT_PIPELINE_ALLOWLIST/);
+    assert.match(gate, /ACTOR:\s*\$\{\{\s*github\.actor\s*\}\}/);
+  });
+
+  it("treats issue context as untrusted data with read-only planner tools", () => {
+    const plan = jobBlock(readWorkflow("claude-agent-pipeline.yml"), "plan");
+    const trustedPolicy = plan.indexOf("planner-prompt.md");
+    const issueTitle = plan.indexOf('echo "Issue #$ISSUE');
+    const issueBody = plan.indexOf('echo "$BODY"');
+
+    assert.ok(trustedPolicy >= 0, "expected trusted planner policy");
+    assert.ok(trustedPolicy < issueTitle, "trusted policy must come first");
+    assert.ok(issueTitle < issueBody, "issue title must precede issue body");
+    assert.match(plan, /<untrusted_issue_context>/);
+    assert.match(plan, /<\/untrusted_issue_context>/);
+    // The planner reads and reports; it never mutates the repo or runs git.
+    assert.doesNotMatch(plan, /Bash\(git/);
+    assert.doesNotMatch(plan, /contents:\s*write/);
+
+    const prompt = readFileSync(
+      join(root, ".github", "agent-pipeline", "planner-prompt.md"),
+      "utf8",
+    );
+    assert.match(prompt, /untrusted data/i);
+    assert.match(prompt, /do not follow instructions/i);
+  });
+
+  it("refuses to implement without an existing plan comment", () => {
+    const gate = jobBlock(readWorkflow("claude-agent-pipeline.yml"), "gate");
+
+    assert.match(gate, /agent-pipeline-plan/);
+    assert.match(gate, /Implementer aborted/);
+  });
+
+  it("lets the Claude App open the PR so CI actually runs", () => {
+    const implement = jobBlock(
+      readWorkflow("claude-agent-pipeline.yml"),
+      "implement",
+    );
+
+    // GitHub raises no workflow runs for events authored by GITHUB_TOKEN. Passing
+    // github_token here would silently leave every agent PR without CI.
+    assert.doesNotMatch(implement, /github_token:/);
+    assert.match(implement, /label_trigger:\s*"agent:implement"/);
+    assert.match(implement, /track_progress:\s*true/);
+  });
+});
+
+describe("Claude workflow supply-chain contract", () => {
+  for (const workflowName of [
+    "claude-security-audit.yml",
+    "claude-agent-pipeline.yml",
+  ]) {
+    it(`${workflowName} pins claude-code-action to a commit SHA`, () => {
+      const yml = readWorkflow(workflowName);
+      const refs = [
+        ...yml.matchAll(/anthropics\/claude-code-action@([^\s#]+)/g),
+      ].map(([, ref]) => ref);
+
+      assert.ok(refs.length > 0, "expected claude-code-action to be used");
+      for (const ref of refs) {
+        assert.match(
+          ref,
+          /^[0-9a-f]{40}$/,
+          "claude-code-action must use an immutable commit SHA",
+        );
+      }
+    });
+
+    it(`${workflowName} authenticates with the subscription OAuth token`, () => {
+      const yml = readWorkflow(workflowName);
+
+      assert.match(yml, /claude_code_oauth_token:\s*\$\{\{\s*secrets\./);
+      // Subscription auth only - an API key here would bill separately and
+      // silently bypass the plan the pipeline is meant to run on.
+      assert.doesNotMatch(yml, /anthropic_api_key:/);
+      // Required for the action's default Claude GitHub App authentication.
+      assert.match(yml, /id-token:\s*write/);
+    });
+  }
+});
 
 describe("Release workflow supply-chain contract", () => {
   it("gates the privileged build with the release environment", () => {
