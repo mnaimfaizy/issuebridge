@@ -2,6 +2,13 @@
 
 All notable changes to Issuebridge are documented here. Release notes are user-facing; see git history for full commit detail.
 
+## [0.2.3] - 2026-08-12
+
+### Fixed
+
+- Publish now enforces the GitHub App-visible repository boundary before acting on a target repository.
+- Release packaging now verifies the integrity of bundled Rewrite and voice sidecar archives before they are included in installer builds.
+
 ## [0.2.2] - 2026-08-12
 
 ### Fixed
