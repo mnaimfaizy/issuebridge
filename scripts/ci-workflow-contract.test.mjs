@@ -325,6 +325,51 @@ describe("Claude code review contract", () => {
     assert.match(skill, /concrete failure scenario/i);
     assert.match(skill, /Tests passing is not evidence/i);
   });
+
+  it("keeps Agent subagents in the foreground so a headless session cannot end mid-review", () => {
+    const yml = readWorkflow("claude-code-review.yml");
+    const skill = readFileSync(
+      join(root, ".agents", "skills", "code-review", "SKILL.md"),
+      "utf8",
+    );
+
+    // PR #147 went green with an in-progress tracking comment because Claude
+    // spawned background Agent calls and ended the turn; the SDK reported
+    // success and killed the agents. Force foreground + tell the model.
+    assert.match(yml, /CLAUDE_CODE_DISABLE_BACKGROUND_TASKS:\s*["']?1["']?/);
+    assert.match(yml, /--append-system-prompt/);
+    assert.match(yml, /run_in_background:\s*false/);
+    assert.match(skill, /run_in_background:\s*false/);
+  });
+
+  it("allows Agent so the three axis subagents are not permission-denied", () => {
+    const yml = readWorkflow("claude-code-review.yml");
+    const allowed = yml.match(/--allowedTools "[^"]*"/)?.[0] ?? "";
+
+    assert.ok(allowed.length > 0, "expected an explicit tool allowlist");
+    // Task is the pre-2.1.63 alias; the model and skill call Agent.
+    assert.match(allowed, /(?:^|"|,)Agent(?:,|")/);
+    assert.match(allowed, /(?:^|"|,)Task(?:,|")/);
+  });
+
+  it("fails the job when the tracking comment is still the in-progress checklist", () => {
+    const yml = readWorkflow("claude-code-review.yml");
+    const action = yml.indexOf("Run code review (Claude Code)");
+    const verify = yml.indexOf("Fail if the review report was not posted");
+
+    assert.ok(verify >= 0, "expected a post-review completeness check");
+    assert.ok(
+      action >= 0 && action < verify,
+      "completeness check must follow the review",
+    );
+
+    const block = yml.slice(verify);
+    // The incomplete #147 comment had checklist items, not these headings.
+    assert.match(block, /## Standards/);
+    assert.match(block, /## Spec/);
+    assert.match(block, /## Correctness/);
+    assert.match(block, /sub-agents are running/);
+  });
 });
 
 describe("Claude workflow supply-chain contract", () => {

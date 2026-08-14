@@ -82,6 +82,8 @@ Two rules bind the list:
 
 Send a single message with three `Agent` tool calls — Standards, Spec, Correctness. Use the `general-purpose` subagent for each. If the Spec source is missing, send two and note the skip.
 
+**Unattended / CI:** this is a one-shot session — ending the turn kills background work and the job still goes green. Pass `run_in_background: false` on every Agent call (several in one message still run in parallel and wait). Never end the turn until the aggregated report is posted. If Agent is denied or unavailable, run the axes sequentially in this session instead.
+
 If sub-agents are unavailable in the current environment, run the axes sequentially in this session instead, keeping their findings in separate sections and never letting one axis's conclusions bleed into another's.
 
 **Standards sub-agent prompt** — include:
