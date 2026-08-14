@@ -11,8 +11,8 @@
  *
  * Run directly: `node scripts/help-coverage.mjs`
  */
-import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -21,11 +21,27 @@ function read(...parts) {
   return readFileSync(join(root, ...parts), "utf8");
 }
 
-/** Settings sections shipped in the Settings destination. */
+function walkFiles(dir, predicate, acc = []) {
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name);
+    if (statSync(path).isDirectory()) {
+      walkFiles(path, predicate, acc);
+    } else if (predicate(name)) {
+      acc.push(path);
+    }
+  }
+  return acc;
+}
+
+/** Settings sections shipped in the Settings destination, including nested folders. */
 export function settingsSurfaces() {
-  return readdirSync(join(root, "src", "settings"))
-    .filter((name) => name.endsWith("Section.tsx"))
-    .map((name) => `settings:${name.replace(/\.tsx$/, "")}`)
+  return walkFiles(join(root, "src", "settings"), (name) =>
+    name.endsWith("Section.tsx"),
+  )
+    .map((path) => {
+      const file = path.split(/[/\\]/).pop();
+      return `settings:${file.replace(/\.tsx$/, "")}`;
+    })
     .sort();
 }
 
@@ -39,15 +55,70 @@ export function destinationSurfaces() {
     .sort();
 }
 
+function annotatedCommands() {
+  const files = walkFiles(join(root, "src-tauri", "src"), (name) =>
+    name.endsWith(".rs"),
+  );
+  const names = [];
+  for (const file of files) {
+    const source = readFileSync(file, "utf8");
+    const parts = source.split("#[tauri::command]");
+    for (const part of parts.slice(1)) {
+      const match = /pub\s+(?:async\s+)?fn\s+([a-z0-9_]+)/.exec(part);
+      if (!match) {
+        const rel = relative(root, file).replaceAll("\\", "/");
+        throw new Error(
+          `#[tauri::command] in ${rel} is not followed by pub fn — Help coverage cannot skip it`,
+        );
+      }
+      names.push(match[1]);
+    }
+  }
+  return names;
+}
+
+function registeredCommands() {
+  const source = read("src-tauri", "src", "lib.rs");
+  const block = /generate_handler!\[([\s\S]*?)\]/.exec(source);
+  if (!block) {
+    throw new Error("could not read generate_handler in src-tauri/src/lib.rs");
+  }
+  const names = [...block[1].matchAll(/\b([a-z][a-z0-9_]*)\b/g)].map(
+    (match) => match[1],
+  );
+  if (names.length === 0) {
+    throw new Error("generate_handler listed no commands");
+  }
+  return names;
+}
+
 /** Tauri commands exposed to the frontend. */
 export function commandSurfaces() {
-  const source = read("src-tauri", "src", "adapters", "commands.rs");
-  const names = [
-    ...source.matchAll(
-      /#\[tauri::command\][\s\S]{0,200}?pub (?:async )?fn ([a-z0-9_]+)/g,
-    ),
-  ].map((match) => `command:${match[1]}`);
-  return [...new Set(names)].sort();
+  const annotated = annotatedCommands();
+  const registered = registeredCommands();
+  const annotatedSet = new Set(annotated);
+  const registeredSet = new Set(registered);
+  const problems = [];
+  for (const name of registered) {
+    if (!annotatedSet.has(name)) {
+      problems.push(
+        `${name} is in generate_handler but has no #[tauri::command]`,
+      );
+    }
+  }
+  for (const name of annotated) {
+    if (!registeredSet.has(name)) {
+      problems.push(
+        `${name} has #[tauri::command] but is not in generate_handler`,
+      );
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `command discovery mismatch:\n  - ${problems.join("\n  - ")}`,
+    );
+  }
+  return [...registeredSet].map((name) => `command:${name}`).sort();
 }
 
 /** All surfaces that need a manifest entry. */

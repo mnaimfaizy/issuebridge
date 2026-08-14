@@ -119,4 +119,24 @@ describe("Help coverage drift check (#146)", () => {
     assert.match(pkg.scripts["test:help-coverage"], /help-coverage\.test\.mjs/);
     assert.match(pkg.scripts.ci, /test:help-coverage/);
   });
+
+  it("discovers nested Settings sections and commands outside commands.rs", () => {
+    const source = readFileSync(
+      join(root, "scripts", "help-coverage.mjs"),
+      "utf8",
+    );
+    assert.match(source, /walkFiles/);
+    assert.match(source, /src-tauri.*src/);
+    assert.match(source, /generate_handler/);
+    assert.doesNotMatch(source, /\{0,200\}/);
+    assert.doesNotMatch(
+      source,
+      /read\("src-tauri", "src", "adapters", "commands\.rs"\)/,
+    );
+    assert.match(
+      source,
+      /is not followed by pub fn/,
+      "a command with a long doc comment must fail loudly, not be skipped",
+    );
+  });
 });

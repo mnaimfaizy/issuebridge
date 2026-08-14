@@ -1,11 +1,11 @@
 import { Body1, Button, Subtitle2 } from "@fluentui/react-components";
 import { Fragment, type ReactNode } from "react";
-import type { HelpTopic } from "./helpContent";
+import type { HelpTokenName, HelpTopic } from "./helpContent";
 
 type HelpSectionProps = {
   topic: HelpTopic;
   /** Live values substituted into `{token}` placeholders, shown as keys. */
-  tokens?: Record<string, string>;
+  tokens?: Partial<Record<HelpTokenName, string>>;
   /** Deep link handler; the section hides its link when absent. */
   onOpenLink?: (topic: HelpTopic) => void;
   /** Live content rendered under the points (e.g. Your machine). */
@@ -54,16 +54,19 @@ export function HelpSection({
 /** Splits `{token}` placeholders out of detail copy and renders them as keys. */
 function renderDetail(
   detail: string,
-  tokens: Record<string, string> | undefined,
+  tokens: Partial<Record<HelpTokenName, string>> | undefined,
 ): ReactNode {
   const parts = detail.split(/(\{[a-zA-Z]+\})/);
   return parts.map((part, index) => {
     const match = /^\{([a-zA-Z]+)\}$/.exec(part);
-    const value = match ? tokens?.[match[1]] : undefined;
     const key = `${index}-${part}`;
-    if (value) {
-      return <kbd key={key}>{value}</kbd>;
+    if (!match) {
+      return <Fragment key={key}>{part}</Fragment>;
     }
-    return <Fragment key={key}>{part}</Fragment>;
+    const value = tokens?.[match[1] as HelpTokenName];
+    if (!value) {
+      return <Fragment key={key}>{part}</Fragment>;
+    }
+    return <kbd key={key}>{value}</kbd>;
   });
 }

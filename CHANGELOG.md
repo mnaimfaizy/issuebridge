@@ -7,7 +7,6 @@ All notable changes to Issuebridge are documented here. Release notes are user-f
 ### Added
 
 - Help is now a full in-app reference instead of three short blocks: Rewrite and the local model catalog (download, Use, Remove, Update available, Keep/Switch), a live **Your machine** block showing this PC's hardware tier, recommended model and active model, plus voice capture, Testing set, Label catalog, Publish conflicts, Timestamps, Appearance, account setup, and a "why is this greyed out?" section. Every actionable topic deep-links into the matching Settings section; Help itself stays read-only. (#146)
-- A `help-coverage` check (`npm run test:help-coverage`) and matching agent skill that fail when a Settings section, Destination, or command ships without Help coverage or a written opt-out. (#146)
 
 ### Fixed
 

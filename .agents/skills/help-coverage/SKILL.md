@@ -20,8 +20,8 @@ Read `CONTEXT.md` first and use domain terms (Draft, Capture, Publish, Testing s
 A **surface** is one of:
 
 - `destination:<id>` — a member of the `Destination` union in `src/shell/destinations.ts`
-- `settings:<Component>` — a `src/settings/*Section.tsx` file
-- `command:<name>` — a `#[tauri::command]` in `src-tauri/src/adapters/commands.rs`
+- `settings:<Component>` — a `src/settings/**/*Section.tsx` file (nested folders included)
+- `command:<name>` — a `#[tauri::command]` registered in `generate_handler` (every `.rs` file under `src-tauri/src`, not only `commands.rs`)
 
 ## When you add a user-facing feature
 

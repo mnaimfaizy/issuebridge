@@ -1066,9 +1066,15 @@ pub struct RewriteModelDownloadProgressDto {
 #[tauri::command]
 pub fn get_rewrite_model_status(
     state: State<'_, AppState>,
+    skip_content_hash: Option<bool>,
 ) -> Result<RewriteModelStatusDto, String> {
     let core = state.core.lock().map_err(|e| e.to_string())?;
-    let snap = core.rewrite_model_status().map_err(rewrite_error_message)?;
+    let snap = if skip_content_hash.unwrap_or(false) {
+        core.rewrite_model_help_status()
+    } else {
+        core.rewrite_model_status()
+    }
+    .map_err(rewrite_error_message)?;
     Ok(rewrite_model_status_dto(snap))
 }
 

@@ -314,6 +314,17 @@ pub trait RewriteModelFiles: Send + Sync {
     /// Size + SHA-256 verification for a completed download.
     fn is_verified(&self, filename: &str, expected_size: u64, expected_sha256: &str) -> bool;
 
+    /// Size + verify-marker check without hashing file contents.
+    /// Default delegates to [`Self::is_verified`].
+    fn is_verified_cached(
+        &self,
+        filename: &str,
+        expected_size: u64,
+        expected_sha256: &str,
+    ) -> bool {
+        self.is_verified(filename, expected_size, expected_sha256)
+    }
+
     /// Remove a completed model file (no-op if missing).
     fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError>;
 }

@@ -6,17 +6,17 @@ import {
   Title3,
 } from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import packageJson from "../../package.json";
 import brandMark from "../assets/brand/mark.png";
 import {
-  formatBytes,
   modelDisplayName,
+  onDiskLabel,
   type RewriteModelStatusDto,
-} from "../settings/rewriteModelStatus";
+} from "../shared/rewriteModelStatus";
 import type { Destination } from "../shell/destinations";
 import { HelpSection } from "./HelpSection";
-import { HELP_TOPICS, type HelpTopic } from "./helpContent";
+import { HELP_TOPICS, type HelpTokenName, type HelpTopic } from "./helpContent";
 
 const OPEN_CAPTURE_HOTKEY = "Ctrl+Alt+Shift+I";
 const DEFAULT_PTT_HOTKEY = "Ctrl+Alt+Shift+V";
@@ -35,58 +35,19 @@ type HelpPageProps = {
  * Account, troubleshooting, About. Actions live in Settings, not here.
  */
 export function HelpPage({ onNavigate }: HelpPageProps) {
-  const [pttHotkey, setPttHotkey] = useState(DEFAULT_PTT_HOTKEY);
-  const [modelStatus, setModelStatus] = useState<RewriteModelStatusDto | null>(
-    null,
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    void invoke<string>("ptt_hotkey")
-      .then((value) => {
-        if (!cancelled && value) setPttHotkey(value);
-      })
-      .catch(() => {
-        if (!cancelled) setPttHotkey(DEFAULT_PTT_HOTKEY);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void invoke<RewriteModelStatusDto>("get_rewrite_model_status")
-      .then((status) => {
-        if (!cancelled) setModelStatus(status);
-      })
-      .catch(() => {
-        // Help is reference-only: fall back to the static prose, no error.
-        if (!cancelled) setModelStatus(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const pttHotkey = useCommand("ptt_hotkey", DEFAULT_PTT_HOTKEY);
+  const modelStatus = useHelpModelStatus();
 
   function openLink(topic: HelpTopic) {
     const link = topic.link;
     if (!link || !onNavigate) return;
     onNavigate(link.destination);
-    // The destination renders after this state change — wait for it, then
-    // bring the matching section into view.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        document
-          .getElementById(link.anchor)
-          ?.scrollIntoView({ block: "start" });
-      });
-    });
+    scrollAnchorIntoView(link.anchor);
   }
 
-  const tokens = {
+  const tokens: Record<HelpTokenName, string> = {
     openCaptureHotkey: OPEN_CAPTURE_HOTKEY,
-    pttHotkey,
+    pttHotkey: pttHotkey,
   };
 
   return (
@@ -101,26 +62,85 @@ export function HelpPage({ onNavigate }: HelpPageProps) {
         </Body1>
       </header>
 
-      {HELP_TOPICS.map((topic) =>
-        topic.id === "about" ? (
-          <HelpSection key={topic.id} topic={topic} tokens={tokens}>
-            {renderAbout()}
-          </HelpSection>
-        ) : (
-          <HelpSection
-            key={topic.id}
-            topic={topic}
-            tokens={tokens}
-            onOpenLink={onNavigate ? openLink : undefined}
-          >
-            {topic.id === "your-machine"
-              ? renderMachine(modelStatus)
-              : undefined}
-          </HelpSection>
-        ),
-      )}
+      {HELP_TOPICS.map((topic) => (
+        <HelpSection
+          key={topic.id}
+          topic={topic}
+          tokens={tokens}
+          onOpenLink={onNavigate ? openLink : undefined}
+        >
+          {liveBlock(topic.id, modelStatus)}
+        </HelpSection>
+      ))}
     </section>
   );
+}
+
+function liveBlock(
+  topicId: string,
+  modelStatus: RewriteModelStatusDto | null,
+): ReactNode {
+  if (topicId === "about") return renderAbout();
+  if (topicId === "your-machine") return renderMachine(modelStatus);
+  return undefined;
+}
+
+/**
+ * Re-scrolls after Settings inserts async content (Testing set repo list)
+ * that would otherwise push the target heading out of view.
+ */
+function scrollAnchorIntoView(anchor: string) {
+  const content = document.querySelector(".ib-content");
+  const scroll = () => {
+    document.getElementById(anchor)?.scrollIntoView({ block: "start" });
+  };
+  requestAnimationFrame(scroll);
+  if (!content) return;
+  const observer = new MutationObserver(scroll);
+  observer.observe(content, { childList: true, subtree: true });
+  window.setTimeout(() => observer.disconnect(), 8000);
+}
+
+function useCommand(command: string, fallback: string): string {
+  const [value, setValue] = useState(fallback);
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<string>(command)
+      .then((next) => {
+        if (!cancelled && next) setValue(next);
+      })
+      .catch(() => {
+        if (!cancelled) setValue(fallback);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [command, fallback]);
+  return value;
+}
+
+/**
+ * Live Your-machine snapshot. `skip_content_hash` uses the marker-only
+ * path so opening Help cannot stream-hash multi-GB GGUFs under the Core lock.
+ */
+function useHelpModelStatus(): RewriteModelStatusDto | null {
+  const [status, setStatus] = useState<RewriteModelStatusDto | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<RewriteModelStatusDto>("get_rewrite_model_status", {
+      skip_content_hash: true,
+    })
+      .then((next) => {
+        if (!cancelled) setStatus(next);
+      })
+      .catch(() => {
+        if (!cancelled) setStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return status;
 }
 
 /** Live, read-only view of hardware tier, recommended and active model. */
@@ -135,11 +155,6 @@ function renderMachine(status: RewriteModelStatusDto | null) {
   }
   const recommended = modelDisplayName(status, status.recommended_model_id);
   const active = modelDisplayName(status, status.active_model_id);
-  const downloaded = status.models.filter((model) => model.verified);
-  const diskBytes = downloaded.reduce(
-    (total, model) => total + model.size_bytes,
-    0,
-  );
 
   return (
     <dl className="ib-help-facts">
@@ -170,11 +185,7 @@ function renderMachine(status: RewriteModelStatusDto | null) {
         <Text weight="semibold">On disk</Text>
       </dt>
       <dd>
-        <Text>
-          {downloaded.length === 0
-            ? "No models downloaded"
-            : `${downloaded.length} of ${status.models.length} models · ${formatBytes(diskBytes)}`}
-        </Text>
+        <Text>{onDiskLabel(status)}</Text>
       </dd>
     </dl>
   );

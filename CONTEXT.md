@@ -75,3 +75,19 @@ _Avoid_: AI edit, polish, improve writing (when meaning this product action), Ca
 **Rewrite style**:
 A named steering preset (built-in or user-defined) that shapes how Rewrite proposes title and body. Last-used is remembered globally after a successful Generate.
 _Avoid_: Prompt template, tone, persona, rewrite preset (unqualified)
+
+**Hardware tier**:
+The capability band detected for this machine, used to pick the recommended Rewrite model from the catalog.
+_Avoid_: hardware level, PC class, GPU tier (unqualified)
+
+**Recommended model**:
+The catalog Rewrite model that fits the current Hardware tier; the user may still download a different catalog entry.
+_Avoid_: default model, suggested LLM (unqualified)
+
+**Active model**:
+The local Rewrite model this install generates with, when one is selected and verified.
+_Avoid_: current model, selected model (unqualified)
+
+**Update available**:
+A catalog entry already on disk whose file no longer matches the catalog checksum, offered for an explicit replace.
+_Avoid_: outdated model, upgrade (when meaning this prompt)

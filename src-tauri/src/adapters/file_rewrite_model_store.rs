@@ -188,6 +188,25 @@ impl RewriteModelFiles for FileRewriteModelStore {
         }
     }
 
+    fn is_verified_cached(
+        &self,
+        filename: &str,
+        expected_size: u64,
+        expected_sha256: &str,
+    ) -> bool {
+        let path = self.path_for(filename);
+        let Ok(meta) = fs::metadata(&path) else {
+            return false;
+        };
+        if meta.len() != expected_size {
+            return false;
+        }
+        let Ok(marker) = fs::read_to_string(verify_marker_path(&path)) else {
+            return false;
+        };
+        marker.trim().eq_ignore_ascii_case(expected_sha256)
+    }
+
     fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError> {
         let path = self.path_for(filename);
         if path.exists() {
@@ -300,6 +319,23 @@ mod tests {
         store.remove("demo.gguf").unwrap();
         assert!(!path.exists());
         assert!(!verify_marker_path(&path).exists());
+        let _ = fs::remove_dir_all(&store.root);
+    }
+
+    #[test]
+    fn is_verified_cached_does_not_hash_or_write_a_marker() {
+        let store = temp_store();
+        let payload = b"verified-gguf-bytes";
+        let digest = Sha256::digest(payload);
+        let hex = hex_encode(&digest);
+        let path = store.path_for("demo.gguf");
+        fs::write(&path, payload).unwrap();
+        assert!(!store.is_verified_cached("demo.gguf", payload.len() as u64, &hex));
+        assert!(!verify_marker_path(&path).exists());
+        assert!(store.is_verified("demo.gguf", payload.len() as u64, &hex));
+        assert!(verify_marker_path(&path).exists());
+        assert!(store.is_verified_cached("demo.gguf", payload.len() as u64, &hex));
+        store.remove("demo.gguf").unwrap();
         let _ = fs::remove_dir_all(&store.root);
     }
 

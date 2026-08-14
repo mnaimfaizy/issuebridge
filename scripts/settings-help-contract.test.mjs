@@ -197,6 +197,8 @@ describe("Settings + Help destinations (#38)", () => {
     assert.match(help, /Update available/);
     assert.match(help, /Keep .*Switch|Hardware changed/);
     assert.match(help, /Remove/);
+    assert.match(help, /download size and a short summary/i);
+    assert.match(help, /license blurb/i);
     assert.match(help, /on this device|stay local|local model/i);
     assert.doesNotMatch(
       help,
@@ -243,22 +245,51 @@ describe("Settings + Help destinations (#38)", () => {
 
   it("Help and Settings share one Rewrite model status definition (#146)", () => {
     assert.ok(
-      existsSync(src("settings", "rewriteModelStatus.ts")),
+      existsSync(src("shared", "rewriteModelStatus.ts")),
       "expected shared rewriteModelStatus module",
     );
-    const shared = readSrc("settings", "rewriteModelStatus.ts");
+    const shared = readSrc("shared", "rewriteModelStatus.ts");
     assert.match(shared, /RewriteModelStatusDto/);
     assert.match(shared, /RewriteModelEntryDto/);
     assert.match(shared, /formatBytes/);
+    assert.match(shared, /onDiskLabel/);
     const section = readSrc("settings", "RewriteModelsSection.tsx");
-    assert.match(section, /from "\.\/rewriteModelStatus"/);
+    assert.match(section, /from "\.\.\/shared\/rewriteModelStatus"/);
     assert.doesNotMatch(
       section,
       /type RewriteModelStatusDto = \{/,
       "DTOs live in the shared module, not duplicated per surface",
     );
     const page = readSrc("help", "HelpPage.tsx");
-    assert.match(page, /settings\/rewriteModelStatus/);
+    assert.match(page, /shared\/rewriteModelStatus/);
+    assert.match(page, /onDiskLabel/);
+    assert.match(page, /skip_content_hash:\s*true/);
+    assert.match(page, /MutationObserver/);
+  });
+
+  it("Help token placeholders are a typed set supplied by HelpPage (#146)", () => {
+    const content = readSrc("help", "helpContent.ts");
+    const page = readSrc("help", "HelpPage.tsx");
+    const section = readSrc("help", "HelpSection.tsx");
+    assert.match(content, /export type HelpTokenName = /);
+    assert.match(section, /HelpTokenName/);
+    const topics = content.slice(content.indexOf("export const HELP_TOPICS"));
+    const names = [...topics.matchAll(/\{([a-zA-Z]+)\}/g)].map(
+      (match) => match[1],
+    );
+    assert.ok(names.length > 0, "expected live hotkey tokens in Help copy");
+    for (const name of new Set(names)) {
+      assert.match(
+        content,
+        new RegExp(`"${name}"`),
+        `${name} must be a HelpTokenName`,
+      );
+      assert.match(
+        page,
+        new RegExp(`${name}\\s*:`),
+        `HelpPage must supply token ${name}`,
+      );
+    }
   });
 
   it("Timestamp settings expose local/UTC toggle wired to get/save commands (#93)", () => {

@@ -1245,10 +1245,29 @@ where
     /// Catalog + disk status for Rewrite setup / model settings. Cleans orphan partials.
     /// Detects hardware and pre-selects the tier A–D catalog default (user may override).
     pub fn rewrite_model_status(&self) -> Result<RewriteModelStatusSnapshot, RewriteError> {
-        self.require_signed_in_for_rewrite()?;
-        self.rewrite_models
-            .clean_orphan_partials()
-            .map_err(|_| RewriteError::StorageUnavailable)?;
+        self.rewrite_model_status_with(true, true, true)
+    }
+
+    /// Read-only Help snapshot: no sign-in gate, no orphan cleanup, no content hash.
+    /// Opening Help must not stream-hash multi-GB GGUFs while holding the Core lock.
+    pub fn rewrite_model_help_status(&self) -> Result<RewriteModelStatusSnapshot, RewriteError> {
+        self.rewrite_model_status_with(false, false, false)
+    }
+
+    fn rewrite_model_status_with(
+        &self,
+        require_signed_in: bool,
+        clean_orphans: bool,
+        hash_contents: bool,
+    ) -> Result<RewriteModelStatusSnapshot, RewriteError> {
+        if require_signed_in {
+            self.require_signed_in_for_rewrite()?;
+        }
+        if clean_orphans {
+            self.rewrite_models
+                .clean_orphan_partials()
+                .map_err(|_| RewriteError::StorageUnavailable)?;
+        }
         let settings = self
             .settings_store
             .load()
@@ -1261,9 +1280,16 @@ where
             .iter()
             .map(|entry| {
                 let on_disk = self.rewrite_models.on_disk_len(entry.filename).is_some();
-                let verified =
+                let verified = if hash_contents {
                     self.rewrite_models
-                        .is_verified(entry.filename, entry.size_bytes, entry.sha256);
+                        .is_verified(entry.filename, entry.size_bytes, entry.sha256)
+                } else {
+                    self.rewrite_models.is_verified_cached(
+                        entry.filename,
+                        entry.size_bytes,
+                        entry.sha256,
+                    )
+                };
                 let is_active = active.as_deref() == Some(entry.id) && verified;
                 RewriteModelDiskStatus {
                     id: entry.id.into(),
@@ -3465,6 +3491,20 @@ mod tests {
             .iter()
             .filter(|m| m.id != DEFAULT_REWRITE_MODEL_ID)
             .all(|m| !m.update_available));
+    }
+
+    #[test]
+    fn rewrite_model_help_status_works_signed_out() {
+        let core = fresh_core();
+        assert!(
+            core.rewrite_model_status().is_err(),
+            "Settings status stays signed-in"
+        );
+        let snap = core
+            .rewrite_model_help_status()
+            .expect("Help status is readable signed out");
+        assert!(!snap.hardware_tier.is_empty());
+        assert_eq!(snap.models.len(), 5);
     }
 
     #[test]

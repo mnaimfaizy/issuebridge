@@ -11,12 +11,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { formatInvokeError } from "../inbox/types";
+import {
+  formatBytes,
+  type RewriteModelStatusDto,
+} from "../shared/rewriteModelStatus";
 import type { AccountAuth } from "../shell/Sidebar";
 import {
   isRewriteModelsSettingsEnabled,
   rewriteModelsSettingsHelper,
 } from "./gating";
-import { formatBytes, type RewriteModelStatusDto } from "./rewriteModelStatus";
 
 type DownloadProgressDto = {
   model_id: string;

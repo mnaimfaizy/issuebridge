@@ -15,6 +15,8 @@ export type HelpLink = {
   label: string;
 };
 
+export type HelpTokenName = "openCaptureHotkey" | "pttHotkey";
+
 export type HelpPoint = {
   term: string;
   /** May contain `{token}` placeholders resolved at render time. */
@@ -143,7 +145,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       {
         term: "Download",
         detail:
-          "Each catalog entry shows its download size and a short summary before you confirm. Downloads can be cancelled; partial files are removed.",
+          "Each catalog entry shows its download size and a short summary in Settings before you confirm. The catalog has no license blurb yet, so Help does not invent one. Downloads can be cancelled; partial files are removed.",
       },
       {
         term: "Use",
@@ -406,5 +408,3 @@ export const HELP_TOPICS: HelpTopic[] = [
     ],
   },
 ];
-
-export const HELP_TOPIC_IDS: string[] = HELP_TOPICS.map((topic) => topic.id);

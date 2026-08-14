@@ -52,3 +52,22 @@ export function modelDisplayName(
     status.models.find((model) => model.id === modelId)?.display_name ?? modelId
   );
 }
+
+/** Models that occupy disk, verified or not — matches Settings' "on disk" row. */
+export function modelsOnDisk(
+  status: RewriteModelStatusDto,
+): RewriteModelEntryDto[] {
+  return status.models.filter((model) => model.on_disk);
+}
+
+/** Read-only "On disk" line for Help, counting unverified files too. */
+export function onDiskLabel(status: RewriteModelStatusDto): string {
+  const onDisk = modelsOnDisk(status);
+  if (onDisk.length === 0) {
+    return "No models downloaded";
+  }
+  const bytes = onDisk.reduce((total, model) => total + model.size_bytes, 0);
+  const unverified = onDisk.filter((model) => !model.verified).length;
+  const base = `${onDisk.length} of ${status.models.length} models · ${formatBytes(bytes)}`;
+  return unverified > 0 ? `${base} (${unverified} not verified)` : base;
+}
