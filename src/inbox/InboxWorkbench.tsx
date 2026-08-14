@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { AuthStateDto } from "../firstrun/types";
 import type { TimestampDisplay } from "../shared/formatTimestamp";
 import { ConflictDialog } from "./ConflictDialog";
 import { DraftInspector } from "./DraftInspector";
@@ -227,10 +228,15 @@ export function InboxWorkbench() {
       try {
         await invoke("prefetch_testing_set_label_catalogs");
       } catch (error) {
-        // Transient refresh failures already soft-fail inside the core, so anything
-        // that reaches here is a hard error — an expired session above all. Surface it;
-        // the shell also routes to Sign in when the backend emits "auth-changed".
-        showError(formatInvokeError(error));
+        // Transient refresh failures already soft-fail inside the core, so reaching here
+        // means a hard error — an expired session above all. But a forced Sign out races
+        // this call: launch validation can clear the session while the prefetch is in
+        // flight, and the shell already routes to Sign in on "auth-changed". Staying
+        // quiet once signed out avoids flashing "Sign in to load labels." on the way out.
+        const auth = await invoke<AuthStateDto>("auth_state").catch(() => null);
+        if (auth !== "signed_out") {
+          showError(formatInvokeError(error));
+        }
       }
     })();
 

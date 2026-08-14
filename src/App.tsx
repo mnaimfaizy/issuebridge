@@ -68,16 +68,26 @@ export function App() {
     // The backend signs out on its own when GitHub rejects the vaulted token
     // (launch validation or any 401 on an authenticated call). Route to Sign in
     // immediately instead of waiting for the next window focus.
+    // listen() resolves asynchronously, so a cleanup that runs before it settles would
+    // find no unsubscribe to call and leak a second, permanent listener (React StrictMode
+    // mounts, unmounts and remounts effects in development). Unsubscribe on arrival in
+    // that case instead.
+    let cancelled = false;
     let unlistenAuth: (() => void) | undefined;
     void listen("auth-changed", () => {
       void refreshShellAccount();
     }).then((fn) => {
+      if (cancelled) {
+        fn();
+        return;
+      }
       unlistenAuth = fn;
     });
 
     return () => {
       window.removeEventListener("issuebridge:app-state", onAppState);
       window.removeEventListener("focus", onFocus);
+      cancelled = true;
       unlistenAuth?.();
     };
   }, []);

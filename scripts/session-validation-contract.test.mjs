@@ -62,6 +62,31 @@ describe("Session validation (#111)", () => {
     assert.match(commands, /pub async fn validate_session\(/);
   });
 
+  it("a forced Sign out outranks vault presence even if clearing the vault fails", () => {
+    const core = read("src-tauri", "src", "core", "mod.rs");
+    // Regression guard: sign_out used to `?` on the vault clear and return before
+    // dropping the session, so a locked keychain left auth_state reporting SignedIn
+    // while validate_session reported SignedOut — the exact #111 symptom.
+    assert.match(
+      core,
+      /let cleared = self\.token_store\.clear\(\);\s*\n\s*self\.session = SessionDecision::SignedOut;/,
+    );
+    // auth_state consults the process decision before falling back to the vault.
+    assert.match(core, /SessionDecision::SignedOut => AuthState::SignedOut/);
+  });
+
+  it("launch validation calls GitHub outside the core lock", () => {
+    const commands = read("src-tauri", "src", "adapters", "commands.rs");
+    const core = read("src-tauri", "src", "core", "mod.rs");
+    // Holding the mutex across the request would stall the shell's first auth_state /
+    // list_inbox call for the whole HTTP timeout on a slow launch.
+    assert.match(core, /pub fn probe_session\(&mut self\) -> SessionProbe/);
+    assert.match(core, /pub fn apply_session_validation\(/);
+    assert.match(commands, /SessionProbe::Token\(token\) => token/);
+    assert.match(commands, /HttpGitHub::default\(\)\.validate_pat\(&token\)/);
+    assert.match(commands, /apply_session_validation\(&token, result\)/);
+  });
+
   it("forced Sign out reaches the shell through an auth-changed event", () => {
     const commands = read("src-tauri", "src", "adapters", "commands.rs");
     const app = read("src", "App.tsx");
@@ -72,6 +97,10 @@ describe("Session validation (#111)", () => {
     );
     assert.match(app, /listen\("auth-changed"/);
     assert.match(app, /refreshShellAccount\(\)/);
+    // listen() resolves async: without a cancelled guard, an unmount before it settles
+    // leaks a second permanent listener (StrictMode remounts hit this every time).
+    assert.match(app, /let cancelled = false;/);
+    assert.match(app, /if \(cancelled\) \{\s*\n\s*fn\(\);/);
   });
 
   it("expired sessions surface a Sign-in-again message instead of a silent retry", () => {

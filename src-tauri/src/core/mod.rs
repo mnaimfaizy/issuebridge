@@ -78,11 +78,36 @@ pub struct IssuebridgeCore<G, T, D, V, C, S, L> {
     rewrite: Box<dyn RewriteEngine>,
     rewrite_models: Box<dyn RewriteModelFiles>,
     hardware: Box<dyn HardwareProbe>,
-    /// Process-local signed-in flag. Set on successful sign-in; cleared on sign-out.
-    /// Vault remains source of truth across restarts; this avoids flaky post-store re-reads
-    /// leaving the UI stuck on Sign in after a successful PAT/OAuth. Seeded from the vault in
-    /// [`Self::new`] — presence alone, so [`Self::validate_session`] must confirm it on launch.
-    session_signed_in: bool,
+    /// Process-local session decision. `Unknown` defers to vault presence, which is all a
+    /// fresh launch knows — so [`Self::validate_session`] must still confirm it against
+    /// GitHub. `SignedIn` / `SignedOut` are decisions this process made and outrank the
+    /// vault: a decision must survive a vault write that fails, or a failed clear would
+    /// leave the app insisting it is signed in against a token GitHub already rejected.
+    session: SessionDecision,
+}
+
+/// What this process knows about the session, relative to the vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionDecision {
+    /// Nothing decided yet this process — fall back to vault presence.
+    Unknown,
+    /// Signed in here (PAT/OAuth accepted, or validation passed).
+    SignedIn,
+    /// Signed out here. Overrides vault presence even if clearing the vault failed.
+    SignedOut,
+}
+
+/// What the vault holds for session validation, read without touching the network.
+/// See [`IssuebridgeCore::probe_session`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionProbe {
+    /// Validate this token out of band, then feed the result to
+    /// [`IssuebridgeCore::apply_session_validation`].
+    Token(String),
+    /// Nothing vaulted — already signed out, no request needed.
+    SignedOut,
+    /// Vault unreadable; not proof the token is bad, so change nothing.
+    Unreadable,
 }
 
 impl<G, T, D, V, C, S, L> IssuebridgeCore<G, T, D, V, C, S, L>
@@ -104,7 +129,6 @@ where
         settings_store: S,
         label_catalog_store: L,
     ) -> Self {
-        let session_signed_in = matches!(token_store.load(), Ok(Some(_)));
         Self {
             github,
             token_store,
@@ -116,7 +140,9 @@ where
             rewrite: Box::new(StubRewriteEngine),
             rewrite_models: Box::new(EmptyRewriteModelFiles),
             hardware: Box::new(FixedHardwareProbe::default()),
-            session_signed_in,
+            // A fresh process has decided nothing; vault presence answers until
+            // validate_session proves the token is still accepted.
+            session: SessionDecision::Unknown,
         }
     }
 
@@ -141,13 +167,14 @@ where
     /// Cheap, synchronous view of the session — never calls GitHub.
     /// Use [`Self::validate_session`] to prove the vaulted token is still accepted.
     pub fn auth_state(&self) -> AuthState {
-        if self.session_signed_in {
-            return AuthState::SignedIn;
-        }
-        match self.token_store.load() {
-            Ok(Some(_)) => AuthState::SignedIn,
-            Ok(None) => AuthState::SignedOut,
-            Err(_) => AuthState::SignedOut,
+        match self.session {
+            SessionDecision::SignedIn => AuthState::SignedIn,
+            SessionDecision::SignedOut => AuthState::SignedOut,
+            SessionDecision::Unknown => match self.token_store.load() {
+                Ok(Some(_)) => AuthState::SignedIn,
+                Ok(None) => AuthState::SignedOut,
+                Err(_) => AuthState::SignedOut,
+            },
         }
     }
 
@@ -157,19 +184,49 @@ where
     /// showing the Inbox against a dead token. A valid token keeps the session across a
     /// machine restart, and a transient/offline failure leaves the session untouched.
     pub fn validate_session(&mut self) -> AuthState {
-        let credentials = match self.token_store.load() {
-            Ok(Some(credentials)) => credentials,
+        let token = match self.probe_session() {
+            SessionProbe::Token(token) => token,
+            SessionProbe::SignedOut => return AuthState::SignedOut,
+            SessionProbe::Unreadable => return self.auth_state(),
+        };
+        let result = self.github.validate_pat(&token);
+        self.apply_session_validation(&token, result)
+    }
+
+    /// Read the vault for validation without calling GitHub.
+    ///
+    /// Pair with [`Self::apply_session_validation`] to validate a session without holding
+    /// the core lock across the request — launch validation does this so a slow or hanging
+    /// `GET /user` cannot stall every other command behind the mutex.
+    pub fn probe_session(&mut self) -> SessionProbe {
+        match self.token_store.load() {
+            Ok(Some(credentials)) => SessionProbe::Token(credentials.access_token),
             Ok(None) => {
-                self.session_signed_in = false;
-                return AuthState::SignedOut;
+                self.session = SessionDecision::SignedOut;
+                SessionProbe::SignedOut
             }
             // Vault unreadable right now: not proof the token is bad.
-            Err(_) => return self.auth_state(),
-        };
+            Err(_) => SessionProbe::Unreadable,
+        }
+    }
 
-        match self.github.validate_pat(&credentials.access_token) {
+    /// Apply an out-of-band `validate_pat` outcome for `token`.
+    ///
+    /// Discards the answer when the vault no longer holds `token`: the user signed in or
+    /// out while the request was in flight, and that newer decision must win.
+    pub fn apply_session_validation(
+        &mut self,
+        token: &str,
+        result: Result<(), GitHubError>,
+    ) -> AuthState {
+        match self.token_store.load() {
+            Ok(Some(current)) if current.access_token == token => {}
+            _ => return self.auth_state(),
+        }
+
+        match result {
             Ok(()) => {
-                self.session_signed_in = true;
+                self.session = SessionDecision::SignedIn;
                 AuthState::SignedIn
             }
             Err(GitHubError::InvalidCredentials) => {
@@ -190,7 +247,7 @@ where
         let credentials = match self.token_store.load() {
             Ok(Some(credentials)) => credentials,
             Ok(None) => {
-                self.session_signed_in = false;
+                self.session = SessionDecision::SignedOut;
                 return true;
             }
             Err(_) => return false,
@@ -244,7 +301,7 @@ where
             })
             .map_err(|_| AuthError::StorageUnavailable)?;
 
-        self.session_signed_in = true;
+        self.session = SessionDecision::SignedIn;
         Ok(AuthState::SignedIn)
     }
 
@@ -268,18 +325,21 @@ where
             .store(credentials)
             .map_err(|_| AuthError::StorageUnavailable)?;
 
-        self.session_signed_in = true;
+        self.session = SessionDecision::SignedIn;
         Ok(AuthState::SignedIn)
     }
 
     /// Clear stored credentials and return to signed-out state.
     /// Does not rewind Install / Testing-set / first-run-complete progress.
     pub fn sign_out(&mut self) -> Result<(), AuthError> {
-        self.token_store
-            .clear()
-            .map_err(|_| AuthError::StorageUnavailable)?;
-        self.session_signed_in = false;
-        Ok(())
+        // Drop the process-local flag even when the vault clear fails. Returning early
+        // here would leave the session SignedIn while callers that ignore the error
+        // (validate_session, credentials_rejected) report SignedOut — so `auth_state`
+        // would still say SignedIn and the shell would bounce straight back into the
+        // Inbox against a token GitHub has already rejected.
+        let cleared = self.token_store.clear();
+        self.session = SessionDecision::SignedOut;
+        cleared.map_err(|_| AuthError::StorageUnavailable)
     }
 
     /// Whether the main window should open on launch (wizard still incomplete).
@@ -1740,6 +1800,7 @@ mod tests {
                     access_token: "ghp_test_token_not_a_secret".into(),
                     refresh_token: None,
                 }),
+                ..FakeTokenStore::default()
             },
             FakeDraftStore::default(),
             FakeVoiceTranscriber::default(),
@@ -1977,6 +2038,7 @@ mod tests {
                     access_token: "ghp_test_token_not_a_secret".into(),
                     refresh_token: None,
                 }),
+                ..FakeTokenStore::default()
             },
             FakeDraftStore::default(),
             FakeVoiceTranscriber::default(),
@@ -2058,6 +2120,7 @@ mod tests {
                     access_token: "ghp_test_token_not_a_secret".into(),
                     refresh_token: None,
                 }),
+                ..FakeTokenStore::default()
             },
             FakeDraftStore::default(),
             FakeVoiceTranscriber::default(),
@@ -2120,6 +2183,7 @@ mod tests {
                     access_token: "ghu_vaulted_token_not_a_secret".into(),
                     refresh_token: None,
                 }),
+                ..FakeTokenStore::default()
             },
             FakeDraftStore::default(),
             FakeVoiceTranscriber::default(),
@@ -2166,6 +2230,51 @@ mod tests {
 
         assert_eq!(core.validate_session(), AuthState::SignedOut);
         assert_eq!(core.auth_state(), AuthState::SignedOut);
+    }
+
+    #[test]
+    fn forced_sign_out_drops_the_session_even_when_the_vault_clear_fails() {
+        let mut core = IssuebridgeCore::new(
+            FakeGitHub::rejecting_pat(),
+            FakeTokenStore {
+                credentials: Some(StoredCredentials {
+                    access_token: "ghu_vaulted_token_not_a_secret".into(),
+                    refresh_token: None,
+                }),
+                clear_fails: true,
+            },
+            FakeDraftStore::default(),
+            FakeVoiceTranscriber::default(),
+            FakeClock::default(),
+            ready_settings(),
+            FakeLabelCatalogStore::default(),
+        );
+
+        assert_eq!(core.validate_session(), AuthState::SignedOut);
+
+        // A locked keychain left the rejected token in the vault. The session decision
+        // must still outrank vault presence — otherwise `auth_state` says SignedIn, the
+        // next focus refresh bounces the user back into the Inbox against a dead token,
+        // and `emit_if_signed_out` never fires because it reads `auth_state`.
+        assert!(core.token_store.load().expect("vault").is_some());
+        assert_eq!(core.auth_state(), AuthState::SignedOut);
+        assert_eq!(core.first_run_step(), FirstRunStep::SignIn);
+    }
+
+    #[test]
+    fn apply_session_validation_ignores_a_verdict_for_a_token_the_vault_no_longer_holds() {
+        let mut core = restarted_core(FakeGitHub::default(), ready_settings());
+
+        // Launch validation runs off-lock, so the user can sign in again while the
+        // request is in flight. A rejection for the superseded token must not evict
+        // the newer session.
+        let auth = core.apply_session_validation(
+            "ghu_superseded_token_not_a_secret",
+            Err(GitHubError::InvalidCredentials),
+        );
+
+        assert_eq!(auth, AuthState::SignedIn);
+        assert!(core.token_store.load().expect("vault").is_some());
     }
 
     #[test]

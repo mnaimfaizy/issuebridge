@@ -11,7 +11,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::adapters::app_core::AppCore;
 use crate::adapters::file_rewrite_model_store::{FileRewriteModelStore, ModelDownloadError};
-use crate::adapters::github_http::APP_INSTALL_URL;
+use crate::adapters::github_http::{HttpGitHub, APP_INSTALL_URL};
 use crate::adapters::llama_rewrite::RewriteJobHandle;
 use crate::adapters::oauth_loopback::{
     authorize_url, bind_loopback, generate_pkce, generate_state, wait_for_authorization_code,
@@ -20,8 +20,9 @@ use crate::adapters::oauth_loopback::{
 use crate::adapters::whisper_voice::write_temp_wav;
 use crate::core::{
     find_rewrite_model, AuthError, AuthState, CaptureError, CaptureInput, EditDraftInput,
-    FirstRunStep, InboxError, InstallContinueOutcome, InstallError, LabelCatalogError,
-    PublishError, RepoId, RewriteError, TestingSetError, TimestampDisplay, UpdateError, VoiceError,
+    FirstRunStep, GitHub, InboxError, InstallContinueOutcome, InstallError, LabelCatalogError,
+    PublishError, RepoId, RewriteError, SessionProbe, TestingSetError, TimestampDisplay,
+    UpdateError, VoiceError,
 };
 
 /// Cancel flag for in-flight Rewrite model downloads (lock-free vs core mutex).
@@ -240,13 +241,31 @@ pub async fn validate_session(
 
 /// Launch-time session validation. Runs off the main thread so a slow or offline
 /// `GET /user` never blocks window creation, and still runs on a tray-first launch.
+///
+/// The request is issued *outside* the core lock. Validating inside it would hold the
+/// mutex for the whole HTTP timeout, so the shell's first `auth_state` / `first_run_step`
+/// / `list_inbox` call would block behind a launch on a hanging network.
 pub fn validate_session_on_launch(app: &AppHandle) {
     let handle = app.clone();
     let core = Arc::clone(&app.state::<AppState>().core);
     tauri::async_runtime::spawn(async move {
         let validated = tauri::async_runtime::spawn_blocking(move || {
-            let mut core = core.lock().ok()?;
-            Some(core.validate_session())
+            // Read the vaulted token, then release the lock before touching the network.
+            let token = {
+                let mut guard = core.lock().ok()?;
+                match guard.probe_session() {
+                    SessionProbe::Token(token) => token,
+                    SessionProbe::SignedOut => return Some(AuthState::SignedOut),
+                    SessionProbe::Unreadable => return Some(guard.auth_state()),
+                }
+            };
+
+            let result = HttpGitHub::default().validate_pat(&token);
+
+            // Re-acquire only to record the verdict. `apply_session_validation` drops the
+            // answer if the vault changed while the request was in flight.
+            let mut guard = core.lock().ok()?;
+            Some(guard.apply_session_validation(&token, result))
         })
         .await;
         match validated {

@@ -293,6 +293,9 @@ impl GitHub for FakeGitHub {
 #[derive(Debug, Default)]
 pub struct FakeTokenStore {
     pub credentials: Option<StoredCredentials>,
+    /// When true, `clear` fails and leaves the credentials in place — a locked OS
+    /// keychain / unavailable keyring daemon. The session must still drop.
+    pub clear_fails: bool,
 }
 
 impl TokenStore for FakeTokenStore {
@@ -306,6 +309,9 @@ impl TokenStore for FakeTokenStore {
     }
 
     fn clear(&mut self) -> Result<(), TokenStoreError> {
+        if self.clear_fails {
+            return Err(TokenStoreError::Unavailable);
+        }
         self.credentials = None;
         Ok(())
     }
