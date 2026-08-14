@@ -1,0 +1,31 @@
+# Version-update PRs are parked (limit 0). Alerts and security-update
+# PRs are the live detector and are not subject to this limit.
+# See https://github.com/mnaimfaizy/issuebridge/issues/139
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: "chore"
+
+  - package-ecosystem: npm
+    directory: /services/oauth-exchange
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: "chore"
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: "chore"
