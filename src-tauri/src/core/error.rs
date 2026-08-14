@@ -92,6 +92,8 @@ pub enum TestingSetError {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LabelCatalogError {
     NotSignedIn,
+    /// Stored token rejected by GitHub (401) — the session was cleared, Sign in again.
+    SessionExpired,
     StorageUnavailable,
 }
 

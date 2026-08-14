@@ -78,10 +78,36 @@ pub struct IssuebridgeCore<G, T, D, V, C, S, L> {
     rewrite: Box<dyn RewriteEngine>,
     rewrite_models: Box<dyn RewriteModelFiles>,
     hardware: Box<dyn HardwareProbe>,
-    /// Process-local signed-in flag. Set on successful sign-in; cleared on sign-out.
-    /// Vault remains source of truth across restarts; this avoids flaky post-store re-reads
-    /// leaving the UI stuck on Sign in after a successful PAT/OAuth.
-    session_signed_in: bool,
+    /// Process-local session decision. `Unknown` defers to vault presence, which is all a
+    /// fresh launch knows — so [`Self::validate_session`] must still confirm it against
+    /// GitHub. `SignedIn` / `SignedOut` are decisions this process made and outrank the
+    /// vault: a decision must survive a vault write that fails, or a failed clear would
+    /// leave the app insisting it is signed in against a token GitHub already rejected.
+    session: SessionDecision,
+}
+
+/// What this process knows about the session, relative to the vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionDecision {
+    /// Nothing decided yet this process — fall back to vault presence.
+    Unknown,
+    /// Signed in here (PAT/OAuth accepted, or validation passed).
+    SignedIn,
+    /// Signed out here. Overrides vault presence even if clearing the vault failed.
+    SignedOut,
+}
+
+/// What the vault holds for session validation, read without touching the network.
+/// See [`IssuebridgeCore::probe_session`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionProbe {
+    /// Validate this token out of band, then feed the result to
+    /// [`IssuebridgeCore::apply_session_validation`].
+    Token(String),
+    /// Nothing vaulted — already signed out, no request needed.
+    SignedOut,
+    /// Vault unreadable; not proof the token is bad, so change nothing.
+    Unreadable,
 }
 
 impl<G, T, D, V, C, S, L> IssuebridgeCore<G, T, D, V, C, S, L>
@@ -103,7 +129,6 @@ where
         settings_store: S,
         label_catalog_store: L,
     ) -> Self {
-        let session_signed_in = matches!(token_store.load(), Ok(Some(_)));
         Self {
             github,
             token_store,
@@ -115,7 +140,9 @@ where
             rewrite: Box::new(StubRewriteEngine),
             rewrite_models: Box::new(EmptyRewriteModelFiles),
             hardware: Box::new(FixedHardwareProbe::default()),
-            session_signed_in,
+            // A fresh process has decided nothing; vault presence answers until
+            // validate_session proves the token is still accepted.
+            session: SessionDecision::Unknown,
         }
     }
 
@@ -137,14 +164,123 @@ where
         self
     }
 
+    /// Cheap, synchronous view of the session — never calls GitHub.
+    /// Use [`Self::validate_session`] to prove the vaulted token is still accepted.
     pub fn auth_state(&self) -> AuthState {
-        if self.session_signed_in {
-            return AuthState::SignedIn;
+        match self.session {
+            SessionDecision::SignedIn => AuthState::SignedIn,
+            SessionDecision::SignedOut => AuthState::SignedOut,
+            SessionDecision::Unknown => match self.token_store.load() {
+                Ok(Some(_)) => AuthState::SignedIn,
+                Ok(None) => AuthState::SignedOut,
+                Err(_) => AuthState::SignedOut,
+            },
         }
+    }
+
+    /// Check the vaulted credentials against GitHub (launch, or on demand).
+    ///
+    /// Rejected credentials force a Sign out so the UI routes to Sign in instead of
+    /// showing the Inbox against a dead token. A valid token keeps the session across a
+    /// machine restart, and a transient/offline failure leaves the session untouched.
+    pub fn validate_session(&mut self) -> AuthState {
+        let token = match self.probe_session() {
+            SessionProbe::Token(token) => token,
+            SessionProbe::SignedOut => return AuthState::SignedOut,
+            SessionProbe::Unreadable => return self.auth_state(),
+        };
+        let result = self.github.validate_pat(&token);
+        self.apply_session_validation(&token, result)
+    }
+
+    /// Read the vault for validation without calling GitHub.
+    ///
+    /// Pair with [`Self::apply_session_validation`] to validate a session without holding
+    /// the core lock across the request — launch validation does this so a slow or hanging
+    /// `GET /user` cannot stall every other command behind the mutex.
+    pub fn probe_session(&mut self) -> SessionProbe {
         match self.token_store.load() {
-            Ok(Some(_)) => AuthState::SignedIn,
-            Ok(None) => AuthState::SignedOut,
-            Err(_) => AuthState::SignedOut,
+            Ok(Some(credentials)) => SessionProbe::Token(credentials.access_token),
+            Ok(None) => {
+                self.session = SessionDecision::SignedOut;
+                SessionProbe::SignedOut
+            }
+            // Vault unreadable right now: not proof the token is bad.
+            Err(_) => SessionProbe::Unreadable,
+        }
+    }
+
+    /// Apply an out-of-band `validate_pat` outcome for `token`.
+    ///
+    /// Discards the answer when the vault no longer holds `token`: the user signed in or
+    /// out while the request was in flight, and that newer decision must win.
+    pub fn apply_session_validation(
+        &mut self,
+        token: &str,
+        result: Result<(), GitHubError>,
+    ) -> AuthState {
+        match self.token_store.load() {
+            Ok(Some(current)) if current.access_token == token => {}
+            _ => return self.auth_state(),
+        }
+
+        match result {
+            Ok(()) => {
+                self.session = SessionDecision::SignedIn;
+                AuthState::SignedIn
+            }
+            Err(GitHubError::InvalidCredentials) => {
+                let _ = self.sign_out();
+                AuthState::SignedOut
+            }
+            // Offline / GitHub down: keep the session, retry on the next authenticated call.
+            Err(GitHubError::Unavailable) => self.auth_state(),
+        }
+    }
+
+    /// Re-check the vaulted token after an authenticated call failed with 401/403.
+    ///
+    /// Only a `GET /user` rejection proves the credentials are dead — a 403 on a single
+    /// endpoint usually means missing scope / not App-visible, and must not evict the user.
+    /// Signs out (clearing the vault) and returns `true` when the token really is rejected.
+    fn credentials_rejected(&mut self) -> bool {
+        let credentials = match self.token_store.load() {
+            Ok(Some(credentials)) => credentials,
+            Ok(None) => {
+                self.session = SessionDecision::SignedOut;
+                return true;
+            }
+            Err(_) => return false,
+        };
+
+        match self.github.validate_pat(&credentials.access_token) {
+            Err(GitHubError::InvalidCredentials) => {
+                let _ = self.sign_out();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Publish-side GitHub failure mapping; forces Sign out when the token is rejected.
+    fn publish_error_for(&mut self, err: GitHubError) -> PublishError {
+        match err {
+            GitHubError::InvalidCredentials => {
+                self.credentials_rejected();
+                PublishError::InvalidCredentials
+            }
+            GitHubError::Unavailable => PublishError::ProviderUnavailable,
+        }
+    }
+
+    /// Update-side GitHub failure mapping; forces Sign out when the token is rejected.
+    fn update_error_for(&mut self, err: GitHubError) -> UpdateError {
+        match err {
+            GitHubError::InvalidCredentials => {
+                self.credentials_rejected();
+                UpdateError::InvalidCredentials
+            }
+            GitHubError::Unavailable => UpdateError::ProviderUnavailable,
         }
     }
 
@@ -165,7 +301,7 @@ where
             })
             .map_err(|_| AuthError::StorageUnavailable)?;
 
-        self.session_signed_in = true;
+        self.session = SessionDecision::SignedIn;
         Ok(AuthState::SignedIn)
     }
 
@@ -189,18 +325,21 @@ where
             .store(credentials)
             .map_err(|_| AuthError::StorageUnavailable)?;
 
-        self.session_signed_in = true;
+        self.session = SessionDecision::SignedIn;
         Ok(AuthState::SignedIn)
     }
 
     /// Clear stored credentials and return to signed-out state.
     /// Does not rewind Install / Testing-set / first-run-complete progress.
     pub fn sign_out(&mut self) -> Result<(), AuthError> {
-        self.token_store
-            .clear()
-            .map_err(|_| AuthError::StorageUnavailable)?;
-        self.session_signed_in = false;
-        Ok(())
+        // Drop the process-local flag even when the vault clear fails. Returning early
+        // here would leave the session SignedIn while callers that ignore the error
+        // (validate_session, credentials_rejected) report SignedOut — so `auth_state`
+        // would still say SignedIn and the shell would bounce straight back into the
+        // Inbox against a token GitHub has already rejected.
+        let cleared = self.token_store.clear();
+        self.session = SessionDecision::SignedOut;
+        cleared.map_err(|_| AuthError::StorageUnavailable)
     }
 
     /// Whether the main window should open on launch (wizard still incomplete).
@@ -240,13 +379,21 @@ where
             .map_err(|_| InstallError::StorageUnavailable)?
             .ok_or(InstallError::NotSignedIn)?;
 
-        let snapshot = self
+        let fetched = self
             .github
-            .list_app_install_snapshot(&credentials.access_token)
-            .map_err(|err| match err {
-                GitHubError::InvalidCredentials => InstallError::TokenLacksInstallAccess,
-                GitHubError::Unavailable => InstallError::ProviderUnavailable,
-            })?;
+            .list_app_install_snapshot(&credentials.access_token);
+        let snapshot = match fetched {
+            Ok(snapshot) => snapshot,
+            Err(GitHubError::Unavailable) => return Err(InstallError::ProviderUnavailable),
+            // 403 here is the identity-only PAT path, not a dead token: only a rejected
+            // `GET /user` forces Sign out; otherwise keep the session and the PAT guidance.
+            Err(GitHubError::InvalidCredentials) => {
+                if self.credentials_rejected() {
+                    return Err(InstallError::NotSignedIn);
+                }
+                return Err(InstallError::TokenLacksInstallAccess);
+            }
+        };
 
         if !snapshot.has_install {
             return Ok(InstallContinueOutcome::NoInstall);
@@ -593,7 +740,8 @@ where
             .map_err(|_| LabelCatalogError::StorageUnavailable)?
             .ok_or(LabelCatalogError::NotSignedIn)?;
 
-        match self.github.list_labels(&credentials.access_token, repo) {
+        let fetched = self.github.list_labels(&credentials.access_token, repo);
+        match fetched {
             Ok(labels) => {
                 let catalog = LabelCatalog {
                     repo: repo.clone(),
@@ -609,6 +757,11 @@ where
                     refreshed_at: Some(catalog.refreshed_at),
                     refresh_failed: false,
                 })
+            }
+            // A rejected token is not a soft refresh failure: sign out instead of looping 401s
+            // behind an Inbox that looks signed-in.
+            Err(GitHubError::InvalidCredentials) if self.credentials_rejected() => {
+                Err(LabelCatalogError::SessionExpired)
             }
             Err(_) => {
                 let (labels, refreshed_at) = match cached {
@@ -668,20 +821,24 @@ where
             return Err(PublishError::NotAppVisible);
         }
 
-        let label_names = self
-            .ensure_remote_labels(&credentials.access_token, &draft.repo, &draft.label_names)
-            .map_err(map_publish_github_error)?;
+        let labels =
+            self.ensure_remote_labels(&credentials.access_token, &draft.repo, &draft.label_names);
+        let label_names = match labels {
+            Ok(names) => names,
+            Err(err) => return Err(self.publish_error_for(err)),
+        };
 
-        let created = self
-            .github
-            .create_issue(
-                &credentials.access_token,
-                &draft.repo,
-                draft.title.trim(),
-                &draft.body,
-                &label_names,
-            )
-            .map_err(map_publish_github_error)?;
+        let minted = self.github.create_issue(
+            &credentials.access_token,
+            &draft.repo,
+            draft.title.trim(),
+            &draft.body,
+            &label_names,
+        );
+        let created = match minted {
+            Ok(issue) => issue,
+            Err(err) => return Err(self.publish_error_for(err)),
+        };
 
         // Align working fields with what GitHub accepted so Dirty stays clear after Publish.
         draft.title = created.title.clone();
@@ -713,10 +870,13 @@ where
             return Err(UpdateError::TitleRequired);
         }
 
-        let remote = self
+        let fetched = self
             .github
-            .get_issue(&credentials.access_token, &draft.repo, number)
-            .map_err(map_update_github_error)?;
+            .get_issue(&credentials.access_token, &draft.repo, number);
+        let remote = match fetched {
+            Ok(issue) => issue,
+            Err(err) => return Err(self.update_error_for(err)),
+        };
 
         let snapshot = draft
             .remote_snapshot
@@ -726,21 +886,25 @@ where
             return Err(UpdateError::Conflict);
         }
 
-        let label_names = self
-            .ensure_remote_labels(&credentials.access_token, &draft.repo, &draft.label_names)
-            .map_err(map_update_github_error)?;
+        let labels =
+            self.ensure_remote_labels(&credentials.access_token, &draft.repo, &draft.label_names);
+        let label_names = match labels {
+            Ok(names) => names,
+            Err(err) => return Err(self.update_error_for(err)),
+        };
 
-        let updated = self
-            .github
-            .update_issue(
-                &credentials.access_token,
-                &draft.repo,
-                number,
-                draft.title.trim(),
-                &draft.body,
-                &label_names,
-            )
-            .map_err(map_update_github_error)?;
+        let pushed = self.github.update_issue(
+            &credentials.access_token,
+            &draft.repo,
+            number,
+            draft.title.trim(),
+            &draft.body,
+            &label_names,
+        );
+        let updated = match pushed {
+            Ok(issue) => issue,
+            Err(err) => return Err(self.update_error_for(err)),
+        };
 
         apply_remote_issue_to_draft(&mut draft, &updated, self.clock.now());
         self.draft_store
@@ -756,21 +920,25 @@ where
             return Err(UpdateError::TitleRequired);
         }
 
-        let label_names = self
-            .ensure_remote_labels(&credentials.access_token, &draft.repo, &draft.label_names)
-            .map_err(map_update_github_error)?;
+        let labels =
+            self.ensure_remote_labels(&credentials.access_token, &draft.repo, &draft.label_names);
+        let label_names = match labels {
+            Ok(names) => names,
+            Err(err) => return Err(self.update_error_for(err)),
+        };
 
-        let updated = self
-            .github
-            .update_issue(
-                &credentials.access_token,
-                &draft.repo,
-                number,
-                draft.title.trim(),
-                &draft.body,
-                &label_names,
-            )
-            .map_err(map_update_github_error)?;
+        let pushed = self.github.update_issue(
+            &credentials.access_token,
+            &draft.repo,
+            number,
+            draft.title.trim(),
+            &draft.body,
+            &label_names,
+        );
+        let updated = match pushed {
+            Ok(issue) => issue,
+            Err(err) => return Err(self.update_error_for(err)),
+        };
 
         apply_remote_issue_to_draft(&mut draft, &updated, self.clock.now());
         self.draft_store
@@ -782,10 +950,13 @@ where
     /// Conflict resolution: replace local working fields from a fresh GET and refresh the snapshot.
     pub fn use_theirs(&mut self, id: &str) -> Result<Draft, UpdateError> {
         let (credentials, mut draft, number) = self.load_linked_for_update(id)?;
-        let remote = self
+        let fetched = self
             .github
-            .get_issue(&credentials.access_token, &draft.repo, number)
-            .map_err(map_update_github_error)?;
+            .get_issue(&credentials.access_token, &draft.repo, number);
+        let remote = match fetched {
+            Ok(issue) => issue,
+            Err(err) => return Err(self.update_error_for(err)),
+        };
 
         apply_remote_issue_to_draft(&mut draft, &remote, self.clock.now());
         self.draft_store
@@ -1321,20 +1492,6 @@ fn map_github_error(err: GitHubError) -> AuthError {
     }
 }
 
-fn map_publish_github_error(err: GitHubError) -> PublishError {
-    match err {
-        GitHubError::InvalidCredentials => PublishError::InvalidCredentials,
-        GitHubError::Unavailable => PublishError::ProviderUnavailable,
-    }
-}
-
-fn map_update_github_error(err: GitHubError) -> UpdateError {
-    match err {
-        GitHubError::InvalidCredentials => UpdateError::InvalidCredentials,
-        GitHubError::Unavailable => UpdateError::ProviderUnavailable,
-    }
-}
-
 fn apply_remote_issue_to_draft(
     draft: &mut Draft,
     issue: &CreatedIssue,
@@ -1489,10 +1646,7 @@ mod tests {
     #[test]
     fn sign_in_with_invalid_pat_is_rejected_and_stays_signed_out() {
         let mut core = IssuebridgeCore::new(
-            FakeGitHub {
-                reject_pat: true,
-                ..FakeGitHub::default()
-            },
+            FakeGitHub::rejecting_pat(),
             FakeTokenStore::default(),
             FakeDraftStore::default(),
             FakeVoiceTranscriber::default(),
@@ -1646,6 +1800,7 @@ mod tests {
                     access_token: "ghp_test_token_not_a_secret".into(),
                     refresh_token: None,
                 }),
+                ..FakeTokenStore::default()
             },
             FakeDraftStore::default(),
             FakeVoiceTranscriber::default(),
@@ -1883,6 +2038,7 @@ mod tests {
                     access_token: "ghp_test_token_not_a_secret".into(),
                     refresh_token: None,
                 }),
+                ..FakeTokenStore::default()
             },
             FakeDraftStore::default(),
             FakeVoiceTranscriber::default(),
@@ -1964,6 +2120,7 @@ mod tests {
                     access_token: "ghp_test_token_not_a_secret".into(),
                     refresh_token: None,
                 }),
+                ..FakeTokenStore::default()
             },
             FakeDraftStore::default(),
             FakeVoiceTranscriber::default(),
@@ -2015,6 +2172,284 @@ mod tests {
             settings.snapshot().testing_set,
             vec![repo("acme", "widgets")]
         );
+    }
+
+    /// Simulates a machine restart: a fresh core over a vault that already holds credentials.
+    fn restarted_core(github: FakeGitHub, settings: FakeSettingsStore) -> TestCore {
+        IssuebridgeCore::new(
+            github,
+            FakeTokenStore {
+                credentials: Some(StoredCredentials {
+                    access_token: "ghu_vaulted_token_not_a_secret".into(),
+                    refresh_token: None,
+                }),
+                ..FakeTokenStore::default()
+            },
+            FakeDraftStore::default(),
+            FakeVoiceTranscriber::default(),
+            FakeClock::default(),
+            settings,
+            FakeLabelCatalogStore::default(),
+        )
+    }
+
+    #[test]
+    fn validate_session_keeps_signed_in_after_restart_when_token_is_still_valid() {
+        let mut core = restarted_core(FakeGitHub::default(), ready_settings());
+
+        assert_eq!(core.validate_session(), AuthState::SignedIn);
+        assert_eq!(core.auth_state(), AuthState::SignedIn);
+        assert_eq!(core.first_run_step(), FirstRunStep::Ready);
+        assert!(core.token_store.load().expect("vault").is_some());
+    }
+
+    #[test]
+    fn validate_session_signs_out_and_clears_vault_when_github_rejects_the_token() {
+        let mut core = restarted_core(FakeGitHub::rejecting_pat(), ready_settings());
+        assert_eq!(core.auth_state(), AuthState::SignedIn);
+
+        assert_eq!(core.validate_session(), AuthState::SignedOut);
+        assert_eq!(core.auth_state(), AuthState::SignedOut);
+        assert_eq!(core.first_run_step(), FirstRunStep::SignIn);
+        assert!(core.token_store.load().expect("vault").is_none());
+    }
+
+    #[test]
+    fn validate_session_keeps_the_session_when_github_is_unavailable() {
+        let github = FakeGitHub::default();
+        github.set_validate_pat_error(Some(GitHubError::Unavailable));
+        let mut core = restarted_core(github, ready_settings());
+
+        assert_eq!(core.validate_session(), AuthState::SignedIn);
+        assert!(core.token_store.load().expect("vault").is_some());
+    }
+
+    #[test]
+    fn validate_session_on_an_empty_vault_is_signed_out() {
+        let mut core = fresh_core();
+
+        assert_eq!(core.validate_session(), AuthState::SignedOut);
+        assert_eq!(core.auth_state(), AuthState::SignedOut);
+    }
+
+    #[test]
+    fn forced_sign_out_drops_the_session_even_when_the_vault_clear_fails() {
+        let mut core = IssuebridgeCore::new(
+            FakeGitHub::rejecting_pat(),
+            FakeTokenStore {
+                credentials: Some(StoredCredentials {
+                    access_token: "ghu_vaulted_token_not_a_secret".into(),
+                    refresh_token: None,
+                }),
+                clear_fails: true,
+            },
+            FakeDraftStore::default(),
+            FakeVoiceTranscriber::default(),
+            FakeClock::default(),
+            ready_settings(),
+            FakeLabelCatalogStore::default(),
+        );
+
+        assert_eq!(core.validate_session(), AuthState::SignedOut);
+
+        // A locked keychain left the rejected token in the vault. The session decision
+        // must still outrank vault presence — otherwise `auth_state` says SignedIn, the
+        // next focus refresh bounces the user back into the Inbox against a dead token,
+        // and `emit_if_signed_out` never fires because it reads `auth_state`.
+        assert!(core.token_store.load().expect("vault").is_some());
+        assert_eq!(core.auth_state(), AuthState::SignedOut);
+        assert_eq!(core.first_run_step(), FirstRunStep::SignIn);
+    }
+
+    #[test]
+    fn apply_session_validation_ignores_a_verdict_for_a_token_the_vault_no_longer_holds() {
+        let mut core = restarted_core(FakeGitHub::default(), ready_settings());
+
+        // Launch validation runs off-lock, so the user can sign in again while the
+        // request is in flight. A rejection for the superseded token must not evict
+        // the newer session.
+        let auth = core.apply_session_validation(
+            "ghu_superseded_token_not_a_secret",
+            Err(GitHubError::InvalidCredentials),
+        );
+
+        assert_eq!(auth, AuthState::SignedIn);
+        assert!(core.token_store.load().expect("vault").is_some());
+    }
+
+    #[test]
+    fn forced_sign_out_from_a_rejected_token_does_not_rewind_first_run_progress() {
+        let settings = ready_settings();
+        let mut core = restarted_core(FakeGitHub::rejecting_pat(), settings.clone());
+
+        assert_eq!(core.validate_session(), AuthState::SignedOut);
+
+        assert!(settings.snapshot().install_completed);
+        assert!(settings.snapshot().testing_set_completed);
+        assert!(settings.snapshot().first_run_completed);
+        assert_eq!(
+            settings.snapshot().testing_set,
+            vec![repo("acme", "widgets")]
+        );
+    }
+
+    #[test]
+    fn ensure_label_catalog_signs_out_when_github_rejects_the_token() {
+        let github = FakeGitHub::default();
+        github.set_list_labels_error(Some(GitHubError::InvalidCredentials));
+        github.set_validate_pat_error(Some(GitHubError::InvalidCredentials));
+        let mut core = restarted_core(github, ready_settings());
+
+        let err = core
+            .ensure_label_catalog(&repo("acme", "widgets"))
+            .expect_err("a rejected token must not soft-fail to an empty catalog");
+
+        assert_eq!(err, LabelCatalogError::SessionExpired);
+        assert_eq!(core.auth_state(), AuthState::SignedOut);
+        assert!(core.token_store.load().expect("vault").is_none());
+    }
+
+    #[test]
+    fn prefetch_testing_set_label_catalogs_propagates_a_rejected_token() {
+        let github = FakeGitHub::default();
+        github.set_list_labels_error(Some(GitHubError::InvalidCredentials));
+        github.set_validate_pat_error(Some(GitHubError::InvalidCredentials));
+        let mut core = restarted_core(github, ready_settings());
+
+        let err = core
+            .prefetch_testing_set_label_catalogs()
+            .expect_err("prefetch must surface the expired session");
+
+        assert_eq!(err, LabelCatalogError::SessionExpired);
+        assert_eq!(core.auth_state(), AuthState::SignedOut);
+    }
+
+    #[test]
+    fn ensure_label_catalog_keeps_the_session_when_only_this_repo_is_forbidden() {
+        let github = FakeGitHub::default();
+        github.set_list_labels_error(Some(GitHubError::InvalidCredentials));
+        let mut core = restarted_core(github, ready_settings());
+
+        let ensured = core
+            .ensure_label_catalog(&repo("acme", "widgets"))
+            .expect("a still-valid token keeps the soft-fail behaviour");
+
+        assert!(ensured.refresh_failed);
+        assert_eq!(core.auth_state(), AuthState::SignedIn);
+        assert!(core.token_store.load().expect("vault").is_some());
+    }
+
+    #[test]
+    fn publish_with_a_rejected_token_clears_the_session() {
+        let github = FakeGitHub {
+            create_issue_result: Some(Err(GitHubError::InvalidCredentials)),
+            ..FakeGitHub::default()
+        };
+        github.set_validate_pat_error(Some(GitHubError::InvalidCredentials));
+        let mut core = restarted_core(github, ready_settings());
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "Broken button".into(),
+                body: "Clicking Save does nothing.".into(),
+            })
+            .expect("capture");
+
+        let err = core
+            .publish_draft(&saved.id)
+            .expect_err("Publish with a dead token must fail");
+
+        assert_eq!(err, PublishError::InvalidCredentials);
+        assert_eq!(core.auth_state(), AuthState::SignedOut);
+        assert!(core.token_store.load().expect("vault").is_none());
+    }
+
+    #[test]
+    fn publish_forbidden_with_a_still_valid_token_keeps_the_session() {
+        let mut core = restarted_core(
+            FakeGitHub {
+                create_issue_result: Some(Err(GitHubError::InvalidCredentials)),
+                ..FakeGitHub::default()
+            },
+            ready_settings(),
+        );
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "Broken button".into(),
+                body: "Clicking Save does nothing.".into(),
+            })
+            .expect("capture");
+
+        let err = core
+            .publish_draft(&saved.id)
+            .expect_err("Publish still fails");
+
+        assert_eq!(err, PublishError::InvalidCredentials);
+        assert_eq!(core.auth_state(), AuthState::SignedIn);
+        assert!(core.token_store.load().expect("vault").is_some());
+    }
+
+    #[test]
+    fn update_linked_draft_with_a_rejected_token_clears_the_session() {
+        let github = FakeGitHub::default();
+        let mut core = restarted_core(github.clone(), ready_settings());
+        let saved = core
+            .save_capture(CaptureInput {
+                repo: repo("acme", "widgets"),
+                title: "Broken button".into(),
+                body: "Clicking Save does nothing.".into(),
+            })
+            .expect("capture");
+        core.publish_draft(&saved.id).expect("Publish");
+
+        github.set_issue_error(Some(GitHubError::InvalidCredentials));
+        github.set_validate_pat_error(Some(GitHubError::InvalidCredentials));
+
+        let err = core
+            .update_linked_draft(&saved.id)
+            .expect_err("Update with a dead token must fail");
+
+        assert_eq!(err, UpdateError::InvalidCredentials);
+        assert_eq!(core.auth_state(), AuthState::SignedOut);
+        assert!(core.token_store.load().expect("vault").is_none());
+    }
+
+    #[test]
+    fn continue_install_keeps_the_session_for_an_identity_only_pat() {
+        let mut core = restarted_core(
+            FakeGitHub {
+                install_snapshot: Err(GitHubError::InvalidCredentials),
+                ..FakeGitHub::default()
+            },
+            FakeSettingsStore::default(),
+        );
+
+        let err = core
+            .continue_install()
+            .expect_err("PAT cannot list installs");
+
+        assert_eq!(err, InstallError::TokenLacksInstallAccess);
+        assert_eq!(core.auth_state(), AuthState::SignedIn);
+        assert!(core.token_store.load().expect("vault").is_some());
+    }
+
+    #[test]
+    fn continue_install_with_a_rejected_token_clears_the_session() {
+        let github = FakeGitHub {
+            install_snapshot: Err(GitHubError::InvalidCredentials),
+            ..FakeGitHub::default()
+        };
+        github.set_validate_pat_error(Some(GitHubError::InvalidCredentials));
+        let mut core = restarted_core(github, FakeSettingsStore::default());
+
+        let err = core
+            .continue_install()
+            .expect_err("Continue with a dead token must fail");
+
+        assert_eq!(err, InstallError::NotSignedIn);
+        assert_eq!(core.auth_state(), AuthState::SignedOut);
+        assert!(core.token_store.load().expect("vault").is_none());
     }
 
     fn ready_settings() -> FakeSettingsStore {
@@ -2658,7 +3093,7 @@ mod tests {
             .expect("seed");
 
         clock.advance(Duration::from_secs(15 * 60 + 1));
-        *github.list_labels_unavailable.lock().expect("flag") = true;
+        github.set_list_labels_error(Some(GitHubError::Unavailable));
 
         let ensured = core
             .ensure_label_catalog(&repo("acme", "widgets"))

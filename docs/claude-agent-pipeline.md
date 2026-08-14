@@ -8,6 +8,7 @@ subscription. Replaces the Copilot pipeline archived at
 | --- | --- | --- |
 | [`claude-agent-pipeline.yml`](../.github/workflows/claude-agent-pipeline.yml) | issue labeled `agent:plan` | Posts an implementation plan comment |
 | | issue labeled `agent:implement` | Implements the plan, pushes a branch, opens a draft PR |
+| [`claude-code-review.yml`](../.github/workflows/claude-code-review.yml) | PR labeled `agent:review` | Three-axis review (Standards / Spec / Correctness) posted to the PR |
 | [`claude-security-audit.yml`](../.github/workflows/claude-security-audit.yml) | monthly cron / dispatch / PR labeled `agent:security-audit` | Threat-led audit → private draft Security Advisory |
 
 ## Stand-up
@@ -44,10 +45,12 @@ so it cannot open Remote Control sessions or reach claude.ai connectors.
 | --- | --- | --- |
 | `CLAUDE_PIPELINE_ENABLED` | `true` | Kill switch for plan/implement |
 | `CLAUDE_SECURITY_AUDIT_ENABLED` | `true` | Kill switch for the audit |
+| `CLAUDE_REVIEW_ENABLED` | `true` | Kill switch for code review |
 | `AGENT_PIPELINE_ALLOWLIST` | `mnaimfaizy` | Comma-separated logins |
 | `SECURITY_AUDIT_ALLOWLIST` | `mnaimfaizy` | Comma-separated logins |
 | `CLAUDE_PIPELINE_MODEL` | optional | Defaults to `claude-opus-5` |
 | `CLAUDE_SECURITY_AUDIT_MODEL` | optional | Defaults to `claude-opus-5` |
+| `CLAUDE_REVIEW_MODEL` | optional | Defaults to `claude-opus-5` |
 | `SECURITY_AUDIT_NOTIFY_EMAIL` / `SECURITY_AUDIT_EMAIL_FROM` | optional | Email delivery |
 
 The kill switches are deliberately **not** the archived `AGENT_PIPELINE_ENABLED` /
@@ -56,8 +59,9 @@ enable both pipelines at once.
 
 ### 5. Labels
 
-`agent:plan`, `agent:implement`, `agent:security-audit`. Each is consumed (removed) after
-its run, so a re-run needs a deliberate re-label.
+`agent:plan`, `agent:implement`, `agent:review`, `agent:security-audit`. Each is consumed
+(removed) after its run, so a re-run needs a deliberate re-label — re-apply `agent:review`
+to get a fresh review after pushing fixes.
 
 ## Security model
 
@@ -86,9 +90,15 @@ human-actor checks.
   inspection only. Full mode (scheduled/dispatch, trusted default-branch code) adds
   read-only git subcommands and `npm audit`. This is tighter than the archived Copilot
   config, which granted `shell(git:*)`, `shell(cargo:*)`, and `shell(npm:*)`.
-- **Untrusted input is fenced.** Issue bodies and PR diffs are wrapped in explicit
-  `<untrusted_issue_context>` / `<untrusted_pr_diff>` markers instructing the model to
-  treat the contents as data, never instructions. The action also scrubs hidden markdown
+- **The reviewer cannot modify or run what it reviews.** `claude-code-review.yml` checks
+  out untrusted PR code, so it is granted no `Edit`/`Write` and no `npm`/`cargo` — read,
+  reason, comment. It also restores `AGENTS.md`, `CLAUDE.md`, `.claude/` and the
+  code-review skill from the PR base, so a PR cannot rewrite the instructions reviewing
+  it.
+- **Untrusted input is fenced.** Issue bodies, PR diffs, and the plan handed to the Spec
+  axis are wrapped in explicit `<untrusted_issue_context>` / `<untrusted_pr_diff>` /
+  `<untrusted_spec>` markers instructing the model to treat the contents as data, never
+  instructions. The action also scrubs hidden markdown
   and invisible characters, but that is defense in depth, not the primary control.
 - **The action is pinned to a commit SHA**, matching the policy already enforced for
   `release-windows.yml`. `@v1` is mutable. Bumping it is deliberate; a contract test fails
@@ -115,9 +125,14 @@ team setup would use an API key or workload identity federation instead.
   those yourself using the plan.
 - **Monthly cron is best-effort.** GitHub disables scheduled workflows on public repos
   after 60 days without repository activity. `workflow_dispatch` is the manual fallback.
-- **No automated review loop.** The archived pipeline ran up to two `@copilot` fix rounds
-  before handing off. That is not reimplemented; agent PRs go straight to maintainer
-  review. Add `@claude` mention handling later if it is worth it.
+- **Review is on demand, and never automatic.** Apply `agent:review` when you want one.
+  The archived pipeline additionally ran up to two `@copilot` fix rounds before handing
+  off; that auto-fix loop is not reimplemented, so findings come back to you rather than
+  to the implementer.
+- **The reviewer shares a model family with the implementer.** Claude reviewing Claude is
+  less independent than a cross-vendor pass would be. The Correctness axis and its
+  "tests passing is not evidence" rule exist partly to counter that, but a review clean
+  on all three axes is not proof.
 - **The implementer contract is duplicated** between
   [`implementer-instructions.md`](../.github/agent-pipeline/implementer-instructions.md)
   and the `--append-system-prompt` value in the workflow, which is the enforced copy. Tag

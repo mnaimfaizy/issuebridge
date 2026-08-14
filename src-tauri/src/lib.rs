@@ -14,7 +14,8 @@ use adapters::{
     set_active_rewrite_model, set_testing_set_max, setup_tray, show_capture,
     show_capture_window_detached, sign_in_with_github, sign_in_with_pat, sign_out,
     skip_try_capture, start_rewrite_model_download, testing_set, testing_set_max,
-    update_linked_draft, use_theirs, AppState, ModelDownloadHandle, RewriteJobHandle,
+    update_linked_draft, use_theirs, validate_session, validate_session_on_launch, AppState,
+    ModelDownloadHandle, RewriteJobHandle,
 };
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
@@ -34,6 +35,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             auth_state,
+            validate_session,
             first_run_step,
             sign_in_with_github,
             sign_in_with_pat,
@@ -82,6 +84,10 @@ pub fn run() {
         ])
         .setup(|app| {
             setup_tray(app.handle())?;
+
+            // A vaulted token is only a session while GitHub still accepts it. Validate off
+            // the main thread (tray-first launches included) and Sign out when it is rejected.
+            validate_session_on_launch(app.handle());
 
             // Tray-first: closing the main window hides it instead of quitting.
             // While first-run is incomplete, keep main visible on the current step.

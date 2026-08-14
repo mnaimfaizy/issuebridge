@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { AuthStateDto } from "../firstrun/types";
 import type { TimestampDisplay } from "../shared/formatTimestamp";
 import { ConflictDialog } from "./ConflictDialog";
 import { DraftInspector } from "./DraftInspector";
@@ -226,8 +227,16 @@ export function InboxWorkbench() {
       if (next) await restoreSelection(next);
       try {
         await invoke("prefetch_testing_set_label_catalogs");
-      } catch {
-        // Soft: Inbox still works without Testing set prefetch.
+      } catch (error) {
+        // Transient refresh failures already soft-fail inside the core, so reaching here
+        // means a hard error — an expired session above all. But a forced Sign out races
+        // this call: launch validation can clear the session while the prefetch is in
+        // flight, and the shell already routes to Sign in on "auth-changed". Staying
+        // quiet once signed out avoids flashing "Sign in to load labels." on the way out.
+        const auth = await invoke<AuthStateDto>("auth_state").catch(() => null);
+        if (auth !== "signed_out") {
+          showError(formatInvokeError(error));
+        }
       }
     })();
 
@@ -250,7 +259,7 @@ export function InboxWorkbench() {
       window.removeEventListener("focus", onFocus);
       clearSuccessTimer();
     };
-  }, [clearSuccessTimer, loadInbox]);
+  }, [clearSuccessTimer, loadInbox, showError]);
 
   function noteFieldEdit() {
     setStatus((current) => clearSuccessOnEdit(current));
