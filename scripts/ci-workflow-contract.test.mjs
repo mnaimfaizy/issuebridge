@@ -246,10 +246,79 @@ describe("Claude agent pipeline trust-boundary contract", () => {
   });
 });
 
+describe("Claude code review contract", () => {
+  it("runs only when a maintainer applies the label", () => {
+    const yml = readWorkflow("claude-code-review.yml");
+
+    // Label-only by design: reviews cost subscription quota, so nothing runs on
+    // open or push. Never pull_request_target — that would expose the token to
+    // untrusted PR code on this public repo.
+    assert.match(yml, /pull_request:\s*\n\s*types:\s*\[labeled\]/);
+    // Match an actual trigger, not the comment warning against it.
+    assert.doesNotMatch(yml, /^\s*pull_request_target:/m);
+    assert.match(yml, /github\.event\.label\.name == 'agent:review'/);
+    assert.match(yml, /vars\.CLAUDE_REVIEW_ENABLED/);
+    assert.match(yml, /vars\.AGENT_PIPELINE_ALLOWLIST/);
+    // Fork PRs get no secrets on a public repo; skip rather than fail.
+    assert.match(yml, /head\.repo\.full_name != github\.repository/);
+  });
+
+  it("gives the reviewer no way to modify or execute the code it reviews", () => {
+    const yml = readWorkflow("claude-code-review.yml");
+    const allowed = yml.match(/--allowedTools "[^"]*"/)?.[0] ?? "";
+
+    assert.ok(allowed.length > 0, "expected an explicit tool allowlist");
+    // This job checks out untrusted PR code. A reviewer reads and comments.
+    for (const forbidden of ["Edit", "Write", "MultiEdit"]) {
+      assert.ok(
+        !allowed.includes(forbidden),
+        `reviewer must not be granted ${forbidden}`,
+      );
+    }
+    assert.doesNotMatch(allowed, /Bash\((?:npm|npx|cargo|make):/);
+    assert.match(allowed, /mcp__github_inline_comment__create_inline_comment/);
+  });
+
+  it("reviews against instructions the PR cannot rewrite", () => {
+    const yml = readWorkflow("claude-code-review.yml");
+    const restore = yml.indexOf("Restore trusted review runtime from PR base");
+    const runReview = yml.indexOf("Run code review (Claude Code)");
+
+    assert.ok(restore >= 0, "expected a trusted runtime restore step");
+    assert.ok(restore < runReview, "restore must precede the review");
+
+    const block = yml.slice(restore, runReview);
+    for (const trustedPath of [
+      "AGENTS.md",
+      "CLAUDE.md",
+      ".claude",
+      ".agents/skills/code-review",
+    ]) {
+      assert.match(block, new RegExp(trustedPath.replaceAll(".", "\\.")));
+    }
+  });
+
+  it("carries all three review axes in the skill", () => {
+    const skill = readFileSync(
+      join(root, ".agents", "skills", "code-review", "SKILL.md"),
+      "utf8",
+    );
+
+    // The Correctness axis exists because Standards and Spec both pass clean on a
+    // logic bug in an unreachable failure path — which is what green CI misses.
+    assert.match(skill, /## Standards/);
+    assert.match(skill, /## Spec/);
+    assert.match(skill, /## Correctness/);
+    assert.match(skill, /concrete failure scenario/i);
+    assert.match(skill, /Tests passing is not evidence/i);
+  });
+});
+
 describe("Claude workflow supply-chain contract", () => {
   for (const workflowName of [
     "claude-security-audit.yml",
     "claude-agent-pipeline.yml",
+    "claude-code-review.yml",
   ]) {
     it(`${workflowName} pins claude-code-action to a commit SHA`, () => {
       const yml = readWorkflow(workflowName);
