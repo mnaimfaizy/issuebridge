@@ -1279,7 +1279,8 @@ where
         let models: Vec<RewriteModelDiskStatus> = rewrite_model_catalog()
             .iter()
             .map(|entry| {
-                let on_disk = self.rewrite_models.on_disk_len(entry.filename).is_some();
+                let on_disk_bytes = self.rewrite_models.on_disk_len(entry.filename);
+                let on_disk = on_disk_bytes.is_some();
                 let verified = if hash_contents {
                     self.rewrite_models
                         .is_verified(entry.filename, entry.size_bytes, entry.sha256)
@@ -1297,6 +1298,7 @@ where
                     size_bytes: entry.size_bytes,
                     summary: entry.summary.into(),
                     on_disk,
+                    on_disk_bytes,
                     verified,
                     active: is_active,
                     update_available: on_disk && !verified,
@@ -3424,6 +3426,14 @@ mod tests {
             ) -> bool {
                 self.inner.on_disk_len(filename).is_some()
             }
+            fn is_verified_cached(
+                &self,
+                filename: &str,
+                expected_size: u64,
+                expected_sha256: &str,
+            ) -> bool {
+                self.is_verified(filename, expected_size, expected_sha256)
+            }
             fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError> {
                 self.inner.remove(filename)
             }
@@ -3508,6 +3518,83 @@ mod tests {
     }
 
     #[test]
+    fn rewrite_model_help_status_does_not_inherit_hashing_or_catalog_size() {
+        #[derive(Clone)]
+        struct OnDiskHashOkNoMarker {
+            inner: FakeRewriteModelFiles,
+        }
+        impl RewriteModelFiles for OnDiskHashOkNoMarker {
+            fn clean_orphan_partials(&self) -> Result<(), RewriteModelFileError> {
+                self.inner.clean_orphan_partials()
+            }
+            fn path_for(&self, filename: &str) -> std::path::PathBuf {
+                self.inner.path_for(filename)
+            }
+            fn on_disk_len(&self, filename: &str) -> Option<u64> {
+                self.inner.on_disk_len(filename)
+            }
+            fn is_verified(
+                &self,
+                filename: &str,
+                _expected_size: u64,
+                _expected_sha256: &str,
+            ) -> bool {
+                self.inner.on_disk_len(filename).is_some()
+            }
+            fn is_verified_cached(
+                &self,
+                _filename: &str,
+                _expected_size: u64,
+                _expected_sha256: &str,
+            ) -> bool {
+                false
+            }
+            fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError> {
+                self.inner.remove(filename)
+            }
+        }
+
+        let files = FakeRewriteModelFiles::default();
+        let entry = find_rewrite_model(DEFAULT_REWRITE_MODEL_ID).unwrap();
+        files.put(entry.filename, vec![0u8; 200]);
+        let settings = FakeSettingsStore::with_settings(AppSettings {
+            active_rewrite_model_id: Some(DEFAULT_REWRITE_MODEL_ID.into()),
+            ..AppSettings::default()
+        });
+        let core = signed_in_core(FakeGitHub::default(), settings)
+            .with_rewrite_model_files(Box::new(OnDiskHashOkNoMarker { inner: files }));
+
+        let help = core.rewrite_model_help_status().expect("help status");
+        let help_model = help
+            .models
+            .iter()
+            .find(|m| m.id == DEFAULT_REWRITE_MODEL_ID)
+            .expect("default model");
+        assert!(help_model.on_disk);
+        assert!(!help_model.verified, "marker-only path must not hash");
+        assert_eq!(help_model.on_disk_bytes, Some(200));
+        assert_ne!(help_model.on_disk_bytes, Some(help_model.size_bytes));
+        assert!(help_model.update_available);
+        assert!(
+            help.active_model_id.is_none(),
+            "Active model stays verified-only"
+        );
+
+        let settings_snap = core.rewrite_model_status().expect("settings status");
+        let settings_model = settings_snap
+            .models
+            .iter()
+            .find(|m| m.id == DEFAULT_REWRITE_MODEL_ID)
+            .expect("default model");
+        assert!(settings_model.verified);
+        assert_eq!(settings_model.on_disk_bytes, Some(200));
+        assert_eq!(
+            settings_snap.active_model_id.as_deref(),
+            Some(DEFAULT_REWRITE_MODEL_ID)
+        );
+    }
+
+    #[test]
     fn set_active_rewrite_model_refuses_unverified_and_keeps_prior_on_switch() {
         #[derive(Clone)]
         struct OnDiskVerified {
@@ -3530,6 +3617,14 @@ mod tests {
                 _expected_sha256: &str,
             ) -> bool {
                 self.inner.on_disk_len(filename).is_some()
+            }
+            fn is_verified_cached(
+                &self,
+                filename: &str,
+                expected_size: u64,
+                expected_sha256: &str,
+            ) -> bool {
+                self.is_verified(filename, expected_size, expected_sha256)
             }
             fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError> {
                 self.inner.remove(filename)
@@ -3613,6 +3708,14 @@ mod tests {
                 _expected_sha256: &str,
             ) -> bool {
                 self.inner.on_disk_len(filename).is_some()
+            }
+            fn is_verified_cached(
+                &self,
+                filename: &str,
+                expected_size: u64,
+                expected_sha256: &str,
+            ) -> bool {
+                self.is_verified(filename, expected_size, expected_sha256)
             }
             fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError> {
                 self.inner.remove(filename)
@@ -3719,6 +3822,14 @@ mod tests {
                 _expected_sha256: &str,
             ) -> bool {
                 self.inner.on_disk_len(filename).is_some()
+            }
+            fn is_verified_cached(
+                &self,
+                filename: &str,
+                expected_size: u64,
+                expected_sha256: &str,
+            ) -> bool {
+                self.is_verified(filename, expected_size, expected_sha256)
             }
             fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError> {
                 self.inner.remove(filename)

@@ -11,6 +11,7 @@ import packageJson from "../../package.json";
 import brandMark from "../assets/brand/mark.png";
 import {
   modelDisplayName,
+  modelsOnDisk,
   onDiskLabel,
   type RewriteModelStatusDto,
 } from "../shared/rewriteModelStatus";
@@ -85,20 +86,41 @@ function liveBlock(
   return undefined;
 }
 
+let deepLinkObserver: MutationObserver | null = null;
+let deepLinkTimer = 0;
+
+function stopDeepLinkWatch() {
+  deepLinkObserver?.disconnect();
+  deepLinkObserver = null;
+  if (deepLinkTimer) {
+    window.clearTimeout(deepLinkTimer);
+    deepLinkTimer = 0;
+  }
+}
+
 /**
  * Re-scrolls after Settings inserts async content (Testing set repo list)
  * that would otherwise push the target heading out of view.
+ * Only calls scrollIntoView when the heading's offsetTop changes, so
+ * download-progress mutations cannot pin the viewport for the watch window.
  */
 function scrollAnchorIntoView(anchor: string) {
+  stopDeepLinkWatch();
   const content = document.querySelector(".ib-content");
-  const scroll = () => {
-    document.getElementById(anchor)?.scrollIntoView({ block: "start" });
+  let lastTop = Number.NaN;
+  const scrollIfMoved = () => {
+    const target = document.getElementById(anchor);
+    if (!target) return;
+    const top = target.offsetTop;
+    if (top === lastTop) return;
+    lastTop = top;
+    target.scrollIntoView({ block: "start" });
   };
-  requestAnimationFrame(scroll);
+  requestAnimationFrame(scrollIfMoved);
   if (!content) return;
-  const observer = new MutationObserver(scroll);
-  observer.observe(content, { childList: true, subtree: true });
-  window.setTimeout(() => observer.disconnect(), 8000);
+  deepLinkObserver = new MutationObserver(scrollIfMoved);
+  deepLinkObserver.observe(content, { childList: true, subtree: true });
+  deepLinkTimer = window.setTimeout(stopDeepLinkWatch, 8000);
 }
 
 function useCommand(command: string, fallback: string): string {
@@ -120,15 +142,17 @@ function useCommand(command: string, fallback: string): string {
 }
 
 /**
- * Live Your-machine snapshot. `skip_content_hash` uses the marker-only
- * path so opening Help cannot stream-hash multi-GB GGUFs under the Core lock.
+ * Live Your-machine snapshot. Nested `input.skip_content_hash` uses the
+ * marker-only path so opening Help cannot stream-hash multi-GB GGUFs
+ * under the Core lock. The flag lives on `input` because Tauri camelCases
+ * top-level command args and a missing key is a silent None.
  */
 function useHelpModelStatus(): RewriteModelStatusDto | null {
   const [status, setStatus] = useState<RewriteModelStatusDto | null>(null);
   useEffect(() => {
     let cancelled = false;
     void invoke<RewriteModelStatusDto>("get_rewrite_model_status", {
-      skip_content_hash: true,
+      input: { skip_content_hash: true },
     })
       .then((next) => {
         if (!cancelled) setStatus(next);
@@ -155,6 +179,12 @@ function renderMachine(status: RewriteModelStatusDto | null) {
   }
   const recommended = modelDisplayName(status, status.recommended_model_id);
   const active = modelDisplayName(status, status.active_model_id);
+  const onDisk = modelsOnDisk(status);
+  const activeLabel =
+    active ??
+    (onDisk.length > 0
+      ? "none verified yet — open Settings → Rewrite models to check files on disk"
+      : "none yet — the first Rewrite offers a download");
 
   return (
     <dl className="ib-help-facts">
@@ -177,9 +207,7 @@ function renderMachine(status: RewriteModelStatusDto | null) {
         <Text weight="semibold">Active model</Text>
       </dt>
       <dd>
-        <Text>
-          {active ?? "none yet — the first Rewrite offers a download"}
-        </Text>
+        <Text>{activeLabel}</Text>
       </dd>
       <dt>
         <Text weight="semibold">On disk</Text>

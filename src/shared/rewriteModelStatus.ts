@@ -16,6 +16,8 @@ export type RewriteModelEntryDto = {
   size_bytes: number;
   summary: string;
   on_disk: boolean;
+  /** Actual file length when present; catalog `size_bytes` is the expected download. */
+  on_disk_bytes: number | null;
   verified: boolean;
   active: boolean;
   update_available: boolean;
@@ -66,7 +68,10 @@ export function onDiskLabel(status: RewriteModelStatusDto): string {
   if (onDisk.length === 0) {
     return "No models downloaded";
   }
-  const bytes = onDisk.reduce((total, model) => total + model.size_bytes, 0);
+  const bytes = onDisk.reduce(
+    (total, model) => total + (model.on_disk_bytes ?? 0),
+    0,
+  );
   const unverified = onDisk.filter((model) => !model.verified).length;
   const base = `${onDisk.length} of ${status.models.length} models · ${formatBytes(bytes)}`;
   return unverified > 0 ? `${base} (${unverified} not verified)` : base;

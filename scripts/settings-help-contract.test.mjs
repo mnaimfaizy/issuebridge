@@ -198,7 +198,11 @@ describe("Settings + Help destinations (#38)", () => {
     assert.match(help, /Keep .*Switch|Hardware changed/);
     assert.match(help, /Remove/);
     assert.match(help, /download size and a short summary/i);
-    assert.match(help, /license blurb/i);
+    assert.doesNotMatch(
+      help,
+      /license blurb/i,
+      "Help describes behaviour — do not narrate the catalog's missing licence field",
+    );
     assert.match(help, /on this device|stay local|local model/i);
     assert.doesNotMatch(
       help,
@@ -253,6 +257,7 @@ describe("Settings + Help destinations (#38)", () => {
     assert.match(shared, /RewriteModelEntryDto/);
     assert.match(shared, /formatBytes/);
     assert.match(shared, /onDiskLabel/);
+    assert.match(shared, /on_disk_bytes/);
     const section = readSrc("settings", "RewriteModelsSection.tsx");
     assert.match(section, /from "\.\.\/shared\/rewriteModelStatus"/);
     assert.doesNotMatch(
@@ -263,8 +268,9 @@ describe("Settings + Help destinations (#38)", () => {
     const page = readSrc("help", "HelpPage.tsx");
     assert.match(page, /shared\/rewriteModelStatus/);
     assert.match(page, /onDiskLabel/);
-    assert.match(page, /skip_content_hash:\s*true/);
+    assert.match(page, /input:\s*\{\s*skip_content_hash:\s*true\s*\}/);
     assert.match(page, /MutationObserver/);
+    assert.match(page, /offsetTop/);
   });
 
   it("Help token placeholders are a typed set supplied by HelpPage (#146)", () => {
