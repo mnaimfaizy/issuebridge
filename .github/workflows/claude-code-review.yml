@@ -15,6 +15,12 @@
 #
 # The reviewer reads untrusted PR code. It is granted no write, no edit, and no
 # npm/cargo/build execution: it inspects and comments, nothing else.
+#
+# Headless CI: the skill spawns three Agent subagents. If those run in the
+# background, Claude ends the turn to wait, the SDK reports success, and the
+# agents are killed — a green job with an in-progress tracking comment (PR #147).
+# CLAUDE_CODE_DISABLE_BACKGROUND_TASKS plus run_in_background: false prevent that.
+# A later step fails the job unless the comment contains the aggregated report.
 
 name: Claude code review
 
@@ -164,6 +170,11 @@ jobs:
             echo "Nobody is available to answer questions — never stop to ask. The fixed"
             echo "point above is supplied, so step 1 needs no input from anyone."
             echo
+            echo "This is a one-shot CI run: ending your turn kills background agents and the"
+            echo "job still goes green. Spawn Agent calls with run_in_background: false and"
+            echo "wait for their results. Do not stop until the tracking comment contains"
+            echo "## Standards, ## Spec, and ## Correctness."
+            echo
             echo "Post your aggregated report by updating your tracking comment on the PR."
             echo "Anchor individual findings as inline comments where a specific line is at"
             echo "fault. Keep the three axis headings separate and do not rerank across them."
@@ -196,6 +207,9 @@ jobs:
         # Pinned to an immutable commit SHA, matching the third-party action policy
         # enforced for release-windows.yml. Bump deliberately; `@v1` is mutable.
         uses: anthropics/claude-code-action@239e3a730883eeb5c53db12b0fc9573b3024b126 # v1
+        env:
+          # Foreground subagents: ending the turn must not kill the three axes.
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           track_progress: true
@@ -207,4 +221,41 @@ jobs:
           claude_args: |
             --model ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-opus-5' }}
             --max-turns 120
-            --allowedTools "Read,Glob,Grep,Task,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(rg:*),Bash(cat:*),Bash(ls:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"
+            --allowedTools "Read,Glob,Grep,Task,Agent,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(rg:*),Bash(cat:*),Bash(ls:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"
+            --append-system-prompt "This is a non-interactive CI session: ending your turn terminates the run and kills background work. Launch Agent/Task subagents with run_in_background: false (several in one message still run in parallel). Never end your turn until the tracking comment has the aggregated report. If Agent is denied, run the axes sequentially in this session instead."
+
+      - name: Fail if the review report was not posted
+        if: ${{ always() && steps.gate.outputs.proceed == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          # The action reports success when the SDK session ends, even if Claude
+          # backgrounded the three axis agents and never posted the report (#147).
+          BODY=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate \
+            --jq '[.[] | select(.user.login == "claude[bot]")] | last | .body // empty')
+
+          if [ -z "$BODY" ]; then
+            echo "No claude[bot] comment on PR #${PR} — review did not post."
+            exit 1
+          fi
+
+          if printf '%s' "$BODY" | grep -qi 'sub-agents are running'; then
+            echo "Tracking comment is still the in-progress checklist; background agents were likely killed."
+            exit 1
+          fi
+
+          missing=0
+          for heading in '## Standards' '## Spec' '## Correctness'; do
+            if ! printf '%s' "$BODY" | grep -Fq "$heading"; then
+              echo "Tracking comment is missing '${heading}' — aggregated report was not posted."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+          echo "Aggregated three-axis report is present on PR #${PR}."
