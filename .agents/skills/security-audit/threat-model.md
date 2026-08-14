@@ -1,6 +1,36 @@
-# Issuebridge threat model (security-audit)
+# Issuebridge threat pack (security-audit)
+
+Issuebridge-specific assets, hunt list, and private-channel binding. The portable procedure is [SKILL.md](SKILL.md). Ledger rows: [findings-ledger.md](findings-ledger.md).
 
 Desktop **Windows-first** Tauri app: Capture → local **Drafts** → **Publish** to GitHub. Attackers are usually **local malware/user**, **malicious repo/issue content**, or **stolen OAuth tokens** — not a classic internet-facing web server.
+
+## Private channel (this product)
+
+- **Every CI run** (including clean): one **draft GitHub Security Advisory** (admins / security managers only). Summary: `[Security audit] <YYYY-MM-DD> — N finding(s), max=<severity>`. Description: full report body. Severity: max finding severity. `vulnerabilities`: at least one package entry (`ecosystem: other`, `name: issuebridge`, or `rust` / `npm` when a dependency is the root cause).
+- **`pr`:** counts-only public PR comment. No paths, no attack detail.
+- **Email:** scheduled `full` only (`.github/workflows/claude-security-audit.yml`). Dispatch and `pr` do not email. Cursor has no email path.
+
+If advisory creation fails (missing `repository_advisories:write` / admin), **stop** — do not fall back to a public issue.
+
+## Advisory mapping
+
+When creating the draft GitHub Security Advisory:
+
+- Put the report markdown (minus any local secrets — redact) into `description`.
+- `summary` ≤ 1024 chars.
+- `severity` = max finding severity, lowercased.
+- Always include `vulnerabilities` with at least:
+
+```json
+{
+  "package": { "ecosystem": "other", "name": "issuebridge" },
+  "vulnerable_version_range": "*",
+  "patched_versions": null,
+  "vulnerable_functions": []
+}
+```
+
+Override ecosystem/`name` when the root cause is clearly a Rust crate or npm package.
 
 ## Assets
 
@@ -23,12 +53,15 @@ Desktop **Windows-first** Tauri app: Capture → local **Drafts** → **Publish*
 
 ## High-value hunt areas (code)
 
+Walk each area. A clean report is valid only when Notes lists each with a one-line rationale (plus ledger skips).
+
 - `src-tauri/src/adapters/commands.rs` — IPC surface; authz assumptions
-- `src-tauri/src/adapters/oauth_loopback.rs`, `keyring_token_store.rs`, `github_http.rs`
+- `src-tauri/src/adapters/oauth_loopback.rs`, `keyring_token_store.rs`, `github_http.rs` — OAuth/PKCE loopback, keyring, `option_env` / client-secret embedding
 - `src-tauri/src/adapters/file_*_store.rs` — path join, symlink, traversal
 - `src-tauri/src/adapters/whisper_voice.rs`, `llama_rewrite.rs` — spawn, paths, env
+- `scripts/fetch-*-assets.ps1` — sidecar download integrity
 - Frontend paths that render untrusted Markdown/HTML or pass strings into `invoke`
-- `.github/workflows/*` — secret handling, `pull_request_target`, injectable `run:` blocks
+- Every live workflow under `.github/workflows/` (currently `release-windows.yml`, `ci.yml`, and the `claude-*.yml` agent workflows) — token scope, `permissions:` blocks, untrusted-input handling, anything executed from a PR-controlled path. Files under `.github/workflows-archive/` are inert and out of scope.
 - Release / packaging config — credential injection assumptions
 
 ## Common false positives (discard unless concrete)

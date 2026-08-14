@@ -4,7 +4,7 @@ How Issuebridge handles Medium+ findings after discovery. Complements [security-
 
 | Stage                        | Skill / channel                                                                                           |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Discover                     | **security-audit** → draft GHSA (+ optional email)                                                        |
+| Discover                     | **security-audit** → draft GHSA (+ email on scheduled `full` only)                                        |
 | Stress-check / decide        | **security-finding-triage** (one finding at a time)                                                       |
 | Reconcile / prioritize / fix | **security-response** (human-invoked orchestrator)                                                        |
 | Dedup memory                 | [`.agents/skills/security-audit/findings-ledger.md`](../.agents/skills/security-audit/findings-ledger.md) |

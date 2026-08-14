@@ -1,5 +1,7 @@
 # Security audit report format
 
+Portable report shape. Product delivery (how this repo publishes the report) lives in the threat pack.
+
 Emit **markdown only**, starting with exactly:
 
 ```markdown
@@ -30,7 +32,8 @@ Otherwise, for each finding (severity descending):
 ### F<n> — <short title>
 
 - **Severity:** Critical | High | Medium
-- **Asset:** <token | draft data | IPC | sidecar | CI | …>
+- **Evidence class:** dependency-advisory | code-path | missing-control
+- **Asset:** <token | store | IPC | sidecar | CI | …>
 - **Location:** `path/to/file.ext:line` (additional locations as bullets)
 - **Attack path:** who → how → impact (no exploit payload)
 - **Evidence:** what the code/config does wrong (quote or paraphrase briefly)
@@ -38,6 +41,8 @@ Otherwise, for each finding (severity descending):
 - **Fix direction:** concrete remediation idea (not a full patch unless trivial)
 - **Concept id:** `<kebab-case>` (stable id for the findings ledger; required for new themes)
 ```
+
+For `dependency-advisory`, the Evidence (or a dedicated bullet) must include the advisory id (GHSA / OSV / RUSTSEC / CVE) taken from a scanner file or the open Dependabot feed.
 
 Optional closing section:
 
@@ -48,23 +53,3 @@ Optional closing section:
 - Ledger concepts skipped (`concept-id` + status)
 - Areas not covered (time/scope)
 ```
-
-## Advisory mapping
-
-When creating the draft GitHub Security Advisory:
-
-- Put this entire markdown (minus any local secrets you accidentally echoed — redact) into `description`.
-- `summary` ≤ 1024 chars.
-- `severity` = max finding severity, lowercased.
-- Always include `vulnerabilities` with at least:
-
-```json
-{
-  "package": { "ecosystem": "other", "name": "issuebridge" },
-  "vulnerable_version_range": "*",
-  "patched_versions": null,
-  "vulnerable_functions": []
-}
-```
-
-Override ecosystem/`name` when the root cause is clearly a Rust crate or npm package.
