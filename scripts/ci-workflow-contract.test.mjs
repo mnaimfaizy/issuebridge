@@ -358,7 +358,10 @@ describe("Claude code review contract", () => {
     const verify = yml.indexOf("Fail if the review report was not posted");
 
     assert.ok(verify >= 0, "expected a post-review completeness check");
-    assert.ok(action >= 0 && action < verify, "completeness check must follow the review");
+    assert.ok(
+      action >= 0 && action < verify,
+      "completeness check must follow the review",
+    );
 
     const block = yml.slice(verify);
     // The incomplete #147 comment had checklist items, not these headings.
