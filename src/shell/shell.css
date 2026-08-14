@@ -354,6 +354,32 @@
   font-size: 12px;
 }
 
+/* Help "Your machine": live facts read from Rewrite model status. */
+.ib-help-facts {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.ib-help-facts dt {
+  margin: 0;
+}
+
+.ib-help-facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 520px) {
+  .ib-help-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .ib-about-brand {
   display: flex;
   align-items: center;

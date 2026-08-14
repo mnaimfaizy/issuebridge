@@ -16,35 +16,7 @@ import {
   isRewriteModelsSettingsEnabled,
   rewriteModelsSettingsHelper,
 } from "./gating";
-
-type RewriteHardwareSwitchPromptDto = {
-  current_model_id: string;
-  recommended_model_id: string;
-  reason: string;
-  fingerprint: string;
-};
-
-type RewriteModelEntryDto = {
-  id: string;
-  display_name: string;
-  size_bytes: number;
-  summary: string;
-  on_disk: boolean;
-  verified: boolean;
-  active: boolean;
-  update_available: boolean;
-};
-
-type RewriteModelStatusDto = {
-  models: RewriteModelEntryDto[];
-  active_model_id: string | null;
-  recommended_model_id: string;
-  recommended_reason: string;
-  hardware_tier: string;
-  quality_alt_model_id: string | null;
-  hardware_switch_prompt: RewriteHardwareSwitchPromptDto | null;
-  needs_setup: boolean;
-};
+import { formatBytes, type RewriteModelStatusDto } from "./rewriteModelStatus";
 
 type DownloadProgressDto = {
   model_id: string;
@@ -56,16 +28,6 @@ type RewriteModelsSectionProps = {
   auth: AccountAuth;
   firstRunComplete: boolean;
 };
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1_000_000_000) {
-    return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
-  }
-  if (bytes >= 1_000_000) {
-    return `${(bytes / 1_000_000).toFixed(0)} MB`;
-  }
-  return `${bytes} B`;
-}
 
 /** Settings → Rewrite models: catalog, disk use, active, download/switch/Remove, Keep/Switch. */
 export function RewriteModelsSection({
