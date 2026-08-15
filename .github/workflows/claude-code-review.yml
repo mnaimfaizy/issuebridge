@@ -162,8 +162,14 @@ jobs:
 
           PLAN=""
           if [ -n "${ISSUE:-}" ]; then
-            PLAN=$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate | jq -r '
-              [ .[] | select(.body | contains("<!-- agent-pipeline-plan -->")) ] | last | .body // empty
+            # Same author gate as the implement pipeline. Marker text alone is
+            # not enough: any account can comment on a public issue.
+            COMMENTS=$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate)
+            PLAN=$(echo "$COMMENTS" | jq -s -r '
+              add | [ .[]
+                | select(.user.login == "github-actions[bot]")
+                | select(.body | startswith("<!-- agent-pipeline-plan -->"))
+              ] | last | .body // empty
             ')
           fi
 
