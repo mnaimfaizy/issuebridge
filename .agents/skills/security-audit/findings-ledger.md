@@ -34,7 +34,7 @@ The **security-finding-triage** skill updates rows after stress-check.
 | `relative-sidecar-cwd-exec`            | Relative sidecar discovery → cwd code execution             | `src-tauri/src/adapters/whisper_voice.rs`     | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-11 |
 | `sidecar-download-no-integrity`        | Release sidecars downloaded without integrity verification  | `scripts/fetch-whisper-assets.ps1`            | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-12 |
 | `unprotected-tag-release-secrets`      | Unprotected tag builds expose release secrets               | `.github/workflows/release-windows.yml`       | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-12 |
-| `agent-pipeline-plan-injection`        | Untrusted issue text can prompt-inject / replace agent plan | `.github/workflows/agent-pipeline.yml`        | high     | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-12 |
+| `agent-pipeline-plan-injection`        | Untrusted issue text can prompt-inject / replace agent plan | `.github/workflows/claude-agent-pipeline.yml` | high     | confirmed | fixed  | GHSA-xccc-p6c7-8v7g | 2026-08-15 |
 | `review-pipeline-missing-actor-gate`   | Review pipeline lacks actor authorization gate              | `.github/workflows/agent-pipeline-review.yml` | medium   | confirmed | fixed  | GHSA-g2j5-62w4-2gfm | 2026-08-12 |
 | `publish-app-visible-boundary`         | Publish path does not enforce App-visible repo boundary     | `src-tauri/src/core/mod.rs`                   | medium   | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-12 |
 
@@ -47,6 +47,7 @@ The **security-finding-triage** skill updates rows after stress-check.
 - `relative-sidecar-cwd-exec` (F5): **fixed** — implicit voice and Rewrite sidecar, model, and DLL discovery is anchored to trusted application and build roots; regression tests reject relative candidates.
 - `sidecar-download-no-integrity` (F6): **fixed** — official Release fetches verify reviewed SHA-256 digests for both executable sidecar archives before extraction.
 - `unprotected-tag-release-secrets`: **fixed** — Release tags are protected by an active repository ruleset, and the privileged build requires approval through the protected `release` environment.
+- `agent-pipeline-plan-injection`: **fixed 2026-08-15** — Claude implement gate and plan extraction require `github-actions[bot]`; implementer spec is `verified-plan.md`. Contract tests reject a marker-only selector. Previously filed on GHSA-97vr-qxvw-88gr. Current claim: GHSA-xccc-p6c7-8v7g.
 - `review-pipeline-missing-actor-gate`: **fixed** — privileged review automation requires exact allowlist or trusted automation identity checks for both the trigger actor and PR author.
 
 ## How to update
