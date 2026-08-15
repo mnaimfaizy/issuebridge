@@ -38,7 +38,7 @@ The **security-finding-triage** skill updates rows after stress-check.
 | `review-agent-read-exfil-tools`        | Reviewer allowlist pairs unscoped read with a public comment channel | `.github/workflows/claude-code-review.yml`    | high     | confirmed | fixed  | GHSA-xccc-p6c7-8v7g | 2026-08-15 |
 | `review-pipeline-missing-actor-gate`   | Review pipeline lacks actor authorization gate              | `.github/workflows/agent-pipeline-review.yml` | medium   | confirmed | fixed  | GHSA-g2j5-62w4-2gfm | 2026-08-12 |
 | `publish-app-visible-boundary`         | Publish path does not enforce App-visible repo boundary     | `src-tauri/src/core/mod.rs`                   | medium   | confirmed | fixed  | GHSA-97vr-qxvw-88gr | 2026-08-12 |
-| `review-brief-untrusted-plan-source`   | Review brief plan lookup has no trusted-author filter       | `.github/workflows/claude-code-review.yml`    | medium   | untriaged | open   | GHSA-xccc-p6c7-8v7g | 2026-08-15 |
+| `review-brief-untrusted-plan-source`   | Review brief plan lookup has no trusted-author filter       | `.github/workflows/claude-code-review.yml`    | medium   | confirmed | fixed  | GHSA-xccc-p6c7-8v7g | 2026-08-15 |
 | `whisper-model-weak-sha1-pin`          | Whisper model fetched from mutable ref and pinned only by SHA-1 | `scripts/fetch-whisper-assets.ps1`        | medium   | rejected  | rejected | GHSA-xccc-p6c7-8v7g | 2026-08-15 |
 
 ## Remediation notes
@@ -53,7 +53,7 @@ The **security-finding-triage** skill updates rows after stress-check.
 - `agent-pipeline-plan-injection`: **fixed 2026-08-15** — Claude implement gate and plan extraction require `github-actions[bot]`; implementer spec is `verified-plan.md`. Contract tests reject a marker-only selector. Merged in PR #152; verified on `main` 2026-08-15. Previously filed on GHSA-97vr-qxvw-88gr. Current claim: GHSA-xccc-p6c7-8v7g.
 - `review-agent-read-exfil-tools`: **fixed 2026-08-15** — review checkout sets `persist-credentials: false`; allowlist drops unscoped `Bash(cat:*)` / `Bash(ls:*)`. Contract tests reject the pairing. Merged in PR #153; verified on `main` 2026-08-15. Current claim: GHSA-xccc-p6c7-8v7g.
 - `review-pipeline-missing-actor-gate`: **fixed** — privileged review automation requires exact allowlist or trusted automation identity checks for both the trigger actor and PR author. The original Copilot review workflow is archived and inert.
-- `review-brief-untrusted-plan-source`: **untriaged 2026-08-15** — ledgered from GHSA-xccc-p6c7-8v7g; claimed path still present on `main` after PR #153.
+- `review-brief-untrusted-plan-source`: **fixed 2026-08-15** — review brief plan lookup requires `github-actions[bot]` and `startswith` on the marker; `jq -s add` merges paginated comment pages. Contract tests reject a marker-only selector. No Release/GHSA publication (ci-maintainer).
 - `whisper-model-weak-sha1-pin`: **rejected 2026-08-15** — claimed locator and SHA-1 gate still present; the gate fails closed. Below Medium: a reviewed content pin already rejects a substituted object, and beating that pin is not a plausible attacker assumption. Distinct from `sidecar-download-no-integrity` (no pin on executable archives). Reopen if the pin is removed, skipped on the official Release fetch, or no longer a reviewed constant.
 
 ## How to update

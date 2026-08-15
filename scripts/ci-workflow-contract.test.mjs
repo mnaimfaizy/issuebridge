@@ -384,6 +384,24 @@ describe("Claude code review contract", () => {
     }
   });
 
+  it("accepts only a trusted-author plan comment as the review spec source", () => {
+    const yml = readWorkflow("claude-code-review.yml");
+    const start = yml.indexOf("Build review brief");
+    const end = yml.indexOf("Run code review (Claude Code)");
+    assert.ok(start >= 0 && end > start, "expected a review brief step");
+    const brief = yml.slice(start, end);
+
+    // Same author gate as the implement pipeline. Marker-only matching lets
+    // any issue comment become the Spec-axis requirement.
+    assert.match(brief, /user\.login\s*==\s*"github-actions\[bot\]"/);
+    assert.match(brief, /startswith\("<!-- agent-pipeline-plan -->"\)/);
+    assert.match(brief, /jq -s/);
+    assert.doesNotMatch(
+      brief,
+      /select\(\.body \| contains\("<!-- agent-pipeline-plan -->"\)\)/,
+    );
+  });
+
   it("carries all three review axes in the skill", () => {
     const skill = readFileSync(
       join(root, ".agents", "skills", "code-review", "SKILL.md"),
