@@ -240,6 +240,8 @@ pub struct RewriteModelDiskStatus {
     pub size_bytes: u64,
     pub summary: String,
     pub on_disk: bool,
+    /// Actual `.gguf` length when the file exists; may differ from catalog `size_bytes`.
+    pub on_disk_bytes: Option<u64>,
     pub verified: bool,
     pub active: bool,
     /// On disk but not verified against the current catalog SHA/size (R32 Update available).
@@ -314,6 +316,11 @@ pub trait RewriteModelFiles: Send + Sync {
     /// Size + SHA-256 verification for a completed download.
     fn is_verified(&self, filename: &str, expected_size: u64, expected_sha256: &str) -> bool;
 
+    /// Size + verify-marker check without hashing file contents.
+    /// Must not fall back to [`Self::is_verified`] — Help holds the Core lock.
+    fn is_verified_cached(&self, filename: &str, expected_size: u64, expected_sha256: &str)
+        -> bool;
+
     /// Remove a completed model file (no-op if missing).
     fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError>;
 }
@@ -341,6 +348,15 @@ impl RewriteModelFiles for EmptyRewriteModelFiles {
     }
 
     fn is_verified(&self, _filename: &str, _expected_size: u64, _expected_sha256: &str) -> bool {
+        false
+    }
+
+    fn is_verified_cached(
+        &self,
+        _filename: &str,
+        _expected_size: u64,
+        _expected_sha256: &str,
+    ) -> bool {
         false
     }
 

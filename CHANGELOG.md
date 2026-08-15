@@ -4,6 +4,10 @@ All notable changes to Issuebridge are documented here. Release notes are user-f
 
 ## [Unreleased]
 
+### Added
+
+- Help is now a full in-app reference instead of three short blocks: Rewrite and the local model catalog (download, Use, Remove, Update available, Keep/Switch), a live **Your machine** block showing this PC's hardware tier, recommended model and active model, plus voice capture, Testing set, Label catalog, Publish conflicts, Timestamps, Appearance, account setup, and a "why is this greyed out?" section. Every actionable topic deep-links into the matching Settings section; Help itself stays read-only. (#146)
+
 ### Fixed
 
 - Sign in state now follows GitHub, not just the credential vault: Issuebridge validates the stored token on launch and signs you out (routing to Sign in) when GitHub rejects it, instead of showing the Inbox against a dead session. A still-valid token keeps you signed in across a machine restart, and being offline no longer signs you out. (#111)

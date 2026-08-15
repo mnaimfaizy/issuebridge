@@ -70,7 +70,7 @@ export function ShellLayout({
             onSignIn={onSignIn}
           />
         )}
-        {destination === "help" && <HelpPage />}
+        {destination === "help" && <HelpPage onNavigate={onNavigate} />}
       </div>
     </div>
   );

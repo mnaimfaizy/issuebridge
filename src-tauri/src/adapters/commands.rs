@@ -1020,6 +1020,8 @@ pub struct RewriteModelEntryDto {
     pub size_bytes: u64,
     pub summary: String,
     pub on_disk: bool,
+    /// Actual file length when present; catalog `size_bytes` is the expected download.
+    pub on_disk_bytes: Option<u64>,
     pub verified: bool,
     pub active: bool,
     pub update_available: bool,
@@ -1056,6 +1058,13 @@ pub struct RewriteModelIdDto {
     pub model_id: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetRewriteModelStatusDto {
+    /// When true, Help uses the marker-only path (no multi-GB hash under the Core lock).
+    #[serde(default)]
+    pub skip_content_hash: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RewriteModelDownloadProgressDto {
     pub model_id: String,
@@ -1066,9 +1075,18 @@ pub struct RewriteModelDownloadProgressDto {
 #[tauri::command]
 pub fn get_rewrite_model_status(
     state: State<'_, AppState>,
+    input: Option<GetRewriteModelStatusDto>,
 ) -> Result<RewriteModelStatusDto, String> {
     let core = state.core.lock().map_err(|e| e.to_string())?;
-    let snap = core.rewrite_model_status().map_err(rewrite_error_message)?;
+    // Nested on `input` so the flag is a serde field (snake_case), not a top-level
+    // Tauri arg (those default to camelCase and a missing key is silent None).
+    let skip = input.and_then(|i| i.skip_content_hash).unwrap_or(false);
+    let snap = if skip {
+        core.rewrite_model_help_status()
+    } else {
+        core.rewrite_model_status()
+    }
+    .map_err(rewrite_error_message)?;
     Ok(rewrite_model_status_dto(snap))
 }
 
@@ -1097,6 +1115,7 @@ fn rewrite_model_status_dto(
                 size_bytes: m.size_bytes,
                 summary: m.summary,
                 on_disk: m.on_disk,
+                on_disk_bytes: m.on_disk_bytes,
                 verified: m.verified,
                 active: m.active,
                 update_available: m.update_available,

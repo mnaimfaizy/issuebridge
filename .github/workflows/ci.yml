@@ -40,6 +40,9 @@ jobs:
       - name: UI contract tests
         run: npm run test:ui-contracts
 
+      - name: Help coverage
+        run: npm run test:help-coverage
+
       - name: Packaging contract tests
         run: npm run test:packaging
 
