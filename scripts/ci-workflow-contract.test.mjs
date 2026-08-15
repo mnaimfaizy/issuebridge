@@ -214,6 +214,34 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     assert.match(gate, /Implementer aborted/);
   });
 
+  it("accepts only a trusted-author plan comment before implement", () => {
+    const gate = jobBlock(readWorkflow("claude-agent-pipeline.yml"), "gate");
+
+    // Marker-only matching lets any issue comment satisfy the gate. The
+    // archived Copilot pipeline required github-actions[bot]; keep that.
+    // startswith avoids treating bot abort text that mentions the marker
+    // as a plan; jq -s add merges paginated comment pages.
+    assert.match(gate, /user\.login\s*==\s*"github-actions\[bot\]"/);
+    assert.match(gate, /startswith\("<!-- agent-pipeline-plan -->"\)/);
+    assert.match(gate, /jq -s/);
+  });
+
+  it("feeds the implementer a verified plan file instead of the comment stream", () => {
+    const implement = jobBlock(
+      readWorkflow("claude-agent-pipeline.yml"),
+      "implement",
+    );
+
+    assert.match(implement, /verified-plan\.md/);
+    assert.match(implement, /user\.login\s*==\s*"github-actions\[bot\]"/);
+    assert.match(implement, /startswith\("<!-- agent-pipeline-plan -->"\)/);
+    assert.match(implement, /jq -s/);
+    assert.doesNotMatch(
+      implement,
+      /Implement ONLY what the plan in the issue comment marked/,
+    );
+  });
+
   it("gives the implementer a toolchain and the tools to use it", () => {
     const implement = jobBlock(
       readWorkflow("claude-agent-pipeline.yml"),
