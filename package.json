@@ -22,11 +22,12 @@
     "test:core": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:packaging": "node --test scripts/packaging-contract.test.mjs",
     "test:ci-contract": "node --test scripts/ci-workflow-contract.test.mjs scripts/security-audit-contract.test.mjs",
+    "test:help-coverage": "node --test scripts/help-coverage.test.mjs",
     "test:ui-contracts": "node --test scripts/pat-status-feedback.test.mjs scripts/shell-chrome-contract.test.mjs scripts/inbox-workbench-contract.test.mjs scripts/settings-help-contract.test.mjs scripts/capture-popup-contract.test.mjs scripts/first-run-contract.test.mjs scripts/conflict-dialog-contract.test.mjs scripts/inbox-rewrite-contract.test.mjs scripts/session-validation-contract.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "ci": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings && npm run lint && npm run typecheck && npm run test:ui-contracts && npm run test:packaging && npm run test:ci-contract && npm run test:core && npm run build"
+    "ci": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings && npm run lint && npm run typecheck && npm run test:ui-contracts && npm run test:help-coverage && npm run test:packaging && npm run test:ci-contract && npm run test:core && npm run build"
   },
   "dependencies": {
     "@fluentui/react-components": "^9.74.4",

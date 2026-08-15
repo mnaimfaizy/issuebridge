@@ -17,6 +17,15 @@ function readSrc(...parts) {
   return readFileSync(path, "utf8");
 }
 
+/** Help ships as page + content data + section renderer; assert on all three. */
+function readHelp() {
+  return [
+    readSrc("help", "HelpPage.tsx"),
+    readSrc("help", "helpContent.ts"),
+    readSrc("help", "HelpSection.tsx"),
+  ].join("\n");
+}
+
 function readRoot(...parts) {
   const path = join(root, ...parts);
   assert.ok(existsSync(path), `expected ${path} to exist`);
@@ -156,7 +165,7 @@ describe("Settings + Help destinations (#38)", () => {
   });
 
   it("Help includes Shortcuts, How it works, and About with domain language", () => {
-    const help = readSrc("help", "HelpPage.tsx");
+    const help = readHelp();
     assert.match(help, /Shortcuts/);
     assert.match(help, /How it works/);
     assert.match(help, /About/);
@@ -175,6 +184,118 @@ describe("Settings + Help destinations (#38)", () => {
     assert.ok(typeof pkg.version === "string" && pkg.version.length > 0);
     assert.match(help, /github\.com\/mnaimfaizy\/issuebridge/);
     assert.doesNotMatch(help, /Replay onboarding|chatbot|docs site/i);
+  });
+
+  it("Help covers the shipped surface area, not just shortcuts (#146)", () => {
+    const help = readHelp();
+    // Rewrite and the local model story.
+    assert.match(help, /Rewrite/);
+    assert.match(help, /Rewrite style/);
+    assert.match(help, /Accept or Discard|Accept\/Discard/i);
+    assert.match(help, /too thin/i);
+    assert.match(help, /Local Rewrite models|catalog/i);
+    assert.match(help, /Update available/);
+    assert.match(help, /Keep .*Switch|Hardware changed/);
+    assert.match(help, /Remove/);
+    assert.match(help, /download size and a short summary/i);
+    assert.doesNotMatch(
+      help,
+      /license blurb/i,
+      "Help describes behaviour — do not narrate the catalog's missing licence field",
+    );
+    assert.match(help, /on this device|stay local|local model/i);
+    assert.doesNotMatch(
+      help,
+      /start_rewrite_model_download|set_active_rewrite_model|remove_rewrite_model/,
+      "Help is read-only — model actions stay in Settings",
+    );
+    // Live "Your machine" block from the existing status command.
+    assert.match(help, /Your machine/);
+    assert.match(help, /get_rewrite_model_status/);
+    assert.match(help, /hardware_tier/);
+    assert.match(help, /recommended_reason|recommended_model_id/);
+    assert.match(help, /active_model_id/);
+    // The rest of the shipped surface.
+    assert.match(help, /Voice capture|dictat/i);
+    assert.match(help, /Testing set/);
+    assert.match(help, /Label catalog/);
+    assert.match(help, /Keep mine/);
+    assert.match(help, /Use theirs/);
+    assert.match(help, /Local link/);
+    assert.match(help, /Remote snapshot/);
+    assert.match(help, /Dirty/);
+    assert.match(help, /Timestamps/);
+    assert.match(help, /UTC/);
+    assert.match(help, /Appearance/);
+    // Troubleshooting mirrors the gating helper reasons.
+    assert.match(help, /greyed out|Finish first-run setup/i);
+    assert.match(help, /Sign in/);
+  });
+
+  it("Help deep-links into Settings instead of duplicating controls (#146)", () => {
+    const help = readSrc("help", "helpContent.ts");
+    assert.match(help, /rewrite-models-settings-heading/);
+    assert.match(help, /capture-settings-heading/);
+    assert.match(help, /testing-set-settings-heading/);
+    assert.match(help, /timestamp-settings-heading/);
+    assert.match(help, /appearance-heading/);
+    assert.match(help, /account-heading/);
+    const page = readSrc("help", "HelpPage.tsx");
+    assert.match(page, /onNavigate/);
+    assert.match(page, /scrollIntoView/);
+    const shell = readSrc("shell", "ShellLayout.tsx");
+    assert.match(shell, /<HelpPage onNavigate=\{onNavigate\}/);
+  });
+
+  it("Help and Settings share one Rewrite model status definition (#146)", () => {
+    assert.ok(
+      existsSync(src("shared", "rewriteModelStatus.ts")),
+      "expected shared rewriteModelStatus module",
+    );
+    const shared = readSrc("shared", "rewriteModelStatus.ts");
+    assert.match(shared, /RewriteModelStatusDto/);
+    assert.match(shared, /RewriteModelEntryDto/);
+    assert.match(shared, /formatBytes/);
+    assert.match(shared, /onDiskLabel/);
+    assert.match(shared, /on_disk_bytes/);
+    const section = readSrc("settings", "RewriteModelsSection.tsx");
+    assert.match(section, /from "\.\.\/shared\/rewriteModelStatus"/);
+    assert.doesNotMatch(
+      section,
+      /type RewriteModelStatusDto = \{/,
+      "DTOs live in the shared module, not duplicated per surface",
+    );
+    const page = readSrc("help", "HelpPage.tsx");
+    assert.match(page, /shared\/rewriteModelStatus/);
+    assert.match(page, /onDiskLabel/);
+    assert.match(page, /input:\s*\{\s*skip_content_hash:\s*true\s*\}/);
+    assert.match(page, /MutationObserver/);
+    assert.match(page, /offsetTop/);
+  });
+
+  it("Help token placeholders are a typed set supplied by HelpPage (#146)", () => {
+    const content = readSrc("help", "helpContent.ts");
+    const page = readSrc("help", "HelpPage.tsx");
+    const section = readSrc("help", "HelpSection.tsx");
+    assert.match(content, /export type HelpTokenName = /);
+    assert.match(section, /HelpTokenName/);
+    const topics = content.slice(content.indexOf("export const HELP_TOPICS"));
+    const names = [...topics.matchAll(/\{([a-zA-Z]+)\}/g)].map(
+      (match) => match[1],
+    );
+    assert.ok(names.length > 0, "expected live hotkey tokens in Help copy");
+    for (const name of new Set(names)) {
+      assert.match(
+        content,
+        new RegExp(`"${name}"`),
+        `${name} must be a HelpTokenName`,
+      );
+      assert.match(
+        page,
+        new RegExp(`${name}\\s*:`),
+        `HelpPage must supply token ${name}`,
+      );
+    }
   });
 
   it("Timestamp settings expose local/UTC toggle wired to get/save commands (#93)", () => {

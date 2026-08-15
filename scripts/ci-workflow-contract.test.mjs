@@ -41,7 +41,7 @@ describe("PR CI workflow contract (#24)", () => {
     assert.doesNotMatch(yml, /runs-on:\s*windows-latest/);
   });
 
-  it("frontend job runs lint, typecheck, contracts, packaging, and Vite build with Node 22 npm cache", () => {
+  it("frontend job runs lint, typecheck, contracts, help coverage, packaging, and Vite build with Node 22 npm cache", () => {
     const yml = readWorkflow();
     const frontend = jobBlock(yml, "frontend");
     assert.match(frontend, /node-version:\s*["']?22["']?/);
@@ -50,6 +50,7 @@ describe("PR CI workflow contract (#24)", () => {
     assert.match(frontend, /npm run lint/);
     assert.match(frontend, /npm run typecheck/);
     assert.match(frontend, /npm run test:ui-contracts/);
+    assert.match(frontend, /npm run test:help-coverage/);
     assert.match(frontend, /npm run test:packaging/);
     assert.match(frontend, /npm run test:ci-contract/);
     assert.match(frontend, /npm run build/);

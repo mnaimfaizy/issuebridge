@@ -25,6 +25,7 @@ Windows-first Tauri app: capture GitHub issues while testing (hotkey + voice), k
 | security-audit          | [`.agents/skills/security-audit/SKILL.md`](./.agents/skills/security-audit/SKILL.md)                   | Medium+ threat-led audit (`full` / `pr`); private maintainer channel |
 | security-finding-triage | [`.agents/skills/security-finding-triage/SKILL.md`](./.agents/skills/security-finding-triage/SKILL.md) | Stress-check one draft GHSA finding; confirm/reject; update ledger |
 | security-response       | [`.agents/skills/security-response/SKILL.md`](./.agents/skills/security-response/SKILL.md)             | Reconcile/prioritize advisory backlog; guarded end-to-end fix PR   |
+| help-coverage           | [`.agents/skills/help-coverage/SKILL.md`](./.agents/skills/help-coverage/SKILL.md)                     | Adding a user-facing surface, or `test:help-coverage` fails        |
 
 Other skills under [`.agents/skills/`](./.agents/skills/) apply when their descriptions match the task.
 

@@ -536,6 +536,16 @@ impl RewriteModelFiles for FakeRewriteModelFiles {
         )
     }
 
+    fn is_verified_cached(
+        &self,
+        _filename: &str,
+        _expected_size: u64,
+        _expected_sha256: &str,
+    ) -> bool {
+        // In-memory fake has no sidecar marker; Help must not inherit hashing.
+        false
+    }
+
     fn remove(&self, filename: &str) -> Result<(), RewriteModelFileError> {
         self.files
             .lock()
