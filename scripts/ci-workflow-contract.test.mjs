@@ -322,6 +322,49 @@ describe("Claude code review contract", () => {
     assert.match(allowed, /mcp__github_inline_comment__create_inline_comment/);
   });
 
+  it("does not persist checkout credentials into the review workspace", () => {
+    const yml = readWorkflow("claude-code-review.yml");
+    const checkout = yml.indexOf("uses: actions/checkout@");
+    const restore = yml.indexOf("Restore trusted review runtime from PR base");
+
+    assert.ok(checkout >= 0, "expected a checkout step");
+    assert.ok(restore > checkout, "checkout must precede the restore step");
+
+    // Default persist-credentials: true writes the job token into .git/config.
+    // The reviewer never pushes; later gh steps pass GH_TOKEN explicitly.
+    const block = yml.slice(checkout, restore);
+    assert.match(block, /persist-credentials:\s*false/);
+  });
+
+  it("restores base files without fetching an unadvertised SHA", () => {
+    const yml = readWorkflow("claude-code-review.yml");
+    const restore = yml.indexOf("Restore trusted review runtime from PR base");
+    const brief = yml.indexOf("Build review brief");
+
+    assert.ok(restore >= 0, "expected a trusted runtime restore step");
+    assert.ok(brief > restore, "restore must precede the brief");
+
+    // persist-credentials: false means a raw SHA want is anonymous.
+    // GitHub rejects unadvertised object fetches; use the advertised base ref.
+    const block = yml.slice(restore, brief);
+    assert.doesNotMatch(block, /git fetch[^\n]*origin "\$BASE_SHA"/);
+    assert.match(block, /git fetch[^\n]*origin "\$BASE_REF"/);
+  });
+
+  it("does not grant unscoped filesystem bash alongside PR comment tools", () => {
+    const yml = readWorkflow("claude-code-review.yml");
+    const allowed = yml.match(/--allowedTools "[^"]*"/)?.[0] ?? "";
+
+    assert.ok(allowed.length > 0, "expected an explicit tool allowlist");
+    // Read is workspace-scoped. Bash(cat:*) / Bash(ls:*) are prefix rules for
+    // any path on the runner. The same allowlist holds the public comment
+    // channel, so those two must not be paired.
+    assert.doesNotMatch(allowed, /Bash\(cat:\*\)/);
+    assert.doesNotMatch(allowed, /Bash\(ls:\*\)/);
+    assert.match(allowed, /Bash\(gh pr comment:\*\)/);
+    assert.match(allowed, /mcp__github_inline_comment__create_inline_comment/);
+  });
+
   it("reviews against instructions the PR cannot rewrite", () => {
     const yml = readWorkflow("claude-code-review.yml");
     const restore = yml.indexOf("Restore trusted review runtime from PR base");
