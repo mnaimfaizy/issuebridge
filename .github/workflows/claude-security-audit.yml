@@ -1,4 +1,4 @@
-# Security audit — monthly / manual / PR label (Claude Code)
+# Security audit — weekly / dispatch / PR label (Claude Code)
 # Skill assets: .agents/skills/security-audit/ · Prompt: .github/security-audit/prompt.md
 # Supersedes .github/workflows-archive/copilot/security-audit.yml (archived, inert).
 #
@@ -13,16 +13,17 @@
 #          COPILOT_GITHUB_TOKEN — advisory publisher PAT. Despite the name it is no longer
 #          used for Copilot: it needs only `Repository security advisories: write` and an
 #          admin/security-manager owner. Its `Copilot Requests` scope can be revoked.
-#          RESEND_API_KEY (optional; enables email delivery)
+#          RESEND_API_KEY (optional; enables email delivery on the scheduled full only)
 # Vars:    CLAUDE_SECURITY_AUDIT_ENABLED=true          (kill switch — deliberately distinct
 #                                                       from the archived SECURITY_AUDIT_ENABLED)
 #          SECURITY_AUDIT_ALLOWLIST=mnaimfaizy         (comma logins; label / dispatch actors)
 #          CLAUDE_SECURITY_AUDIT_MODEL                 (optional; default claude-opus-5)
 #          SECURITY_AUDIT_NOTIFY_EMAIL / SECURITY_AUDIT_EMAIL_FROM (optional)
 #
-# Schedule note: GitHub disables scheduled workflows on public repos after 60 days without
-# repository activity. At monthly cadence a quiet stretch can silently stop this audit.
-# workflow_dispatch is the manual fallback; treat the cron as best-effort.
+# Schedule: Sunday 14:00 UTC = Monday 00:00 AEST (UTC+10). GitHub cron is UTC; no DST
+# tracking. GitHub disables scheduled workflows on public repos after 60 days without
+# repository activity. workflow_dispatch is the manual fallback; treat the cron as
+# best-effort. Dispatch and PR runs do not email.
 #
 # Actor note: the action rejects bot actors on every event, including `schedule`. GitHub
 # attributes scheduled runs to whoever last edited the cron line. If that ever becomes a
@@ -32,8 +33,8 @@ name: Claude security audit
 
 on:
   schedule:
-    # 06:00 UTC on the 1st of each month. Avoid 00:00 UTC — highest queue contention.
-    - cron: "0 6 1 * *"
+    # Sunday 14:00 UTC = Monday 00:00 AEST (UTC+10). No DST tracking.
+    - cron: "0 14 * * 0"
   workflow_dispatch:
   pull_request:
     types: [labeled]
@@ -45,6 +46,8 @@ concurrency:
 permissions:
   contents: read
   pull-requests: write
+  # Open Dependabot alerts on CI full only (workflow step, not the agent).
+  vulnerability-alerts: read
   # Required for the action's default Claude GitHub App authentication.
   id-token: write
 
@@ -147,6 +150,102 @@ jobs:
           done
           echo "Audit runtime restored from PR base $BASE_SHA"
 
+      - name: Scan lockfiles (OSV)
+        if: >-
+          steps.gate.outputs.proceed == 'true' &&
+          steps.gate.outputs.mode == 'full'
+        env:
+          OSV_VERSION: v2.5.0
+          OSV_SHA256: edcfc41d257db36148f065055655fe3fcfc434b0b423ea67468a84c207524e0c
+        run: |
+          set -euo pipefail
+          OSV="$RUNNER_TEMP/osv-scanner"
+          curl -fsSL -o "$OSV" \
+            "https://github.com/google/osv-scanner/releases/download/${OSV_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SHA256}  ${OSV}" | sha256sum -c -
+          chmod +x "$OSV"
+          OUT="$GITHUB_WORKSPACE/security-audit-osv.json"
+          rm -f "$OUT"
+          set +e
+          "$OSV" scan --format json --verbosity error --output-file "$OUT" \
+            -L package-lock.json \
+            -L services/oauth-exchange/package-lock.json \
+            -L src-tauri/Cargo.lock \
+            >/dev/null
+          status=$?
+          set -e
+          if [ ! -s "$OUT" ]; then
+            rm -f "$OUT"
+            echo "osv-scanner exit=${status}; no grounding file"
+          else
+            echo "osv-scanner exit=${status} bytes=$(wc -c < "$OUT" | tr -d '[:space:]')"
+          fi
+
+      - name: Install cargo-audit
+        if: >-
+          steps.gate.outputs.proceed == 'true' &&
+          steps.gate.outputs.mode == 'full'
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        with:
+          tool: cargo-audit
+
+      - name: Scan lockfile (cargo-audit)
+        if: >-
+          steps.gate.outputs.proceed == 'true' &&
+          steps.gate.outputs.mode == 'full'
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/security-audit-cargo-audit.json"
+          ERR="$RUNNER_TEMP/cargo-audit.err"
+          rm -f "$OUT"
+          set +e
+          cargo-audit audit --json --file src-tauri/Cargo.lock > "$OUT" 2>"$ERR"
+          status=$?
+          set -e
+          if [ ! -s "$OUT" ]; then
+            rm -f "$OUT"
+            echo "cargo-audit exit=${status}; no grounding file"
+          else
+            echo "cargo-audit exit=${status} bytes=$(wc -c < "$OUT" | tr -d '[:space:]')"
+          fi
+
+      - name: Fetch open Dependabot alerts
+        if: >-
+          steps.gate.outputs.proceed == 'true' &&
+          steps.gate.outputs.mode == 'full'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          RAW="$RUNNER_TEMP/dependabot-alerts-raw.json"
+          ERR="$RUNNER_TEMP/dependabot-alerts.err"
+          OUT="$GITHUB_WORKSPACE/security-audit-dependabot.json"
+          set +e
+          gh api --paginate \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${GITHUB_REPOSITORY}/dependabot/alerts?state=open&per_page=100" \
+            > "$RAW" 2>"$ERR"
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "Dependabot alerts fetch failed; continuing without that file."
+            rm -f "$RAW" "$ERR"
+            exit 0
+          fi
+          if ! jq '[.[] | {
+            advisory_id: (.security_advisory.ghsa_id // .security_advisory.cve_id),
+            package: .dependency.package.name,
+            ecosystem: .dependency.package.ecosystem,
+            severity: .security_advisory.severity,
+            manifest: .dependency.manifest_path
+          }]' "$RAW" > "$OUT"; then
+            echo "Dependabot alerts fetch failed; continuing without that file."
+            rm -f "$RAW" "$ERR" "$OUT"
+            exit 0
+          fi
+          rm -f "$RAW" "$ERR"
+          echo "Dependabot open alerts: $(jq length "$OUT") bytes=$(wc -c < "$OUT" | tr -d '[:space:]')"
+
       - name: Build audit brief
         if: steps.gate.outputs.proceed == 'true'
         env:
@@ -168,6 +267,18 @@ jobs:
             echo "Write the report to the file above. Do NOT echo findings, file contents,"
             echo "diffs, or the report body to stdout at any point."
             echo
+            if [ "$MODE" = "full" ]; then
+              if [ -f "$GITHUB_WORKSPACE/security-audit-osv.json" ]; then
+                echo "Grounding file (OSV lockfile scan, read only): $GITHUB_WORKSPACE/security-audit-osv.json"
+              fi
+              if [ -f "$GITHUB_WORKSPACE/security-audit-cargo-audit.json" ]; then
+                echo "Grounding file (cargo-audit, read only): $GITHUB_WORKSPACE/security-audit-cargo-audit.json"
+              fi
+              if [ -f "$GITHUB_WORKSPACE/security-audit-dependabot.json" ]; then
+                echo "Grounding file (open Dependabot alerts, read only): $GITHUB_WORKSPACE/security-audit-dependabot.json"
+              fi
+              echo
+            fi
             if [ "$MODE" = "pr" ] && [ -n "${BASE_REF:-}" ]; then
               echo "PR diff base: $BASE_REF"
               echo "Changed files:"
@@ -183,6 +294,12 @@ jobs:
               echo "</untrusted_pr_diff>"
               echo
             fi
+            echo "-----"
+            echo
+            echo "Portable procedure (follow exactly):"
+            echo
+            cat .agents/skills/security-audit/SKILL.md
+            echo
             echo "-----"
             echo
             cat .github/security-audit/prompt.md
@@ -217,13 +334,12 @@ jobs:
         run: |
           set -euo pipefail
           # Read-only inspection everywhere. PR mode is deliberately tighter: PR-authored
-          # code is untrusted, so it gets no git/npm execution at all.
+          # code is untrusted, so it gets no git execution at all.
           #
-          # Hardening over the archived Copilot config: that granted `shell(git:*)`,
-          # `shell(cargo:*)` and `shell(npm:*)` in full mode, any of which can execute
-          # arbitrary code via build scripts or hooks. An audit only needs to read.
+          # The agent reads workspace grounding files. It does not run lockfile scanners
+          # or fetch advisories. No spawn / worker tools.
           PR_TOOLS='Read,Glob,Grep,Write,Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(rg:*),Bash(grep:*)'
-          FULL_TOOLS="${PR_TOOLS},Bash(find:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git ls-files:*),Bash(npm audit:*),Bash(npm ls:*)"
+          FULL_TOOLS="${PR_TOOLS},Bash(find:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git ls-files:*)"
 
           if [ "$MODE" = "pr" ]; then
             echo "allowed=$PR_TOOLS" >> "$GITHUB_OUTPUT"
@@ -328,7 +444,9 @@ jobs:
             "$GITHUB_WORKSPACE/security-audit-session.md"
 
       - name: Email report + transcript (optional)
-        if: steps.gate.outputs.proceed == 'true'
+        if: >-
+          steps.gate.outputs.proceed == 'true' &&
+          github.event_name == 'schedule'
         continue-on-error: true
         env:
           SECURITY_AUDIT_NOTIFY_EMAIL: ${{ vars.SECURITY_AUDIT_NOTIFY_EMAIL }}

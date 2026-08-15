@@ -42,4 +42,7 @@ security-audit-user.txt
 security-audit-user.local.txt
 security-audit-cli.log
 security-audit-session.md
+security-audit-osv.json
+security-audit-cargo-audit.json
+security-audit-dependabot.json
 

@@ -1,77 +1,82 @@
 ---
 name: security-audit
 description: >-
-  Deep security and vulnerability audit for Issuebridge (Medium+ only). Use when
-  the user asks for a security audit, vulnerability review, threat hunt, weekly
-  security scan, or to audit a PR for dangerous flaws (auth, secrets, IPC,
-  injection, path traversal, XSS→native bridge). Produces a private draft GitHub
-  Security Advisory — never dump exploit detail into public issues/PR comments.
+  Medium+ threat-led security audit (full or pr) filed with an evidence class
+  to a private maintainer channel.
 disable-model-invocation: true
 ---
 
-# Security audit (Issuebridge)
+# Security audit
 
-Threat-led audit that prefers **reachable, dangerous** flaws over checklist noise.
-Severity floor: **Medium**. Discard Low / informational / style.
+Portable procedure. Product assets, hunt list, and ledger rows live in the threat pack in this folder: [threat-model.md](threat-model.md) and [findings-ledger.md](findings-ledger.md). Report shape: [report-format.md](report-format.md).
 
-Pilot skill lives in this repo; later extract to a shared skills repository with a thinner per-product threat pack.
+Threat-led audit that prefers **reachable, dangerous** flaws over checklist noise. Severity floor: **Medium**. Discard Low / informational / style.
+
+One agent, one session. Do not spawn sub-agents or workers.
 
 ## Modes
 
 | Mode | When | Scope |
 |------|------|--------|
-| `full` | Weekly schedule, `workflow_dispatch`, Cursor “audit the repo” | Whole tree + threat pack |
-| `pr` | PR labeled `agent:security-audit`, or Cursor “audit this PR” | Diff vs base + adjacent call sites |
-| `manual` | Same as `full` unless user narrows paths | As requested |
+| `full` | Schedule, `workflow_dispatch`, Cursor “audit the repo” | Whole tree + threat pack. Optional path-narrowing stays `full`. |
+| `pr` | PR labeled for this audit, or Cursor “audit this PR” | Diff vs base + adjacent call sites |
+
+`pr` is the same hunt with a narrower aperture, not a second product. Path-narrowing is not a third mode.
+
+## Evidence class (fileability)
+
+Every finding names exactly one evidence class:
+
+| Class | File when | Advisory id |
+|-------|-----------|-------------|
+| `dependency-advisory` | A GHSA / OSV / RUSTSEC / CVE id appears in a workspace scanner file or the open Dependabot feed, **and** the issue is reachable in this product | Required, from those files — never from training data |
+| `code-path` | A concrete `file:line` shows the failure | None |
+| `missing-control` | You can name the site where the control should live | None |
+
+Unreachable lockfile noise → discard. Same advisory id in scanner JSON and the Dependabot file → **one** finding.
+
+`pr` files only `code-path` and `missing-control`. `pr` cannot file `dependency-advisory`.
+
+Cursor `full` has no Dependabot file. Missing grounding files mean you cannot file `dependency-advisory`.
+
+Read workspace grounding files when they exist. Do not run audit CLIs. Do not fetch GitHub advisories, Dependabot, or registry HTTP.
 
 ## Before you start
 
-1. Read [threat-model.md](threat-model.md) (Issuebridge assets & attack paths).
+1. Read the threat pack and [report-format.md](report-format.md).
 2. Read [findings-ledger.md](findings-ledger.md) (fingerprint registry — **mandatory**).
-3. Read [report-format.md](report-format.md) (required output shape).
-4. Prefer evidence over speculation. No finding without `file:line` (or clear “missing control” with where it should live).
-5. **Never** write weaponized exploits, exploit PoCs, or public step-by-step attack recipes. Impact = narrative + conditions only.
-6. **Never** post finding detail on public issues/PR bodies. Private channel = **draft repository Security Advisory**.
+3. Prefer evidence over speculation. No finding without `file:line` (or a clear missing-control site).
+4. Impact is narrative + conditions only — no weaponized exploits, exploit PoCs, or public step-by-step attack recipes.
+5. Deliver only through the **private maintainer channel** the pack names. Never public issues, PR bodies, or world-readable logs.
 
 ## Dedup (ledger)
 
 Do **not** file a finding whose `concept-id` (or clear same path + failure mode) already appears in the ledger with status `open`, `fixed`, `rejected`, or `accepted-risk`, unless you have evidence of a **regression** or material change. If you skip ledger hits, list them under Notes (`Skipped ledger: <concept-id> (<status>)`).
 
-New themes only → new findings. After the run, triage (not this skill) updates the ledger — see **security-finding-triage**.
+New themes only → new findings. This skill **reads** the ledger and skips known concept ids. Triage writes rows — the audit agent does not commit the ledger.
 
 ## Process
 
 ### 1. Orient
 
-- Confirm mode (`full` / `pr`).
+- Confirm mode (`full` / `pr`). Path-narrowing is still `full`.
 - Read the ledger and note which concepts are already tracked.
-- For `pr`: `git diff <base>...HEAD` and list changed paths; still open adjacent auth/IPC/store files when the diff touches them.
-- Skim `CONTEXT.md` only for domain terms if findings mention product concepts (Draft, Publish, Capture, …).
+- For `pr`: diff vs base and list changed paths; still open adjacent files when the diff touches them.
+- Skim product domain terms only if findings will name them.
 
-### 2. Deterministic pass (when tools available)
+Done when mode, ledger skips, and (for `pr`) the changed-path list are written down.
 
-Run what exists; fold real hits into the report (do not invent CVEs):
+### 2. Grounding files
 
-- `cargo audit` (if installed / in CI image) on `src-tauri`
-- `npm audit --omit=dev` (or project-equivalent) — High+ only unless clearly reachable
-- Search for obvious secret patterns (tokens, private keys) in tracked files — exclude fixtures/docs that are clearly fake
+When scanner JSON or an open-Dependabot file is in the workspace, read it. Fold reachable hits into the report. Inventing advisory ids is unfileable.
 
-Tool noise without a reachable Issuebridge impact → discard.
+Done when every grounding file that exists has been read, or you have noted that none are present.
 
 ### 3. Threat-led code pass
 
-Walk the threat pack in [threat-model.md](threat-model.md). Prioritize:
+Walk the hunt list in the threat pack. For each candidate: **who attacks, from where, what do they gain, is it reachable as shipped or as CI runs today?** If not Medium+, drop it.
 
-1. Credential theft / token exfil (keyring, OAuth, env, logs)
-2. Authn/authz bypass (GitHub API calls, repo scope, Install App)
-3. Tauri IPC / command surface (untrusted frontend → privileged Rust)
-4. Path traversal / arbitrary file read-write (Draft store, models, Whisper/llama paths)
-5. Command/argument injection into sidecars (Whisper, llama.cpp)
-6. Webview XSS → native bridge escalation
-7. Supply chain / installer update trust (only if code/config in-repo supports a concrete claim)
-8. Privacy: Draft content or tokens leaving the machine unexpectedly
-
-For each candidate, ask: **who attacks, from where, what do they gain, is it reachable in the shipped Windows app or CI?** If not Medium+, drop it.
+Done when every pack hunt area has a finding or a one-line Notes rationale.
 
 ### 4. Severity
 
@@ -84,40 +89,22 @@ For each candidate, ask: **who attacks, from where, what do they gain, is it rea
 
 Cap the report at **12** findings (highest severity first). If more exist, keep the top 12 and note “additional candidates omitted”.
 
-### 5. Report + private publish
+### 5. Report + private maintainer channel
 
-1. Emit markdown matching [report-format.md](report-format.md).
-2. Create **one draft** repository Security Advisory per run (not a public issue):
-   - `summary`: `[Security audit] <YYYY-MM-DD> — N finding(s), max=<severity>`
-   - `description`: full report body
-   - `severity`: max finding severity (`critical` \| `high` \| `medium`)
-   - `vulnerabilities`: at least one package entry (`ecosystem: other`, `name: issuebridge` or `ecosystem: rust` / `npm` when a dependency is the root cause)
-3. If advisory creation fails (missing `repository_advisories:write` / admin), **stop** — do not fall back to a public issue. Tell the user what permission is missing.
-4. For PR mode only: leave a **public** PR comment with counts only, e.g. `Security audit: 2 Medium+ finding(s) filed as a draft advisory for maintainers.` — no paths, no attack detail.
+1. Emit markdown matching [report-format.md](report-format.md), including **Evidence class** on every finding.
+2. Deliver through the pack’s private maintainer channel (never public issues or logs). If that channel is unavailable, **stop** — do not fall back to a public issue.
+3. For `pr` only: leave a **public** PR comment with counts only — no paths, no attack detail — when the pack says this product uses that comment.
 
-### 6. Out of scope for auto-fix
+## Out of scope for auto-fix
 
-Do **not** open fix PRs or `@copilot` fix rounds unless the user explicitly asks after triage (**security-finding-triage** → then implement).
+Do **not** open fix PRs unless the user explicitly asks after triage.
 
 ## Cursor invocation examples
 
 - “Run a full security audit”
 - “Security-audit this PR”
-- “Hunt for IPC / token vulnerabilities”
-- After a draft exists: “Triage F3” → **security-finding-triage**
+- After a private report exists: triage via **security-finding-triage**
 
-## CI / automation
+## Runners
 
-GitHub Actions workflow `.github/workflows/security-audit.yml`:
-
-- Weekly cron (`full`)
-- `workflow_dispatch` (`full`)
-- PR label `agent:security-audit` (`pr`)
-
-Prompt pack: `.github/security-audit/prompt.md` (must stay aligned with this skill).
-
-Model: repo vars `SECURITY_AUDIT_MODEL` (`--model`) and `SECURITY_AUDIT_REASONING_EFFORT` (`--reasoning-effort`). Example: `gpt-5.6-sol` + `high`. See `docs/security-audit.md`.
-
-Delivery: every CI run files a **draft** Security Advisory (including clean runs) with report + agent transcript appendix. Optional email via `SECURITY_AUDIT_NOTIFY_EMAIL` + `RESEND_API_KEY`. Never dump findings/transcripts into public Actions logs.
-
-Response loop: [docs/security-response.md](../../../docs/security-response.md) and skill **security-finding-triage**.
+CI and Cursor follow this procedure. The CI prompt is a **projection** of this skill: it must not add rules. Operator docs must not add procedure. Cadence, labels, scanner steps, and model vars are runner wiring, not this procedure.

@@ -9,7 +9,7 @@ subscription. Replaces the Copilot pipeline archived at
 | [`claude-agent-pipeline.yml`](../.github/workflows/claude-agent-pipeline.yml) | issue labeled `agent:plan` | Posts an implementation plan comment |
 | | issue labeled `agent:implement` | Implements the plan, pushes a branch, opens a draft PR |
 | [`claude-code-review.yml`](../.github/workflows/claude-code-review.yml) | PR labeled `agent:review` | Three-axis review (Standards / Spec / Correctness) posted to the PR |
-| [`claude-security-audit.yml`](../.github/workflows/claude-security-audit.yml) | monthly cron / dispatch / PR labeled `agent:security-audit` | Threat-led audit → private draft Security Advisory |
+| [`claude-security-audit.yml`](../.github/workflows/claude-security-audit.yml) | weekly cron (Sunday 14:00 UTC / Monday 00:00 AEST) / dispatch / PR labeled `agent:security-audit` | Threat-led audit → private draft Security Advisory |
 
 ## Stand-up
 
@@ -76,7 +76,7 @@ human-actor checks.
 - **No findings in the Actions log.** Run logs are world-readable. The audit writes its
   report to a file and is instructed to emit only a one-line status. `upload-artifact` is
   never used — artifacts are world-readable too. Findings travel only to the private draft
-  advisory and optional email.
+  advisory and email on the scheduled `full` only.
 - **Fork PRs cannot reach the token.** Both workflows use `pull_request`, not
   `pull_request_target`, so GitHub withholds secrets from fork-originated runs. Do not
   "fix" a fork PR failing by switching triggers.
@@ -88,7 +88,7 @@ human-actor checks.
   after the Claude step has exited. A contract test enforces the ordering.
 - **PR-mode audits get no code execution.** No `git`, `npm`, `cargo`, or `find` — read-only
   inspection only. Full mode (scheduled/dispatch, trusted default-branch code) adds
-  read-only git subcommands and `npm audit`. This is tighter than the archived Copilot
+  read-only git subcommands. Lockfile scanners run as workflow steps on `full` only. This is tighter than the archived Copilot
   config, which granted `shell(git:*)`, `shell(cargo:*)`, and `shell(npm:*)`.
 - **The reviewer cannot modify or run what it reviews.** `claude-code-review.yml` checks
   out untrusted PR code, so it is granted no `Edit`/`Write` and no `npm`/`cargo` — read,

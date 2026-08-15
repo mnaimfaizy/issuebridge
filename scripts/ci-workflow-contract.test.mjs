@@ -164,12 +164,13 @@ describe("Claude security audit privilege contract", () => {
     assert.match(yml, /if \[ "\$MODE" = "pr" \]/);
   });
 
-  it("runs monthly and stays manually dispatchable", () => {
+  it("runs weekly Sunday 14:00 UTC and stays manually dispatchable", () => {
     const yml = readWorkflow("claude-security-audit.yml");
 
-    // Monthly cron, day-of-month field set. GitHub disables schedules on public
-    // repos after 60 days of inactivity, so the manual fallback must stay.
-    assert.match(yml, /cron:\s*"0 6 1 \* \*"/);
+    // Sunday 14:00 UTC = Monday 00:00 AEST (UTC+10). GitHub cron is UTC.
+    // GitHub disables schedules on public repos after 60 days of inactivity,
+    // so the manual fallback must stay.
+    assert.match(yml, /cron:\s*"0 14 \* \* 0"/);
     assert.match(yml, /workflow_dispatch:/);
   });
 });

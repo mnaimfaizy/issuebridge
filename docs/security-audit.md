@@ -1,72 +1,52 @@
 # Security audit (pilot)
 
-Threat-led Medium+ security audit for Issuebridge. Skill: [`.agents/skills/security-audit/`](../.agents/skills/security-audit/). Workflow: [`.github/workflows/claude-security-audit.yml`](../.github/workflows/claude-security-audit.yml).
+Threat-led Medium+ security audit for Issuebridge. Procedure: [`.agents/skills/security-audit/SKILL.md`](../.agents/skills/security-audit/SKILL.md). Threat pack: [threat-model.md](../.agents/skills/security-audit/threat-model.md). Workflow: [`.github/workflows/claude-security-audit.yml`](../.github/workflows/claude-security-audit.yml).
 
-> The Copilot CLI implementation of this audit is archived at [`.github/workflows-archive/copilot/security-audit.yml`](../.github/workflows-archive/copilot/README.md) and no longer runs. The reporting path is unchanged — the audit still publishes to a **private draft Security Advisory** via `publish-draft-advisory.sh`, never to a public issue, artifact, or log.
+The archived Copilot workflow is inert. After a draft advisory exists, triage with **security-finding-triage** and follow [security-response.md](./security-response.md). Dedup memory: [findings-ledger.md](../.agents/skills/security-audit/findings-ledger.md).
 
-After a draft advisory exists, triage findings with **security-finding-triage** and follow [security-response.md](./security-response.md). Dedup memory: [findings-ledger.md](../.agents/skills/security-audit/findings-ledger.md).
-
-## Why draft advisories (not issues / artifacts / gists-in-logs)
-
-Issuebridge is **public**. Normal GitHub issues, Actions artifacts, and gist URLs printed in Actions logs are world-readable. Delivery channels:
-
-| Channel | Visibility |
-|---------|------------|
-| Draft Security Advisory | Admins / security managers only — **always** created per run (including clean runs) |
-| Optional email (Resend) | Your inbox — report + CLI/session attachments |
-| Public Actions log | Metadata only (`Finding count`, byte sizes) — never finding bodies or transcripts |
-
-Do **not** use `--share-gist` in this public repo if the gist URL would appear in Actions logs.
+Issuebridge is **public**. Actions logs and artifacts are world-readable. Delivery is the pack’s private channel: draft Security Advisory (every CI run, including clean), counts-only PR comment on `pr`, email on the **scheduled** `full` only.
 
 ## Triggers
 
 | Trigger | Mode |
 |---------|------|
-| Cron Monday 06:00 UTC | `full` |
-| Actions → **Security audit** → Run workflow | `full` |
-| Label a PR `agent:security-audit` | `pr` (diff-focused) |
-| Cursor: invoke the **security-audit** skill | as requested |
+| Cron Sunday 14:00 UTC (Monday 00:00 AEST, UTC+10; no DST tracking) | `full` |
+| Actions → **Claude security audit** → Run workflow | `full` (no email) |
+| Label a PR `agent:security-audit` | `pr` (no email) |
+| Cursor: invoke the **security-audit** skill | as requested (no email; Cursor `full` has no Dependabot file) |
 
 ## Stand-up
 
-1. Repo variable `SECURITY_AUDIT_ENABLED=true`
+1. Repo variable `CLAUDE_SECURITY_AUDIT_ENABLED=true`
 2. Repo variable `SECURITY_AUDIT_ALLOWLIST=mnaimfaizy` (comma-separated; label + `workflow_dispatch`)
 3. Label `agent:security-audit`
-4. Fine-grained PAT in `COPILOT_GITHUB_TOKEN` with **Repository security advisories: Write** (token owner = admin or security manager). Same secret as the agent pipeline is fine if the permission is added.
-5. Optional model/effort vars — see [Model and reasoning](#model-and-reasoning)
-6. Optional email — see [Private delivery](#private-delivery)
-7. Optional: enable private vulnerability reporting under repo Settings → Code security.
+4. Fine-grained PAT in `COPILOT_GITHUB_TOKEN` with **Repository security advisories: Write** (token owner = admin or security manager)
+5. Optional model override `CLAUDE_SECURITY_AUDIT_MODEL` (default `claude-opus-5`)
+6. Optional email — see below
+7. Optional: enable private vulnerability reporting under repo Settings → Code security
 
-## Model and reasoning
+GitHub disables scheduled workflows on public repos after 60 days without activity. `workflow_dispatch` is the manual fallback.
 
-The audit runs through Copilot CLI. Pin both via repo variables:
+## Model
 
-| Variable | CLI flag | Example |
-|----------|----------|---------|
-| `SECURITY_AUDIT_MODEL` | `--model` | `gpt-5.6-sol` |
-| `SECURITY_AUDIT_REASONING_EFFORT` | `--reasoning-effort` | `high` (`low` \| `medium` \| `high` \| `xhigh`) |
+Pin via repo variable `CLAUDE_SECURITY_AUDIT_MODEL` (`--model`). Default: `claude-opus-5`. Leave unset unless you are changing models on purpose.
 
-Pilot recommendation: `gpt-5.6-sol` + `high` (or `xhigh`). `medium` was too shallow for this threat-led pass.
-
-The report file must be written inside the workspace (`$GITHUB_WORKSPACE/security-audit-report.md`). Writing only to `/tmp` is unreliable with Copilot CLI path allowlists.
+The report file is `$GITHUB_WORKSPACE/security-audit-report.md`.
 
 ## Private delivery
 
 ### Always: draft advisory (including clean runs)
 
-Every successful run creates a **draft** advisory containing:
+Every successful CI run creates a **draft** advisory containing the full markdown report and a truncated agent transcript appendix. Open **Security → Advisories** (drafts). Public Actions logs omit the advisory URL.
 
-1. The full markdown report (even when Finding count is 0)
-2. A truncated agent session transcript and/or CLI log appendix
+### Optional: email (scheduled `full` only)
 
-Open **Security → Advisories** (drafts) after a run. Public Actions logs intentionally omit the advisory URL.
-
-### Optional: email
-
-1. Create a [Resend](https://resend.com) API key (free tier is enough for weekly audits).
+1. Create a [Resend](https://resend.com) API key (free tier is enough for the weekly scheduled run).
 2. Repo secret `RESEND_API_KEY`
 3. Repo variable `SECURITY_AUDIT_NOTIFY_EMAIL=you@example.com`
 4. Optional repo variable `SECURITY_AUDIT_EMAIL_FROM` — a From address verified in Resend, either `security@yourdomain.com` or `Issuebridge Security <security@yourdomain.com>`. A bare display name such as `Issuebridge` is **not** a valid sender; the notifier ignores it and falls back to `Issuebridge Security <onboarding@resend.dev>`.
+
+Dispatch and `pr` runs do not send email.
 
 Resend's `onboarding@resend.dev` sender can only deliver to the address that owns the Resend account. Verify a domain in Resend to reach any other inbox.
 
@@ -74,31 +54,9 @@ The workflow attaches `security-audit-report.md`, `security-audit-session.md` (i
 
 Attachment content is passed to `jq` via `--rawfile`, never as an argv value — base64 payloads of this size exceed the Linux argument limit and previously failed the step with `jq: Argument list too long`.
 
-## Why CI ran long but looked “empty” (2026-08-06)
-
-Observed on successful Actions runs:
-
-1. Copilot ran ~15–18 minutes and wrote a multi-KB report with `Finding count: 0`.
-2. The publisher **discarded** clean reports (no advisory), so maintainers could not read what the agent concluded or which files it touched.
-3. The agent CLI log was redirected to a runner file and deleted with the job — never preserved.
-4. Local high-effort audits found concrete Medium/High issues the CI agent missed — so “green + skip advisory” was **not** proof the codebase was clean; it was a visibility + depth gap.
-
-Mitigations in this pilot:
-
-- Always file a draft advisory (clean or not) with report + transcript appendix
-- Inline threat-model / report-format into the prompt; mandatory hunt-area checklist
-- `--share` session transcript, `--no-ask-user`, broader read/grep tools
-- Optional email of the same package
-
-Outcome: the next scheduled-equivalent run produced 6 findings (max `high`) in draft advisory `GHSA-32qr-qvr3-vqfc`, matching the local high-effort audit. The depth gap was the prompt and the discarded-report behaviour, not the reasoning effort alone.
-
 ## Outputs
 
-- **Every run:** private draft advisory (report + transcript appendix)
-- **Optional:** email to `SECURITY_AUDIT_NOTIFY_EMAIL`
+- **Every CI run:** private draft advisory (report + transcript appendix)
+- **Scheduled `full` only:** email to `SECURITY_AUDIT_NOTIFY_EMAIL` when configured
 - **PR label runs:** public comment with **counts only**
-- **No auto-fix PRs** in this pilot — confirm via **security-finding-triage**, then implement
-
-## Dedup
-
-CI and Cursor audits must read `findings-ledger.md` and skip concepts already `open` / `fixed` / `rejected` / `accepted-risk` unless a regression is evidenced. That stops the same High themes from spawning duplicate drafts every week.
+- **No auto-fix PRs** — confirm via **security-finding-triage**, then implement

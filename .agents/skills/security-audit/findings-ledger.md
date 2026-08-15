@@ -1,5 +1,7 @@
 # Security findings ledger
 
+Issuebridge threat pack (ledger rows). Procedure: [SKILL.md](SKILL.md).
+
 Fingerprint-only registry for Issuebridge security findings. **Public repo safe:** no attack paths, no exploit detail, no secrets. Full write-ups live in draft GitHub Security Advisories (admins only).
 
 The **security-audit** agent must read this file before filing findings and must not re-file a concept that already has status `open`, `fixed`, `rejected`, or `accepted-risk` unless evidence shows a **regression** or material change (document why in Notes).
