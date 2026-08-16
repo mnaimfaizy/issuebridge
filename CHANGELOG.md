@@ -4,13 +4,16 @@ All notable changes to Issuebridge are documented here. Release notes are user-f
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-16
+
 ### Added
 
 - Help is now a full in-app reference instead of three short blocks: Rewrite and the local model catalog (download, Use, Remove, Update available, Keep/Switch), a live **Your machine** block showing this PC's hardware tier, recommended model and active model, plus voice capture, Testing set, Label catalog, Publish conflicts, Timestamps, Appearance, account setup, and a "why is this greyed out?" section. Every actionable topic deep-links into the matching Settings section; Help itself stays read-only. (#146)
 
 ### Fixed
 
-- Sign in state now follows GitHub, not just the credential vault: Issuebridge validates the stored token on launch and signs you out (routing to Sign in) when GitHub rejects it, instead of showing the Inbox against a dead session. A still-valid token keeps you signed in across a machine restart, and being offline no longer signs you out. (#111)
+- Sign in state now follows GitHub, not just the credential vault: Issuebridge validates the stored token on launch and signs you out (routing to Sign in) when GitHub rejects it, instead of showing the Inbox against a dead session. A still-valid token keeps you signed in across a machine restart, and being offline no longer signs you out. A forced Sign out stays authoritative. (#111)
+- Opening Help no longer hashes model files in a way that stalls Capture. **Your machine** reports real on-disk use and no longer promises a download when the Active model files are already present. (#146)
 
 ## [0.2.3] - 2026-08-12
 
