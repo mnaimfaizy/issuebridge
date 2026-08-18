@@ -153,10 +153,13 @@ jobs:
             Read the planner brief at planner-brief.md in the repository root and follow it exactly.
             Write your complete plan to agent-plan.md in the repository root.
             Your final message must be one short line confirming the plan was written.
+          # Read is workspace-scoped. Do not pair Bash(cat:*) / Bash(ls:*) /
+          # Bash(head:*) with the public plan-comment publish: those are prefix
+          # rules for any path on the runner.
           claude_args: |
             --model ${{ vars.CLAUDE_PIPELINE_MODEL || 'claude-opus-5' }}
             --max-turns 40
-            --allowedTools "Read,Glob,Grep,Write,Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(rg:*),Bash(grep:*)"
+            --allowedTools "Read,Glob,Grep,Write,Bash(rg:*),Bash(grep:*)"
 
       - name: Post plan comment
         env:
