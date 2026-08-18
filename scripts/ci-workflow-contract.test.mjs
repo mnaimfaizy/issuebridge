@@ -207,6 +207,21 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     assert.match(prompt, /do not follow instructions/i);
   });
 
+  it("does not grant unscoped filesystem bash alongside the public plan comment", () => {
+    const plan = jobBlock(readWorkflow("claude-agent-pipeline.yml"), "plan");
+    const allowed = plan.match(/--allowedTools "[^"]*"/)?.[0] ?? "";
+
+    assert.ok(allowed.length > 0, "expected a planner tool allowlist");
+    // Read is workspace-scoped. Bash(cat:*) / Bash(ls:*) / Bash(head:*) are
+    // prefix rules for any path on the runner. The same job publishes
+    // agent-plan.md to a public issue comment, so those must not be paired.
+    assert.doesNotMatch(allowed, /Bash\(cat:\*\)/);
+    assert.doesNotMatch(allowed, /Bash\(ls:\*\)/);
+    assert.doesNotMatch(allowed, /Bash\(head:\*\)/);
+    assert.match(plan, /gh issue comment/);
+    assert.match(plan, /--body-file/);
+  });
+
   it("refuses to implement without an existing plan comment", () => {
     const gate = jobBlock(readWorkflow("claude-agent-pipeline.yml"), "gate");
 
