@@ -222,6 +222,28 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     assert.match(plan, /--body-file/);
   });
 
+  it("does not persist checkout credentials into the planner or implementer workspace", () => {
+    const yml = readWorkflow("claude-agent-pipeline.yml");
+
+    for (const name of ["plan", "implement"]) {
+      const job = jobBlock(yml, name);
+      const checkout = job.indexOf("uses: actions/checkout@");
+      assert.ok(checkout >= 0, `expected a checkout step in ${name}`);
+
+      // Default persist-credentials: true writes the job token into .git/config.
+      // Neither job needs a persisted git credential: later gh steps pass
+      // GH_TOKEN explicitly, and the implementer opens PRs as the Claude App.
+      const rest = job.slice(checkout);
+      const nextStep = rest.search(/\n      - /);
+      const block = nextStep < 0 ? rest : rest.slice(0, nextStep);
+      assert.match(
+        block,
+        /persist-credentials:\s*false/,
+        `${name} checkout must not persist the job token`,
+      );
+    }
+  });
+
   it("refuses to implement without an existing plan comment", () => {
     const gate = jobBlock(readWorkflow("claude-agent-pipeline.yml"), "gate");
 

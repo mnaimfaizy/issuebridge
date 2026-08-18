@@ -41,6 +41,8 @@ The **security-finding-triage** skill updates rows after stress-check.
 | `review-brief-untrusted-plan-source`   | Review brief plan lookup has no trusted-author filter       | `.github/workflows/claude-code-review.yml`    | medium   | confirmed | fixed  | GHSA-xccc-p6c7-8v7g | 2026-08-15 |
 | `whisper-model-weak-sha1-pin`          | Whisper model fetched from mutable ref and pinned only by SHA-1 | `scripts/fetch-whisper-assets.ps1`        | medium   | rejected  | rejected | GHSA-xccc-p6c7-8v7g | 2026-08-15 |
 | `plan-agent-read-exfil-tools`          | Planner allowlist pairs unscoped read with a public comment channel | `.github/workflows/claude-agent-pipeline.yml` | high | confirmed | fixed | GHSA-8cvh-rmq6-v2g5 | 2026-08-18 |
+| `build-root-sidecar-candidate-planting` | Sidecar candidate lists start at the compile-time crate root | `src-tauri/src/adapters/whisper_voice.rs` | medium | rejected | rejected | GHSA-8cvh-rmq6-v2g5 | 2026-08-18 |
+| `agent-pipeline-persisted-checkout-credentials` | Agent-pipeline checkouts persist the job token into the workspace | `.github/workflows/claude-agent-pipeline.yml` | medium | confirmed | fixed | GHSA-8cvh-rmq6-v2g5 | 2026-08-18 |
 
 ## Remediation notes
 
@@ -57,6 +59,8 @@ The **security-finding-triage** skill updates rows after stress-check.
 - `review-brief-untrusted-plan-source`: **fixed 2026-08-15** — review brief plan lookup requires `github-actions[bot]` and `startswith` on the marker; `jq -s add` merges paginated comment pages. Contract tests reject a marker-only selector. No Release/GHSA publication (ci-maintainer).
 - `whisper-model-weak-sha1-pin`: **rejected 2026-08-15** — claimed locator and SHA-1 gate still present; the gate fails closed. Below Medium: a reviewed content pin already rejects a substituted object, and beating that pin is not a plausible attacker assumption. Distinct from `sidecar-download-no-integrity` (no pin on executable archives). Reopen if the pin is removed, skipped on the official Release fetch, or no longer a reviewed constant.
 - `plan-agent-read-exfil-tools`: **fixed 2026-08-18** — planner allowlist drops unscoped `Bash(cat:*)` / `Bash(ls:*)` / `Bash(head:*)` and keeps workspace-scoped Read/Grep. Contract test rejects the pairing with the public plan-comment publish. Distinct from `review-agent-read-exfil-tools` (review workflow). No Release/GHSA publication (ci-maintainer).
+- `build-root-sidecar-candidate-planting`: **rejected 2026-08-18** — claimed locator still present: voice and Rewrite candidate lists start at `env!("CARGO_MANIFEST_DIR")` and admit the first existing path. Below Medium as shipped: official Release bakes a runner crate path that does not exist on user machines, so discovery fails closed to the install root. Dev preferring the crate `binaries/` folder is the trusted build root from `relative-sidecar-cwd-exec`. Reopen if a packaged build prefers a commonly writable baked path, or if compile-time crate-root discovery is used without an existence fail-closed to the install root.
+- `agent-pipeline-persisted-checkout-credentials`: **fixed 2026-08-18** — plan and implement checkouts set `persist-credentials: false`. Contract tests reject a persisted job token in those workspaces. Distinct from `plan-agent-read-exfil-tools` (allowlist pairing) and `review-agent-read-exfil-tools` (review workflow). No Release/GHSA publication (ci-maintainer).
 
 ## How to update
 
