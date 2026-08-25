@@ -115,6 +115,17 @@ powershell -ExecutionPolicy Bypass -File scripts/release-build.ps1
 `scripts/release-build.ps1` checks the packaging contract, refuses to build without client id + exchange URL (and refuses if `ISSUEBRIDGE_GITHUB_CLIENT_SECRET` is set), fetches Whisper + llama.cpp assets (unless `-SkipWhisperFetch` / `-SkipLlamaFetch`), and runs `npm run tauri -- build`. CI: `.github/workflows/release-windows.yml` (tag `v*` or workflow_dispatch). Add repo secret `ISSUEBRIDGE_OAUTH_EXCHANGE_URL`.
 
 Dev/`tauri build` without those env vars still packages. Local `tauri dev` may use runtime `ISSUEBRIDGE_OAUTH_EXCHANGE_URL` or runtime `ISSUEBRIDGE_GITHUB_CLIENT_SECRET` — the client secret is **never** compile-time-injected into release binaries.
+
+### Cutting a Release
+
+Preflight the cut from clean, merged `main`, then tag:
+
+```bash
+npm run preflight:release -- v0.3.1
+```
+
+The workflow builds the installer, attaches it, and publishes the GitHub Release only once the `*-setup.exe` is attached. Full procedure, the `release` environment tag policy, and troubleshooting: [`docs/release-process.md`](docs/release-process.md).
+
 ## Architecture
 
 - `src-tauri/src/core` — Issuebridge application core (use-cases + ports)

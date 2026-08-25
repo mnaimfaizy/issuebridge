@@ -1,9 +1,13 @@
-# Official Windows NSIS release build (v0.1).
+# Official Windows NSIS release build.
 # Bakes public client id + OAuth exchange URL at compile time; never the client secret.
+#
+# Order matters (#126): preflight -> build -> verify installer -> attach asset ->
+# publish. A Release is only flipped out of draft once its *-setup.exe is attached,
+# so a successful run never leaves an assetless Release. See docs/release-process.md.
 #
 # Repository secrets / vars (Settings -> Secrets and variables -> Actions):
 #   ISSUEBRIDGE_GITHUB_CLIENT_ID
-#   ISSUEBRIDGE_OAUTH_EXCHANGE_URL  (HTTPS URL of the exchange Worker or cPanel PHP)
+#   ISSUEBRIDGE_OAUTH_EXCHANGE_URL
 
 name: Release Windows NSIS
 
@@ -14,11 +18,47 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  # No `environment:` here on purpose: a protected environment that rejects the
+  # ref fails the job before any step runs, which is how the v0.2.3 cut lost its
+  # first run to a silent policy mismatch. This job is admitted unconditionally
+  # so the policy diagnostic is always visible in the log.
+  preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      # Read-only; `actions`/`deployments` let the preflight read the `release`
+      # environment's deployment ref policy before the build job hits it.
+      actions: read
+      contents: read
+      deployments: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so the tagged commit can be proved merged into main.
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Release preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/check-release-preflight.mjs \
+            --ref "$GITHUB_REF" \
+            --environment release \
+            --on-base origin/main
+
   windows-nsis:
+    needs: preflight
     runs-on: windows-latest
+    permissions:
+      contents: write
     environment:
       name: release
     steps:
@@ -46,6 +86,11 @@ jobs:
           ISSUEBRIDGE_OAUTH_EXCHANGE_URL: ${{ secrets.ISSUEBRIDGE_OAUTH_EXCHANGE_URL }}
         run: powershell -ExecutionPolicy Bypass -File scripts/release-build.ps1
 
+      # Exactly one non-trivial *-setup.exe carrying this tag's version, checked
+      # before anything is published.
+      - name: Verify installer
+        run: node scripts/check-release-asset.mjs --ref "$env:GITHUB_REF"
+
       - name: Upload setup.exe (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
@@ -53,14 +98,72 @@ jobs:
           path: src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
 
-      # Attach installer to the GitHub Release for tag pushes so users get a
-      # stable /releases/download/.../*.exe URL (Actions artifacts are not that).
-      - name: Attach setup.exe to GitHub Release
+      # Notes for a Release this run has to create itself. A Release that already
+      # exists keeps the body it already has — see the body_path guard below.
+      - name: Release notes from CHANGELOG
+        id: notes
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          node scripts/check-release-preflight.mjs --ref "$GITHUB_REF" --notes-out release-notes.md
+          if [ -s release-notes.md ]; then
+            echo "body_path=release-notes.md" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Keep an already-published Release published (idempotent rerun); create or
+      # keep an unpublished one as a draft until the installer is attached.
+      #
+      # Listing releases succeeds whether or not this tag has one, so any failure
+      # here is a real API failure and stops the run. Guessing "no Release yet"
+      # would re-draft a published Release and break its download URLs.
+      - name: Resolve existing Release state
+        id: release_state
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          releases="repos/$GITHUB_REPOSITORY/releases?per_page=100"
+          exists=$(gh api "$releases" --jq '[.[] | select(.tag_name == env.TAG)] | length > 0')
+          # `// true` would be wrong here: jq's alternative operator also fires
+          # on a literal false, i.e. on exactly the published Release we must
+          # not re-draft. Branch on length instead.
+          draft=$(gh api "$releases" --jq '[.[] | select(.tag_name == env.TAG) | .draft] | if length == 0 then true else .[0] end')
+          echo "exists=$exists" >> "$GITHUB_OUTPUT"
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
+
+      - name: Attach setup.exe to the GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: src-tauri/target/release/bundle/nsis/*-setup.exe
           fail_on_unmatched_files: true
-          # Tags with a SemVer pre-release suffix (e.g. v0.1.0-rc.1) are prereleases.
-          # Omit body/name so an existing Release (from the release skill) keeps its notes.
+          draft: ${{ steps.release_state.outputs.draft }}
+          # Tags with a SemVer pre-release suffix (e.g. v0.4.0-rc.1) are prereleases.
           prerelease: ${{ contains(github.ref_name, '-') }}
+          # Seed notes only on a Release this run creates; never overwrite the
+          # body of a Release a maintainer already wrote.
+          body_path: ${{ steps.release_state.outputs.exists == 'false' && steps.notes.outputs.body_path || '' }}
+
+      # Publish only now, and only with the installer attached. `gh release edit`
+      # on an already-published Release is a no-op, so reruns stay safe.
+      - name: Publish Release once the installer is attached
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          attached=$(gh release view "$TAG" --json assets --jq '[.assets[].name | select(endswith("-setup.exe"))] | length')
+          if [ "$attached" -lt 1 ]; then
+            echo "::error::Release $TAG has no *-setup.exe asset; refusing to publish an assetless Release."
+            exit 1
+          fi
+          # --latest takes effect at publish time; make_latest on a draft does not.
+          if [ "$TAG" != "${TAG#*-}" ]; then latest=false; else latest=true; fi
+          gh release edit "$TAG" --draft=false --latest="$latest"
+          gh release view "$TAG" --json isDraft,isPrerelease,assets \
+            --jq '{draft: .isDraft, prerelease: .isPrerelease, assets: [.assets[].name]}'

@@ -99,10 +99,13 @@ Update in one working tree (do not commit unless asked):
 
 3. Show a short summary of files changed and remind the user:
 
-   - Commit (use `commit` skill; often `chore: prepare release X.Y.Z` or `build: …`)
-   - Annotated tag: `vX.Y.Z` or `vX.Y.Z-alpha.N` etc.
-   - Push the tag to trigger `.github/workflows/release-windows.yml` (CI attaches `*-setup.exe` to the GitHub Release automatically on tag pushes)
-   - For beta/rc/stable: create/update the GitHub Release (mark pre-release for alpha/beta/rc) with the same notes before or after the tag; CI uploads the installer asset either way
+   - Commit (use `commit` skill; often `chore: prepare release X.Y.Z` or `build: …`) and merge to `main`
+   - From clean, merged `main`: `npm run preflight:release -- vX.Y.Z` (versions, changelog, tag, `release` environment tag policy)
+   - Annotated tag: `vX.Y.Z` or `vX.Y.Z-alpha.N` etc., on that merged commit
+   - Push the tag to trigger `.github/workflows/release-windows.yml`
+   - **Do not publish a GitHub Release by hand.** The workflow creates it (or reuses an existing **draft**), attaches `*-setup.exe`, and publishes only once the asset is attached. The Release body is generated from the `CHANGELOG.md` section, so edit the changelog rather than the Release.
+
+The mechanics — environment tag policy, publication order, rerun safety, verification — live in [`docs/release-process.md`](../../../docs/release-process.md).
 
 Alpha may be tag + artifact only (notes optional), per `CONTEXT.md`.
 
@@ -122,3 +125,4 @@ First Release line is `0.x.x`; first stable is `0.1.0`.
 - `AGENTS.md` — thin router  
 - `CONTEXT.md` — Release / Pre-release / Release notes language  
 - `README.md` — NSIS release build / CI secrets  
+- `docs/release-process.md` — tag → installer → publish mechanics and troubleshooting
