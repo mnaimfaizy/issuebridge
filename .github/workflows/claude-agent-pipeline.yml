@@ -116,7 +116,7 @@ jobs:
       # Required for the action's default Claude GitHub App authentication.
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The planner never pushes. Leaving the default (true) writes the job
           # token into .git/config, which the agent can read. Later gh steps
@@ -218,7 +218,7 @@ jobs:
     env:
       TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           # The implementer pushes as the Claude GitHub App, not GITHUB_TOKEN.
@@ -230,7 +230,7 @@ jobs:
       # toolchain, so every npm/cargo call is denied and the session burns its
       # turn budget retrying. This replaces what the archived
       # copilot-setup-steps.yml used to provide for the Copilot cloud agent.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -261,7 +261,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Cache Cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/

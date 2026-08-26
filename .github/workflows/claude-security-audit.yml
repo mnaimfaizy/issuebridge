@@ -111,7 +111,7 @@ jobs:
 
           echo "proceed=true" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.gate.outputs.proceed == 'true'
         with:
           fetch-depth: 0

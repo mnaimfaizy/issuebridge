@@ -1,0 +1,14 @@
+# GitHub Action runtimes are floor-checked in CI, not discovered at Release
+
+GitHub annotates any workflow run that uses an action bundled for the deprecated Node.js 20 runtime. The annotation is non-blocking, so it never fails a job — the v0.2.3 Windows Release surfaced it for `actions/checkout@v4`, `actions/setup-node@v4`, `actions/upload-artifact@v4`, and the SHA-pinned `softprops/action-gh-release` v2, which is the worst moment to learn about it (#127). Every JavaScript action in `.github/workflows/` now sits on its current Node.js 24 major — `actions/checkout@v7`, `actions/setup-node@v7`, `actions/cache@v6`, `actions/upload-artifact@v7`, and `softprops/action-gh-release` pinned to the v3.0.2 commit — and `scripts/ci-workflow-contract.test.mjs` enforces a per-action **minimum major** on every normal CI run, so the next drift fails a PR instead of decorating a Release.
+
+The check reads two tables. `NODE_RUNTIME_ACTION_MINIMUMS` records the first major of each JavaScript action whose `runs.using` is `node24`; upgrading past the floor is always allowed, dropping below it is not. `COMPOSITE_ACTIONS` lists actions that declare no Node runtime at all — `dtolnay/rust-toolchain`, `taiki-e/install-action`, `anthropics/claude-code-action` — which is why `dtolnay/rust-toolchain` was deliberately **not** bumped: composite actions run as shell steps on the runner and cannot carry the annotation. An action in neither table fails the classification test, so adding one forces a recorded decision rather than a silent default.
+
+SHA pinning is unchanged. Privileged workflows (`release-windows.yml`, the Claude pipelines) keep immutable commit pins with a trailing `# vN` comment; because a SHA carries no readable version, the drift check treats that comment as the version marker and **requires** it. Bumping a pinned action means resolving the new tag to its commit and updating both halves together.
+
+## Considered Options
+
+- **Bump to the minimum Node.js 24 major (`checkout@v5`, `upload-artifact@v6`) rather than latest** — rejected; it clears the annotation today but re-opens the same upgrade within a release or two. The floor stays at the minimum so the check tolerates both.
+- **SHA-pin the first-party `actions/*` steps too** — rejected here; GitHub-owned actions on floating majors are the existing repo convention, and the contract test already requires SHA pins for third-party actions in `release-windows.yml`.
+- **A scheduled job or Dependabot that queries the GitHub API for newer action majors** — rejected as the primary guard; it needs network and a token, and reports drift asynchronously. The offline table check fails the PR that would ship the drift. Dependabot remains a fine complement.
+- **Fix it during release preflight (#126)** — rejected as the only guard; preflight runs when a release is already in motion, which is precisely the timing this ADR exists to avoid.

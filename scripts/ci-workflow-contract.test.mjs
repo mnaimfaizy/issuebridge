@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -564,6 +564,99 @@ describe("Release workflow supply-chain contract", () => {
         ref,
         /^[0-9a-f]{40}$/,
         `${action} must use an immutable commit SHA`,
+      );
+    }
+  });
+});
+
+/**
+ * Action-runtime drift guard (#127).
+ *
+ * GitHub annotates every run that uses an action still bundled for the
+ * deprecated Node.js 20 runtime. The warning is non-blocking, so it only
+ * surfaces during a Release — too late to fix comfortably. These tables make
+ * the drift fail a normal CI run instead.
+ * Policy: docs/adr/0005-action-runtime-pinning.md.
+ *
+ * Minimum major = the first major of that action whose `runs.using` is
+ * `node24`. Bumping an action past its minimum is always fine; dropping below
+ * it reintroduces the annotation.
+ */
+const NODE_RUNTIME_ACTION_MINIMUMS = {
+  "actions/checkout": 5,
+  "actions/setup-node": 5,
+  "actions/cache": 5,
+  "actions/upload-artifact": 6,
+  "softprops/action-gh-release": 3,
+};
+
+/**
+ * Composite actions. They run as shell steps on the runner, declare no Node
+ * runtime of their own, and so cannot carry the Node 20 annotation. Listing
+ * them explicitly (rather than ignoring unknown actions) means a newly added
+ * action forces a deliberate classification here.
+ */
+const COMPOSITE_ACTIONS = new Set([
+  "dtolnay/rust-toolchain",
+  "taiki-e/install-action",
+  "anthropics/claude-code-action",
+]);
+
+/** Every `uses:` step across the live workflows, with its version comment. */
+function workflowActionUses() {
+  const dir = join(root, ".github", "workflows");
+  return readdirSync(dir)
+    .filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
+    .flatMap((name) => {
+      const yml = readFileSync(join(dir, name), "utf8");
+      return [
+        ...yml.matchAll(
+          /^\s*(?:-\s+)?uses:\s*([^/\s]+\/[^@\s]+)@(\S+)(?:\s*#\s*(.+))?$/gm,
+        ),
+      ].map(([, action, ref, comment]) => ({
+        workflow: name,
+        action,
+        ref,
+        comment: comment?.trim() ?? "",
+      }));
+    });
+}
+
+describe("Action runtime contract (#127)", () => {
+  it("classifies every action as Node-runtime or composite", () => {
+    const unknown = workflowActionUses()
+      .filter(
+        ({ action }) =>
+          !(action in NODE_RUNTIME_ACTION_MINIMUMS) &&
+          !COMPOSITE_ACTIONS.has(action),
+      )
+      .map(({ workflow, action }) => `${workflow}: ${action}`);
+
+    assert.deepEqual(
+      [...new Set(unknown)],
+      [],
+      "new action: record its runtime in NODE_RUNTIME_ACTION_MINIMUMS or COMPOSITE_ACTIONS",
+    );
+  });
+
+  it("runs no maintained action on the deprecated Node.js 20 runtime", () => {
+    for (const { workflow, action, ref, comment } of workflowActionUses()) {
+      const minimum = NODE_RUNTIME_ACTION_MINIMUMS[action];
+      if (minimum === undefined) continue;
+
+      // SHA-pinned steps carry the human-readable version in a trailing
+      // comment; that comment is the only readable version marker, so it is
+      // required rather than optional.
+      const version = /^[0-9a-f]{40}$/.test(ref) ? comment : ref;
+      const major = /^v(\d+)/.exec(version)?.[1];
+
+      assert.ok(
+        major,
+        `${workflow}: ${action}@${ref} needs a "# vN" version comment`,
+      );
+      assert.ok(
+        Number(major) >= minimum,
+        `${workflow}: ${action} ${version} runs on Node.js 20 — upgrade to v${minimum} or newer`,
       );
     }
   });

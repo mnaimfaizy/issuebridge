@@ -8,6 +8,10 @@
 # Repository secrets / vars (Settings -> Secrets and variables -> Actions):
 #   ISSUEBRIDGE_GITHUB_CLIENT_ID
 #   ISSUEBRIDGE_OAUTH_EXCHANGE_URL
+#
+# Action versions are floor-checked by scripts/ci-workflow-contract.test.mjs so a
+# Node.js runtime deprecation fails a PR rather than annotating a Release.
+# See docs/adr/0005-action-runtime-pinning.md.
 
 name: Release Windows NSIS
 
@@ -35,13 +39,13 @@ jobs:
       deployments: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Full history so the tagged commit can be proved merged into main.
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -63,10 +67,10 @@ jobs:
       name: release
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -92,7 +96,7 @@ jobs:
         run: node scripts/check-release-asset.mjs --ref "$env:GITHUB_REF"
 
       - name: Upload setup.exe (Actions artifact)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: issuebridge-windows-nsis
           path: src-tauri/target/release/bundle/nsis/*-setup.exe
@@ -136,7 +140,7 @@ jobs:
 
       - name: Attach setup.exe to the GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: src-tauri/target/release/bundle/nsis/*-setup.exe
           fail_on_unmatched_files: true
