@@ -23,6 +23,28 @@ function jobBlock(yml, name) {
   return next < 0 ? yml.slice(start) : yml.slice(start, start + 1 + next);
 }
 
+/** Every `uses:` step in one workflow, with its ref and trailing version comment. */
+function actionUses(workflowName) {
+  const yml = readWorkflow(workflowName);
+  return [
+    ...yml.matchAll(
+      /^\s*(?:-\s+)?uses:\s*([^/\s]+\/[^@\s]+)@(\S+)(?:\s*#\s*(.+))?$/gm,
+    ),
+  ].map(([, action, ref, comment]) => ({
+    workflow: workflowName,
+    action,
+    ref,
+    comment: comment?.trim() ?? "",
+  }));
+}
+
+/** The same, across every live workflow. */
+function allActionUses() {
+  return readdirSync(join(root, ".github", "workflows"))
+    .filter((name) => name.endsWith(".yml"))
+    .flatMap(actionUses);
+}
+
 describe("PR CI workflow contract (#24)", () => {
   it("triggers on pull_request and push to main", () => {
     const yml = readWorkflow();
@@ -548,12 +570,9 @@ describe("Release workflow supply-chain contract", () => {
   });
 
   it("pins every third-party action to a full commit SHA", () => {
-    const yml = readWorkflow("release-windows.yml");
-    const thirdPartyActions = [
-      ...yml.matchAll(/^\s*uses:\s*([^/\s]+\/[^@\s]+)@([^\s#]+)/gm),
-    ]
-      .map(([, action, ref]) => ({ action, ref }))
-      .filter(({ action }) => !action.startsWith("actions/"));
+    const thirdPartyActions = actionUses("release-windows.yml").filter(
+      ({ action }) => !action.startsWith("actions/"),
+    );
 
     assert.deepEqual(thirdPartyActions.map(({ action }) => action).sort(), [
       "dtolnay/rust-toolchain",
@@ -602,29 +621,18 @@ const COMPOSITE_ACTIONS = new Set([
   "anthropics/claude-code-action",
 ]);
 
-/** Every `uses:` step across the live workflows, with its version comment. */
-function workflowActionUses() {
-  const dir = join(root, ".github", "workflows");
-  return readdirSync(dir)
-    .filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
-    .flatMap((name) => {
-      const yml = readFileSync(join(dir, name), "utf8");
-      return [
-        ...yml.matchAll(
-          /^\s*(?:-\s+)?uses:\s*([^/\s]+\/[^@\s]+)@(\S+)(?:\s*#\s*(.+))?$/gm,
-        ),
-      ].map(([, action, ref, comment]) => ({
-        workflow: name,
-        action,
-        ref,
-        comment: comment?.trim() ?? "",
-      }));
-    });
+/**
+ * The readable version of a step: its tag, or the trailing comment when the
+ * ref is a SHA. A SHA carries no version, so the comment is the only marker.
+ */
+function actionMajor(ref, comment) {
+  const version = /^[0-9a-f]{40}$/.test(ref) ? comment : ref;
+  return { version, major: Number(/^v(\d+)/.exec(version)?.[1]) };
 }
 
 describe("Action runtime contract (#127)", () => {
   it("classifies every action as Node-runtime or composite", () => {
-    const unknown = workflowActionUses()
+    const unknown = allActionUses()
       .filter(
         ({ action }) =>
           !(action in NODE_RUNTIME_ACTION_MINIMUMS) &&
@@ -640,22 +648,18 @@ describe("Action runtime contract (#127)", () => {
   });
 
   it("runs no maintained action on the deprecated Node.js 20 runtime", () => {
-    for (const { workflow, action, ref, comment } of workflowActionUses()) {
+    for (const { workflow, action, ref, comment } of allActionUses()) {
       const minimum = NODE_RUNTIME_ACTION_MINIMUMS[action];
       if (minimum === undefined) continue;
 
-      // SHA-pinned steps carry the human-readable version in a trailing
-      // comment; that comment is the only readable version marker, so it is
-      // required rather than optional.
-      const version = /^[0-9a-f]{40}$/.test(ref) ? comment : ref;
-      const major = /^v(\d+)/.exec(version)?.[1];
+      const { version, major } = actionMajor(ref, comment);
 
       assert.ok(
         major,
         `${workflow}: ${action}@${ref} needs a "# vN" version comment`,
       );
       assert.ok(
-        Number(major) >= minimum,
+        major >= minimum,
         `${workflow}: ${action} ${version} runs on Node.js 20 — upgrade to v${minimum} or newer`,
       );
     }
