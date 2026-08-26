@@ -53,6 +53,7 @@ describe("PR CI workflow contract (#24)", () => {
     assert.match(frontend, /npm run test:help-coverage/);
     assert.match(frontend, /npm run test:packaging/);
     assert.match(frontend, /npm run test:ci-contract/);
+    assert.match(frontend, /npm run test:release-contract/);
     assert.match(frontend, /npm run build/);
     assert.doesNotMatch(frontend, /upload-artifact/);
   });
@@ -94,6 +95,7 @@ describe("PR CI workflow contract (#24)", () => {
     assert.match(pkg.scripts.ci, /test:ui-contracts/);
     assert.match(pkg.scripts.ci, /test:packaging/);
     assert.match(pkg.scripts.ci, /test:ci-contract/);
+    assert.match(pkg.scripts.ci, /test:release-contract/);
     assert.match(pkg.scripts.ci, /test:core/);
     assert.match(pkg.scripts.ci, /build/);
   });

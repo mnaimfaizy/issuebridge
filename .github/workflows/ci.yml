@@ -49,6 +49,9 @@ jobs:
       - name: CI workflow contract
         run: npm run test:ci-contract
 
+      - name: Release workflow contract
+        run: npm run test:release-contract
+
       - name: Frontend build
         run: npm run build
 

@@ -29,6 +29,8 @@ Windows-first Tauri app: capture GitHub issues while testing (hotkey + voice), k
 
 Other skills under [`.agents/skills/`](./.agents/skills/) apply when their descriptions match the task.
 
+Release procedure (tag policy, publication order, verification): [`docs/release-process.md`](./docs/release-process.md).
+
 Security response playbook: [`docs/security-response.md`](./docs/security-response.md). Public reporting: [`SECURITY.md`](./SECURITY.md).
 
 ## Hard constraints (short)
