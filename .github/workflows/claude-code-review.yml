@@ -100,7 +100,7 @@ jobs:
           # Re-apply `agent:review` to request a fresh review after pushing fixes.
           gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --remove-label "agent:review" || true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.gate.outputs.proceed == 'true'
         with:
           fetch-depth: 0
