@@ -231,14 +231,17 @@ jobs:
           prompt: |
             Read the review brief at review-brief.md in the repository root and follow it exactly.
             It contains the fixed point, the spec source, and the full code-review skill.
-          # Read and comment only. No Edit/Write, no unscoped filesystem Bash
-          # (cat/ls), and no npm/cargo/build execution: this job checks out
-          # untrusted PR code, and a reviewer never needs to run it. Use Read
-          # (workspace-scoped) instead of Bash(cat:*) / Bash(ls:*).
+          # Read and comment only. No Edit/Write and no npm/cargo/build
+          # execution: this job checks out untrusted PR code, and a reviewer
+          # never needs to run it. Bash rules are command-prefix rules, not path
+          # rules, so a read command here (cat, ls, head, rg, grep, ...) reaches
+          # the whole runner while this same allowlist holds the public comment
+          # channel. Use the workspace-scoped Read / Glob / Grep tools instead;
+          # the contract test denies by default rather than banning by name.
           claude_args: |
             --model ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-opus-5' }}
             --max-turns 120
-            --allowedTools "Read,Glob,Grep,Task,Agent,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(rg:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"
+            --allowedTools "Read,Glob,Grep,Task,Agent,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"
             --append-system-prompt "This is a non-interactive CI session: ending your turn terminates the run and kills background work. Launch Agent/Task subagents with run_in_background: false (several in one message still run in parallel). Never end your turn until the tracking comment has the aggregated report. If Agent is denied, run the axes sequentially in this session instead."
 
       - name: Fail if the review report was not posted

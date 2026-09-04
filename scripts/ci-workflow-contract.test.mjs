@@ -23,6 +23,43 @@ function jobBlock(yml, name) {
   return next < 0 ? yml.slice(start) : yml.slice(start, start + 1 + next);
 }
 
+// Bash rules are command-prefix rules, not path rules: `Bash(rg:*)` permits that
+// binary with any argument, including absolute paths anywhere the runner user
+// can read. The planner and reviewer jobs both hold a channel that publishes
+// agent-authored text publicly, so their Bash rules are reviewed one by one.
+//
+// This list is a record of deliberate trust decisions, NOT a set of commands
+// proven unable to read an arbitrary path - `git diff --no-index <path>` and
+// `gh pr comment --body-file <path>` can both be pointed at one. They are here
+// because these jobs cannot do their work without them. The contract's job is
+// to make every addition deliberate: deny by default, so a read command added
+// to an allowlist later cannot silently inherit the public channel.
+const REVIEWED_BASH_RULES = new Set([
+  "Bash(git diff:*)",
+  "Bash(git log:*)",
+  "Bash(git show:*)",
+  "Bash(git rev-parse:*)",
+  "Bash(gh pr diff:*)",
+  "Bash(gh pr view:*)",
+  "Bash(gh pr comment:*)",
+]);
+
+/**
+ * Every `Bash…` entry in an `--allowedTools` list, as its literal rule text.
+ * Matches bare `Bash` and `Bash(<anything>)` alike, so a rule that is not in
+ * `cmd:*` form cannot slip past by failing to look like one.
+ */
+function bashEntries(allowlist) {
+  return [...allowlist.matchAll(/Bash(?:\([^)]*\))?/g)].map(([rule]) => rule);
+}
+
+/** Bash entries that no one has signed off on. */
+function unreviewedBashRules(allowlist) {
+  return bashEntries(allowlist).filter(
+    (rule) => !REVIEWED_BASH_RULES.has(rule),
+  );
+}
+
 /** Every `uses:` step in one workflow, with its ref and trailing version comment. */
 function actionUses(workflowName) {
   const yml = readWorkflow(workflowName);
@@ -236,12 +273,14 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     const allowed = plan.match(/--allowedTools "[^"]*"/)?.[0] ?? "";
 
     assert.ok(allowed.length > 0, "expected a planner tool allowlist");
-    // Read is workspace-scoped. Bash(cat:*) / Bash(ls:*) / Bash(head:*) are
-    // prefix rules for any path on the runner. The same job publishes
-    // agent-plan.md to a public issue comment, so those must not be paired.
-    assert.doesNotMatch(allowed, /Bash\(cat:\*\)/);
-    assert.doesNotMatch(allowed, /Bash\(ls:\*\)/);
-    assert.doesNotMatch(allowed, /Bash\(head:\*\)/);
+    // Read / Glob / Grep are workspace-scoped and cover this job's search.
+    // It concatenates the agent-written agent-plan.md into a public issue
+    // comment verbatim, so it carries no reviewed Bash rule at all.
+    assert.deepEqual(
+      unreviewedBashRules(allowed),
+      [],
+      "planner allowlist holds a Bash rule that is not on the reviewed list",
+    );
     assert.match(plan, /gh issue comment/);
     assert.match(plan, /--body-file/);
   });
@@ -417,11 +456,14 @@ describe("Claude code review contract", () => {
     const allowed = yml.match(/--allowedTools "[^"]*"/)?.[0] ?? "";
 
     assert.ok(allowed.length > 0, "expected an explicit tool allowlist");
-    // Read is workspace-scoped. Bash(cat:*) / Bash(ls:*) are prefix rules for
-    // any path on the runner. The same allowlist holds the public comment
-    // channel, so those two must not be paired.
-    assert.doesNotMatch(allowed, /Bash\(cat:\*\)/);
-    assert.doesNotMatch(allowed, /Bash\(ls:\*\)/);
+    // The same allowlist holds the public comment channel and the inline-comment
+    // tool, and this job checks out untrusted PR code, so every Bash rule it
+    // carries has to be one that was reviewed for that pairing.
+    assert.deepEqual(
+      unreviewedBashRules(allowed),
+      [],
+      "reviewer allowlist holds a Bash rule that is not on the reviewed list",
+    );
     assert.match(allowed, /Bash\(gh pr comment:\*\)/);
     assert.match(allowed, /mcp__github_inline_comment__create_inline_comment/);
   });
