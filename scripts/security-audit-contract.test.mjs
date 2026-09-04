@@ -122,6 +122,52 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
     assert.doesNotMatch(fullTools, /npm audit/);
   });
 
+  it("does not persist checkout credentials into the audit workspace", () => {
+    const checkout = yml.indexOf("uses: actions/checkout@");
+    const restore = yml.indexOf("Restore trusted audit runtime from PR base");
+
+    assert.ok(checkout >= 0, "expected a checkout step");
+    assert.ok(restore > checkout, "checkout must precede the restore step");
+
+    // Default persist-credentials: true writes the job token into .git/config,
+    // which this agent reads with a workspace-scoped tool while auditing an
+    // attacker-influenced PR diff. The job never pushes; later gh steps pass
+    // their token explicitly. Matches the pipeline and review workflows.
+    assert.match(yml.slice(checkout, restore), /persist-credentials:\s*false/);
+  });
+
+  it("restores base files without fetching an unadvertised SHA", () => {
+    // persist-credentials: false makes a want anonymous, and GitHub rejects an
+    // anonymous want for an unadvertised object. Fetch the advertised base
+    // branch, and only when the object is missing, matching claude-code-review.
+    for (const heading of [
+      "Restore trusted audit runtime from PR base",
+      "Use trusted publisher script from default branch",
+    ]) {
+      const block = namedStep(yml, heading);
+      assert.doesNotMatch(
+        block,
+        /^\s*git fetch[^\n]*origin "\$BASE_SHA"/m,
+        `${heading} must not fetch a raw SHA`,
+      );
+      // Anchored on ^{commit}: restore_from_base() also runs `git cat-file -e
+      // "$BASE_SHA:<path>"`, which would satisfy a looser pattern even with the
+      // guard deleted.
+      assert.match(
+        block,
+        /if ! git cat-file -e "\$BASE_SHA\^\{commit\}"/,
+        `${heading} must guard the fetch on the object being absent`,
+      );
+      assert.match(block, /git fetch[^\n]*origin "\$BASE_BRANCH"/);
+      // Unset under `set -u` would abort the job, so the env must supply it.
+      assert.match(
+        block,
+        /BASE_BRANCH:\s*\$\{\{\s*github\.event\.pull_request\.base\.ref\s*\}\}/,
+        `${heading} must define BASE_BRANCH in its env`,
+      );
+    }
+  });
+
   it("pins every third-party action in the audit workflow to a commit SHA", () => {
     const refs = [
       ...yml.matchAll(/^\s*uses:\s*([^/\s]+\/[^@\s]+)@([^\s#]+)/gm),

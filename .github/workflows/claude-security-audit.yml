@@ -116,6 +116,10 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Leaving the default (true) writes the job token into .git/config,
+          # which the agent can read while auditing an attacker-influenced PR
+          # diff. This job never pushes; the gh steps below pass their own token.
+          persist-credentials: false
 
       - name: Restore trusted audit runtime from PR base
         if: >-
@@ -123,9 +127,18 @@ jobs:
           github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # Named BASE_BRANCH, not BASE_REF: the brief step below already uses
+          # BASE_REF for the base *SHA*, and one file must not give one name two
+          # meanings.
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
-          git fetch --no-tags origin "$BASE_SHA"
+          # persist-credentials: false makes a want anonymous, and GitHub rejects
+          # an anonymous want for an unadvertised object. The base branch is
+          # advertised; skip the fetch when the object is already present.
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin "$BASE_BRANCH"
+          fi
 
           restore_from_base() {
             local path="$1"
@@ -413,10 +426,17 @@ jobs:
           github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # See the note on BASE_BRANCH in the restore step above.
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
           # Avoid executing a PR-modified publisher with the privileged PAT (F3 class).
-          git fetch --no-tags origin "$BASE_SHA"
+          # persist-credentials: false makes a want anonymous, and GitHub rejects
+          # an anonymous want for an unadvertised object. The base branch is
+          # advertised; skip the fetch when the object is already present.
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin "$BASE_BRANCH"
+          fi
           git checkout "$BASE_SHA" -- \
             .github/security-audit/publish-draft-advisory.sh \
             .github/security-audit/notify-email.sh
