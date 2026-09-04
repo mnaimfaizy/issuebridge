@@ -30,6 +30,39 @@ function toolAllowlists(yml) {
   return { prTools, fullTools };
 }
 
+// Bash rules are command-prefix rules, not path rules: `Bash(cat:*)` permits
+// that binary with any argument, so it reads anywhere the runner user can, not
+// just the workspace. This agent runs over attacker-influenced PR text and its
+// report reaches a world-readable log, so its Bash rules are reviewed one by
+// one. Deny by default — enumerate what is permitted, never what is banned.
+//
+// Read / Glob / Grep are the workspace-scoped tools the audit procedure asks
+// for; nothing in the Skill or prompt shells out. `find` is deliberately absent:
+// `find -exec` runs arbitrary commands and would escape this list entirely.
+// Deliberately not the same set as the one in ci-workflow-contract.test.mjs,
+// which guards the planner and reviewer: this job has no public comment channel,
+// so it needs no `gh pr` rule, and it enumerates `git ls-files` because `find`
+// was removed. Each workflow's set is its own trust decision — keep them apart,
+// and change one without assuming the other should follow.
+const REVIEWED_BASH_RULES = new Set([
+  "Bash(git diff:*)",
+  "Bash(git log:*)",
+  "Bash(git show:*)",
+  "Bash(git ls-files:*)",
+]);
+
+/** Every `Bash…` entry in an allowlist, as its literal rule text. */
+function bashEntries(allowlist) {
+  return [...allowlist.matchAll(/Bash(?:\([^)]*\))?/g)].map(([rule]) => rule);
+}
+
+/** Allowlist entries no one has signed off on. */
+function unreviewedBashRules(allowlist) {
+  return bashEntries(allowlist).filter(
+    (rule) => !REVIEWED_BASH_RULES.has(rule),
+  );
+}
+
 describe("security-audit Skill / prompt / workflow contract (#150)", () => {
   const yml = readWorkflow();
   const skill = readRepo(".agents", "skills", "security-audit", "SKILL.md");
@@ -116,10 +149,55 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
     const { prTools, fullTools } = toolAllowlists(yml);
     for (const tools of [prTools, fullTools]) {
       assert.doesNotMatch(tools, /Agent|Task|Spawn|Skill/);
-      assert.doesNotMatch(tools, /Bash\((?:npm|cargo|curl|gh|osv)/);
       assert.doesNotMatch(tools, /WebFetch|WebSearch/);
     }
     assert.doesNotMatch(fullTools, /npm audit/);
+    // Bash rules are covered by the deny-by-default test below, which is
+    // strictly stronger than naming npm / cargo / curl / gh / osv here.
+  });
+
+  it("does not grant unscoped filesystem bash in either mode", () => {
+    const { prTools, fullTools } = toolAllowlists(yml);
+
+    // FULL_TOOLS builds on PR_TOOLS, so resolve the reference the way the shell
+    // would or pr-mode rules go unchecked in full mode. Match the reference
+    // itself rather than testing the result for leftovers: `${PR_TOOLS}` and
+    // bare `$PR_TOOLS` both interpolate in shell, and a plain string replace of
+    // the braced form leaves the bare form silently unresolved.
+    const reference = fullTools.match(/\$\{PR_TOOLS\}|\$PR_TOOLS\b/);
+    assert.ok(reference, "expected FULL_TOOLS to build on PR_TOOLS");
+    const resolvedFull = fullTools.replace(reference[0], prTools);
+
+    // pr mode audits attacker-authored code and needs no shell at all.
+    assert.deepEqual(
+      bashEntries(prTools),
+      [],
+      "pr allowlist must hold no Bash rule",
+    );
+    assert.deepEqual(
+      unreviewedBashRules(resolvedFull),
+      [],
+      "full allowlist holds a Bash rule that is not on the reviewed list",
+    );
+  });
+
+  it("gives the agent step no tool grant beyond the resolved allowlist", () => {
+    // The allowlist variable is only worth guarding if its consumer cannot widen
+    // it: a second --allowedTools, or a flag that skips the permission check,
+    // would bypass every assertion above.
+    const scan = namedStep(yml, "Run security audit (Claude Code)");
+    const grants = [...scan.matchAll(/--allowedTools/g)];
+    assert.equal(grants.length, 1, "expected exactly one --allowedTools grant");
+    assert.match(
+      scan,
+      /--allowedTools "\$\{\{ steps\.tools\.outputs\.allowed \}\}"/,
+    );
+    // Only flags that widen or skip the check. --disallowedTools narrows, so it
+    // is not banned here.
+    assert.doesNotMatch(
+      yml,
+      /--dangerously-skip-permissions|--permission-mode/,
+    );
   });
 
   it("does not persist checkout credentials into the audit workspace", () => {

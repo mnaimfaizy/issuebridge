@@ -351,8 +351,15 @@ jobs:
           #
           # The agent reads workspace grounding files. It does not run lockfile scanners
           # or fetch advisories. No spawn / worker tools.
-          PR_TOOLS='Read,Glob,Grep,Write,Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(rg:*),Bash(grep:*)'
-          FULL_TOOLS="${PR_TOOLS},Bash(find:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git ls-files:*)"
+          # Read / Glob / Grep are workspace-scoped and cover everything the
+          # audit procedure asks for; nothing in the Skill or prompt shells out
+          # to a read command. Bash rules are command-prefix rules, not path
+          # rules, so cat / ls / head / rg / grep would each reach the whole
+          # runner, including process state holding this job's credentials.
+          # `find` is worse than a read: `find -exec` runs arbitrary commands.
+          # The contract test denies by default rather than banning by name.
+          PR_TOOLS='Read,Glob,Grep,Write'
+          FULL_TOOLS="${PR_TOOLS},Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git ls-files:*)"
 
           if [ "$MODE" = "pr" ]; then
             echo "allowed=$PR_TOOLS" >> "$GITHUB_OUTPUT"
