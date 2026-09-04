@@ -29,6 +29,8 @@ Windows-first Tauri app: capture GitHub issues while testing (hotkey + voice), k
 
 Other skills under [`.agents/skills/`](./.agents/skills/) apply when their descriptions match the task.
 
+**Windows clones:** `.claude/skills` → `.agents/skills` and `CLAUDE.md` → `AGENTS.md` are git symlinks. Clone with `git clone -c core.symlinks=true …`, or git writes them out as plain text files and no project skill loads. Repair an existing clone with `git config core.symlinks true && rm -f .claude/skills CLAUDE.md && git checkout -- .claude/skills CLAUDE.md`.
+
 Release procedure (tag policy, publication order, verification): [`docs/release-process.md`](./docs/release-process.md).
 
 Security response playbook: [`docs/security-response.md`](./docs/security-response.md). Public reporting: [`SECURITY.md`](./SECURITY.md).
