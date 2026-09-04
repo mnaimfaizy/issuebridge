@@ -122,6 +122,15 @@ jobs:
             git fetch --no-tags origin "$BASE_REF"
           fi
 
+          # Enumerated before anything is touched, and NUL-delimited: git quotes a
+          # path containing non-ASCII bytes by default, and a quoted path neither
+          # matches a filter nor resolves back to a file.
+          MEMORY_LIST="$(mktemp)"
+          {
+            git ls-files -z
+            git ls-tree -r -z --name-only "$BASE_SHA"
+          } | sort -z -u > "$MEMORY_LIST"
+
           restore_from_base() {
             local path="$1"
             if git cat-file -e "$BASE_SHA:$path" 2>/dev/null; then
@@ -141,6 +150,24 @@ jobs:
           do
             restore_from_base "$path"
           done
+
+          # The list above names root paths only. Claude Code also loads CLAUDE.md /
+          # CLAUDE.local.md from subdirectories on demand and reads .claude/rules
+          # recursively, so a memory file deeper in the tree would still reach the
+          # agent as instructions. Enumerate both trees before touching anything: a
+          # candidate present at base is restored from it, one the PR introduced is
+          # removed. AGENTS.md is swept too, though Claude Code reads CLAUDE.md
+          # rather than AGENTS.md, so that a rename cannot smuggle one back in.
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              CLAUDE.md|CLAUDE.local.md|AGENTS.md|.mcp.json) ;;
+              */CLAUDE.md|*/CLAUDE.local.md|*/AGENTS.md|*/.mcp.json) ;;
+              .claude|.claude/*|*/.claude|*/.claude/*) ;;
+              *) continue ;;
+            esac
+            restore_from_base "$path"
+          done < "$MEMORY_LIST"
+          rm -f "$MEMORY_LIST"
           echo "Review runtime restored from PR base $BASE_SHA"
 
       - name: Build review brief

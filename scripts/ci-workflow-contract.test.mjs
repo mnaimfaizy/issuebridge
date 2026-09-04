@@ -487,6 +487,48 @@ describe("Claude code review contract", () => {
     }
   });
 
+  it("sweeps agent memory files from anywhere in the reviewed tree", () => {
+    const yml = readWorkflow("claude-code-review.yml");
+    // Scope to the step, not a span across steps: a slice reaching the next
+    // steps would let an unrelated `git ls-files` satisfy these assertions.
+    const start = yml.indexOf("Restore trusted review runtime from PR base");
+    const rest = yml.slice(start + 1);
+    const next = rest.search(/^\s+- name:/m);
+    const block =
+      next < 0 ? yml.slice(start) : yml.slice(start, start + 1 + next);
+
+    // Claude Code loads CLAUDE.md / CLAUDE.local.md from subdirectories on
+    // demand and reads .claude/rules recursively, so a memory file the PR adds
+    // below the root reaches the reviewer as instructions. Assert the code
+    // rather than the comment beside it, which repeats every one of these names.
+    assert.match(block, /git ls-files -z/, "must enumerate the head tree");
+    assert.match(
+      block,
+      /git ls-tree -r -z --name-only "\$BASE_SHA"/,
+      "must enumerate the base tree so a deleted memory file is restored too",
+    );
+    assert.match(
+      block,
+      /\*\/CLAUDE\.md\|\*\/CLAUDE\.local\.md\|\*\/AGENTS\.md\|\*\/\.mcp\.json/,
+      "sweep must match memory files at any depth",
+    );
+    assert.match(
+      block,
+      /\.claude\|\.claude\/\*\|\*\/\.claude\|\*\/\.claude\/\*/,
+      "sweep must match a .claude directory at any depth, bare or with children",
+    );
+    assert.match(
+      block,
+      /while IFS= read -r -d '' path; do/,
+      "sweep must iterate the enumerated candidates",
+    );
+    assert.match(
+      block,
+      /done < "\$MEMORY_LIST"/,
+      "sweep must consume the list",
+    );
+  });
+
   it("accepts only a trusted-author plan comment as the review spec source", () => {
     const yml = readWorkflow("claude-code-review.yml");
     const start = yml.indexOf("Build review brief");

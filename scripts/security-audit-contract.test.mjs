@@ -246,6 +246,54 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
     }
   });
 
+  it("restores agent memory files from anywhere in the tree, not just the root", () => {
+    const block = namedStep(yml, "Restore trusted audit runtime from PR base");
+
+    // Claude Code loads CLAUDE.md / CLAUDE.local.md from subdirectories on
+    // demand and reads .claude/rules recursively, so a memory file a PR adds
+    // below the root reaches the agent as instructions. A fixed list of root
+    // paths cannot name it: the step has to enumerate candidates from the tree.
+    // Assert the code, not the prose beside it: every name below also appears in
+    // the explanatory comment, so matching the step text alone proves nothing.
+    // Enumerate NUL-delimited — git quotes non-ASCII paths by default, and a
+    // quoted path neither matches a filter nor resolves back to a file.
+    assert.match(block, /git ls-files -z/, "must enumerate the head tree");
+    assert.match(
+      block,
+      /git ls-tree -r -z --name-only "\$BASE_SHA"/,
+      "must enumerate the base tree so a deleted memory file is restored too",
+    );
+    assert.match(
+      block,
+      /\*\/CLAUDE\.md\|\*\/CLAUDE\.local\.md\|\*\/AGENTS\.md\|\*\/\.mcp\.json/,
+      "sweep must match memory files at any depth",
+    );
+    assert.match(
+      block,
+      /\.claude\|\.claude\/\*\|\*\/\.claude\|\*\/\.claude\/\*/,
+      "sweep must match a .claude directory at any depth, bare or with children",
+    );
+    // An enumeration nothing consumes is dead code.
+    assert.match(
+      block,
+      /while IFS= read -r -d '' path; do/,
+      "sweep must iterate the enumerated candidates",
+    );
+    assert.match(
+      block,
+      /done < "\$MEMORY_LIST"/,
+      "sweep must consume the list",
+    );
+    // The explicit prompt pack still has to be restored whether or not the head
+    // contains it, so the enumeration supplements the list rather than replacing it.
+    for (const trustedPath of [
+      ".github/security-audit/prompt.md",
+      ".agents/skills/security-audit",
+    ]) {
+      assert.match(block, new RegExp(trustedPath.replaceAll(".", "\\.")));
+    }
+  });
+
   it("pins every third-party action in the audit workflow to a commit SHA", () => {
     const refs = [
       ...yml.matchAll(/^\s*uses:\s*([^/\s]+\/[^@\s]+)@([^\s#]+)/gm),
