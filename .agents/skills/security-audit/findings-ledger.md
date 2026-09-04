@@ -49,6 +49,7 @@ The **security-finding-triage** skill updates rows after stress-check.
 | `nested-agent-memory-restore-gap` | Trusted-runtime restore covers only root-level agent instruction files | `.github/workflows/claude-security-audit.yml` + `.github/workflows/claude-code-review.yml` | medium | untriaged | open | GHSA-qhpf-hfrv-p8pm | 2026-09-04 |
 | `rewrite-model-marker-trusted-integrity-cache` | Rewrite model integrity gate trusts a sibling marker file | `src-tauri/src/adapters/file_rewrite_model_store.rs` | medium | untriaged | open | GHSA-qhpf-hfrv-p8pm | 2026-09-04 |
 | `runtime-env-overrides-baked-oauth-endpoint` | Runtime environment overrides the release-baked OAuth exchange endpoint | `src-tauri/src/adapters/github_http.rs` | medium | untriaged | open | GHSA-6vv6-px9q-49jc | 2026-09-04 |
+| `report-metadata-echo-public-log` | Agent-authored report lines are echoed to the public run log | `.github/workflows/claude-security-audit.yml` + `.github/security-audit/publish-draft-advisory.sh` | medium | untriaged | open | GHSA-j97r-x6m4-cjgm | 2026-09-04 |
 
 ## Remediation notes
 
@@ -74,6 +75,7 @@ The **security-finding-triage** skill updates rows after stress-check.
 - `nested-agent-memory-restore-gap`: **untriaged** — the trusted-runtime restore in the audit and review workflows enumerates root paths only, so agent instruction files elsewhere in the tree are neither restored nor removed. Re-check against the skill-tree symlinks added 2026-09-01, which both advisories predate.
 - `rewrite-model-marker-trusted-integrity-cache`: **untriaged** — the at-rest integrity gate prefers a sibling marker file in the same user-writable directory over rehashing. `shipped-product`: any fix carries Release follow-through.
 - `runtime-env-overrides-baked-oauth-endpoint`: **untriaged** — the endpoint resolver reads the runtime environment before the value baked at build time, with no build-profile guard. `shipped-product`: any fix carries Release follow-through.
+- `report-metadata-echo-public-log`: **untriaged** — two steps echo lines read from the agent-authored report to the run log, which is world-readable on this public repository; the workflow's own header states that findings must never reach that log. Filed from `/security-response triage` on 2026-09-04 rather than by an audit run, so it appears in no audit report; the write-up is in the advisory, not here. Distinct from `audit-agent-unscoped-read-tools` (fixed), which was the read side — closing that one does not close this. Severity depends on what the agent can reach: it is medium given the allowlist and checkout fixes merged 2026-09-04, and would be higher if either were reverted.
 
 ## How to update
 
