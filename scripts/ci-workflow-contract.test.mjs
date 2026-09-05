@@ -3,6 +3,11 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  namedStep,
+  stripShellComments,
+  trackedSymlinkTarget,
+} from "./workflow-contract-helpers.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -297,7 +302,7 @@ describe("Claude agent pipeline trust-boundary contract", () => {
       // Neither job needs a persisted git credential: later gh steps pass
       // GH_TOKEN explicitly, and the implementer opens PRs as the Claude App.
       const rest = job.slice(checkout);
-      const nextStep = rest.search(/\n      - /);
+      const nextStep = rest.search(/\n {6}- /);
       const block = nextStep < 0 ? rest : rest.slice(0, nextStep);
       assert.match(
         block,
@@ -491,11 +496,7 @@ describe("Claude code review contract", () => {
     const yml = readWorkflow("claude-code-review.yml");
     // Scope to the step, not a span across steps: a slice reaching the next
     // steps would let an unrelated `git ls-files` satisfy these assertions.
-    const start = yml.indexOf("Restore trusted review runtime from PR base");
-    const rest = yml.slice(start + 1);
-    const next = rest.search(/^\s+- name:/m);
-    const block =
-      next < 0 ? yml.slice(start) : yml.slice(start, start + 1 + next);
+    const block = namedStep(yml, "Restore trusted review runtime from PR base");
 
     // Claude Code loads CLAUDE.md / CLAUDE.local.md from subdirectories on
     // demand and reads .claude/rules recursively, so a memory file the PR adds
@@ -526,6 +527,48 @@ describe("Claude code review contract", () => {
       block,
       /done < "\$MEMORY_LIST"/,
       "sweep must consume the list",
+    );
+  });
+
+  it("restores the whole skill tree the runtime symlink resolves to", () => {
+    const yml = readWorkflow("claude-code-review.yml");
+    const block = stripShellComments(
+      namedStep(yml, "Restore trusted review runtime from PR base"),
+    );
+
+    // `.claude/skills` is a symlink to the whole skill tree, so restoring that
+    // path restores the link, not what it points at. The target is derived
+    // rather than assumed: retargeting the symlink has to fail here instead of
+    // silently pointing the sweep at a tree the runtime no longer loads.
+    const skillTree = trackedSymlinkTarget(root, ".claude/skills");
+    assert.equal(
+      skillTree,
+      ".agents/skills",
+      "runtime skill symlink no longer resolves to the tree the sweep covers",
+    );
+
+    assert.ok(
+      block.includes(`${skillTree}|${skillTree}/*`),
+      `sweep must match every path under ${skillTree}, at any depth`,
+    );
+
+    // Restoring one directory out of the tree is the defect being fixed: every
+    // sibling skill stays PR-authored while the reviewer loads from the link.
+    const singleSkillDir = new RegExp(
+      `${skillTree.replaceAll(".", "\\.")}/[A-Za-z0-9_-]+`,
+    );
+    assert.doesNotMatch(
+      block,
+      singleSkillDir,
+      "restore step must not name one skill directory instead of the tree",
+    );
+
+    // A pull request can replace a tracked symlink with a real directory and
+    // track files under it. Once the link is restored those paths resolve
+    // through it, so removing one would delete what it points at.
+    assert.ok(
+      block.includes('elif resolves_through_symlink "$path"; then'),
+      "removal must not follow a symlinked ancestor into the skill tree",
     );
   });
 

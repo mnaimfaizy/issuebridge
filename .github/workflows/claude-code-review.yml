@@ -131,10 +131,37 @@ jobs:
             git ls-tree -r -z --name-only "$BASE_SHA"
           } | sort -z -u > "$MEMORY_LIST"
 
+          # A pull request can replace a tracked symlink with a real directory and
+          # track files under it. Once the link itself is restored, those paths
+          # resolve through it, so removing one would delete what it points at
+          # rather than anything the pull request added. Only remove a path whose
+          # every parent component is a real directory.
+          resolves_through_symlink() {
+            local path="$1"
+            local parent="${path%/*}"
+            if [ "$parent" = "$path" ]; then
+              return 1
+            fi
+            local walked=""
+            local segment
+            local IFS=/
+            for segment in $parent; do
+              walked="${walked:+$walked/}$segment"
+              if [ -L "$walked" ]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          SKIPPED_THROUGH_LINK=0
+
           restore_from_base() {
             local path="$1"
             if git cat-file -e "$BASE_SHA:$path" 2>/dev/null; then
               git restore --source="$BASE_SHA" --staged --worktree -- "$path"
+            elif resolves_through_symlink "$path"; then
+              SKIPPED_THROUGH_LINK=$((SKIPPED_THROUGH_LINK + 1))
             else
               rm -rf -- "$path"
             fi
@@ -146,7 +173,7 @@ jobs:
             AGENTS.md \
             CLAUDE.md \
             .claude \
-            .agents/skills/code-review
+            .agents/skills
           do
             restore_from_base "$path"
           done
@@ -158,16 +185,24 @@ jobs:
           # candidate present at base is restored from it, one the PR introduced is
           # removed. AGENTS.md is swept too, though Claude Code reads CLAUDE.md
           # rather than AGENTS.md, so that a rename cannot smuggle one back in.
+          # The skill tree is swept for the same reason and cannot ride on the
+          # .claude arm: .claude/skills is a symlink into it, so restoring that
+          # path restores the link rather than the tree it resolves to.
           while IFS= read -r -d '' path; do
             case "$path" in
               CLAUDE.md|CLAUDE.local.md|AGENTS.md|.mcp.json) ;;
               */CLAUDE.md|*/CLAUDE.local.md|*/AGENTS.md|*/.mcp.json) ;;
               .claude|.claude/*|*/.claude|*/.claude/*) ;;
+              .agents/skills|.agents/skills/*) ;;
+              */.agents/skills|*/.agents/skills/*) ;;
               *) continue ;;
             esac
             restore_from_base "$path"
           done < "$MEMORY_LIST"
           rm -f "$MEMORY_LIST"
+          if [ "$SKIPPED_THROUGH_LINK" -gt 0 ]; then
+            echo "Restore skipped $SKIPPED_THROUGH_LINK path(s) resolving through a symlink."
+          fi
           echo "Review runtime restored from PR base $BASE_SHA"
 
       - name: Build review brief
