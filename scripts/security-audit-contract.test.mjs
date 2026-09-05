@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  namedStep,
+  stripShellComments,
+  trackedSymlinkTarget,
+} from "./workflow-contract-helpers.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -12,14 +17,6 @@ function readRepo(...parts) {
 
 function readWorkflow() {
   return readRepo(".github", "workflows", "claude-security-audit.yml");
-}
-
-function namedStep(yml, heading) {
-  const start = yml.indexOf(`- name: ${heading}`);
-  assert.ok(start >= 0, `expected step "${heading}"`);
-  const rest = yml.slice(start + 1);
-  const next = rest.search(/^\s+- name:/m);
-  return next < 0 ? yml.slice(start) : yml.slice(start, start + 1 + next);
 }
 
 function toolAllowlists(yml) {
@@ -61,33 +58,6 @@ function unreviewedBashRules(allowlist) {
   return bashEntries(allowlist).filter(
     (rule) => !REVIEWED_BASH_RULES.has(rule),
   );
-}
-
-/**
- * Shell code with `#` comments removed, whole-line and trailing alike.
- * Assertions about a control must bind to the code, not to the prose beside it:
- * a comment claiming the log is safe is exactly what this contract exists to
- * distrust. A `#` inside quotes is data, not a comment, so quote state is
- * tracked — several patterns here contain `###`.
- */
-function stripShellComments(code) {
-  return code
-    .split("\n")
-    .map((line) => {
-      let quote = null;
-      for (let i = 0; i < line.length; i += 1) {
-        const ch = line[i];
-        if (quote) {
-          if (ch === quote) quote = null;
-        } else if (ch === "'" || ch === '"') {
-          quote = ch;
-        } else if (ch === "#" && (i === 0 || /\s/.test(line[i - 1]))) {
-          return line.slice(0, i);
-        }
-      }
-      return line;
-    })
-    .join("\n");
 }
 
 describe("security-audit Skill / prompt / workflow contract (#150)", () => {
@@ -313,9 +283,11 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
     );
     // The explicit prompt pack still has to be restored whether or not the head
     // contains it, so the enumeration supplements the list rather than replacing it.
+    // The skill entry names the tree, not this job's own directory in it: the
+    // runtime loads every skill through the symlink, so restoring one is not enough.
     for (const trustedPath of [
       ".github/security-audit/prompt.md",
-      ".agents/skills/security-audit",
+      ".agents/skills",
     ]) {
       assert.match(block, new RegExp(trustedPath.replaceAll(".", "\\.")));
     }
@@ -386,6 +358,47 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
     assert.match(operatorDoc, /Sunday 14:00 UTC|Monday 00:00 AEST/);
     assert.match(operatorDoc, /schedule/i);
   });
+  it("restores the whole skill tree the runtime symlink resolves to", () => {
+    const block = stripShellComments(
+      namedStep(yml, "Restore trusted audit runtime from PR base"),
+    );
+
+    // `.claude/skills` is a symlink to the whole skill tree, so restoring that
+    // path restores the link, not what it points at. The target is derived
+    // rather than assumed: retargeting the symlink has to fail here instead of
+    // silently pointing the sweep at a tree the runtime no longer loads.
+    const skillTree = trackedSymlinkTarget(root, ".claude/skills");
+    assert.equal(
+      skillTree,
+      ".agents/skills",
+      "runtime skill symlink no longer resolves to the tree the sweep covers",
+    );
+
+    assert.ok(
+      block.includes(`${skillTree}|${skillTree}/*`),
+      `sweep must match every path under ${skillTree}, at any depth`,
+    );
+
+    // Restoring one directory out of the tree is the defect being fixed: every
+    // sibling skill stays PR-authored while the agent loads from the link.
+    const singleSkillDir = new RegExp(
+      `${skillTree.replaceAll(".", "\\.")}/[A-Za-z0-9_-]+`,
+    );
+    assert.doesNotMatch(
+      block,
+      singleSkillDir,
+      "restore step must not name one skill directory instead of the tree",
+    );
+
+    // A pull request can replace a tracked symlink with a real directory and
+    // track files under it. Once the link is restored those paths resolve
+    // through it, so removing one would delete what it points at.
+    assert.ok(
+      block.includes('elif resolves_through_symlink "$path"; then'),
+      "removal must not follow a symlinked ancestor into the skill tree",
+    );
+  });
+
   it("logs report metadata as closed-set values, never as report lines", () => {
     const sinks = [
       [
