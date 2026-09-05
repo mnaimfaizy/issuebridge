@@ -567,17 +567,11 @@ fn write_temp_sidecar_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::test_env::{env_lock, EnvGuard};
     use crate::core::RewriteStyleInfo;
     use std::fs;
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::Arc;
     use std::time::Duration;
-
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-    }
 
     fn sample_input() -> RewriteInput {
         RewriteInput {
@@ -776,33 +770,5 @@ JSON:\n\
         ));
         fs::write(&path, bytes).unwrap();
         path
-    }
-
-    struct EnvGuard {
-        key: &'static str,
-        prev: Option<std::ffi::OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let prev = std::env::var_os(key);
-            std::env::set_var(key, value);
-            Self { key, prev }
-        }
-
-        fn remove(key: &'static str) -> Self {
-            let prev = std::env::var_os(key);
-            std::env::remove_var(key);
-            Self { key, prev }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.prev {
-                Some(v) => std::env::set_var(self.key, v),
-                None => std::env::remove_var(self.key),
-            }
-        }
     }
 }

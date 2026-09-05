@@ -17,13 +17,30 @@ const API_VERSION: &str = "2022-11-28";
 /// Public install URL for the maintainer GitHub App (selected repositories).
 pub const APP_INSTALL_URL: &str = "https://github.com/apps/issuebridge-dev/installations/new";
 
-/// Maintainer GitHub App client id (public). Override via env at runtime or build time.
+/// Choose between a value fixed at build time and one from the process
+/// environment: a baked value always wins.
+///
+/// Empty counts as absent on both sides, so an environment value cannot blank
+/// out a baked one.
+fn resolve_baked_first(baked: Option<&str>, runtime: Option<&str>) -> Option<String> {
+    baked
+        .filter(|value| !value.is_empty())
+        .or(runtime.filter(|value| !value.is_empty()))
+        .map(str::to_string)
+}
+
+/// Maintainer GitHub App client id (public).
+///
+/// Baked into official builds, which send it to the exchange endpoint, so it is
+/// pinned there for the same reason the endpoint is. Builds with nothing baked
+/// read the environment, which is the documented local override.
 pub fn github_client_id() -> String {
-    std::env::var("ISSUEBRIDGE_GITHUB_CLIENT_ID")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| option_env!("ISSUEBRIDGE_GITHUB_CLIENT_ID").map(str::to_string))
-        .unwrap_or_else(|| "Iv23li6Ao8URyrvbNZOq".to_string())
+    let runtime = std::env::var("ISSUEBRIDGE_GITHUB_CLIENT_ID").ok();
+    resolve_baked_first(
+        option_env!("ISSUEBRIDGE_GITHUB_CLIENT_ID"),
+        runtime.as_deref(),
+    )
+    .unwrap_or_else(|| "Iv23li6Ao8URyrvbNZOq".to_string())
 }
 
 /// GitHub App client secret for **local/dev only** (runtime env).
@@ -35,12 +52,18 @@ pub fn github_client_secret() -> Option<String> {
 }
 
 /// HTTPS endpoint that holds the App client secret and exchanges OAuth codes.
-/// Release builds bake this via `option_env!`; local override via runtime env.
+///
+/// An official build must talk to the endpoint it shipped with — the app says so
+/// itself when sign-in fails — so a process that can set this variable must not
+/// be able to redirect the code exchange. A build with nothing baked, which is
+/// local `tauri dev`, still reads the environment: that is the documented
+/// workflow, and there is nothing else for it to use.
 pub fn oauth_exchange_url() -> Option<String> {
-    std::env::var("ISSUEBRIDGE_OAUTH_EXCHANGE_URL")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| option_env!("ISSUEBRIDGE_OAUTH_EXCHANGE_URL").map(str::to_string))
+    let runtime = std::env::var("ISSUEBRIDGE_OAUTH_EXCHANGE_URL").ok();
+    resolve_baked_first(
+        option_env!("ISSUEBRIDGE_OAUTH_EXCHANGE_URL"),
+        runtime.as_deref(),
+    )
 }
 
 pub const OAUTH_REDIRECT_URI: &str = "http://127.0.0.1:17863/oauth/callback";
@@ -661,6 +684,7 @@ pub fn oauth_exchange_request_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::test_env::{env_lock, EnvGuard};
 
     #[test]
     fn exchange_request_body_has_no_client_secret() {
@@ -685,5 +709,76 @@ mod tests {
             src.contains("option_env!(\"ISSUEBRIDGE_OAUTH_EXCHANGE_URL\")"),
             "exchange URL should support compile-time bake for release"
         );
+    }
+
+    #[test]
+    fn baked_value_wins_over_the_process_environment() {
+        // An official build carries values fixed at build time. The app already
+        // tells users so; the process environment must not redirect them.
+        assert_eq!(
+            resolve_baked_first(
+                Some("https://baked.example"),
+                Some("https://runtime.example")
+            ),
+            Some("https://baked.example".to_string())
+        );
+    }
+
+    #[test]
+    fn process_environment_is_used_when_nothing_is_baked() {
+        // Local `tauri dev` has no baked value, and the docs tell developers to
+        // set this in their terminal. That path has to keep working.
+        assert_eq!(
+            resolve_baked_first(None, Some("https://runtime.example")),
+            Some("https://runtime.example".to_string())
+        );
+    }
+
+    #[test]
+    fn empty_values_count_as_absent_on_both_sides() {
+        assert_eq!(
+            resolve_baked_first(Some(""), Some("https://runtime.example")),
+            Some("https://runtime.example".to_string())
+        );
+        assert_eq!(resolve_baked_first(None, Some("")), None);
+        assert_eq!(resolve_baked_first(Some(""), None), None);
+    }
+
+    #[test]
+    fn shipped_resolvers_agree_with_the_helper_for_this_build() {
+        // Wiring check: each shipped resolver must return what the helper
+        // returns for the way this binary was compiled. With nothing baked,
+        // reading the environment first and reading it last give the same
+        // answer, so this cannot see the pin on its own — ci.yml recompiles
+        // with values baked in and runs these tests again, and that run is
+        // the one that exercises it.
+        let _lock = env_lock();
+        let _url = EnvGuard::set("ISSUEBRIDGE_OAUTH_EXCHANGE_URL", "https://from-env.example");
+        let _id = EnvGuard::set("ISSUEBRIDGE_GITHUB_CLIENT_ID", "id-from-env");
+
+        assert_eq!(
+            oauth_exchange_url(),
+            resolve_baked_first(
+                option_env!("ISSUEBRIDGE_OAUTH_EXCHANGE_URL"),
+                Some("https://from-env.example")
+            )
+        );
+        assert_eq!(
+            github_client_id(),
+            resolve_baked_first(
+                option_env!("ISSUEBRIDGE_GITHUB_CLIENT_ID"),
+                Some("id-from-env")
+            )
+            .unwrap_or_else(|| "Iv23li6Ao8URyrvbNZOq".to_string())
+        );
+    }
+
+    #[test]
+    fn client_id_falls_back_to_the_public_default() {
+        let _lock = env_lock();
+        let _id = EnvGuard::remove("ISSUEBRIDGE_GITHUB_CLIENT_ID");
+        if option_env!("ISSUEBRIDGE_GITHUB_CLIENT_ID").is_none() {
+            assert_eq!(github_client_id(), "Iv23li6Ao8URyrvbNZOq");
+        }
     }
 }

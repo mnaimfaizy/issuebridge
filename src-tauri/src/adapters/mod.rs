@@ -13,6 +13,8 @@ mod keyring_token_store;
 mod llama_rewrite;
 mod oauth_loopback;
 mod system_hardware_probe;
+#[cfg(test)]
+pub(crate) mod test_env;
 mod tray;
 mod whisper_voice;
 

@@ -141,6 +141,38 @@ describe("PR CI workflow contract (#24)", () => {
     assert.doesNotMatch(rust, /tauri build|release-build\.ps1|nsis/i);
   });
 
+  it("runs the rust tests again compiled the way an official build is", () => {
+    // `option_env!` is read when the crate is compiled, so the ordinary test run
+    // has nothing baked — and with nothing baked, reading the environment first
+    // and reading it last return the same value. Without this second run the
+    // pin that keeps an official build on the endpoint it shipped with is never
+    // exercised, and removing it would leave the suite green.
+    const rust = stripShellComments(jobBlock(readWorkflow(), "rust"));
+
+    assert.match(
+      rust,
+      /ISSUEBRIDGE_OAUTH_EXCHANGE_URL:\s*\S+/,
+      "rust job must run the tests once with an endpoint baked in",
+    );
+    assert.match(
+      rust,
+      /ISSUEBRIDGE_GITHUB_CLIENT_ID:\s*\S+/,
+      "rust job must run the tests once with a client id baked in",
+    );
+    // option_env! is not tracked by cargo's fingerprint, so without forcing a
+    // rebuild the baked run would silently reuse the unbaked artifact.
+    assert.match(
+      rust,
+      /touch src-tauri\/src\/adapters\/github_http\.rs/,
+      "baked run must force a rebuild or it reuses the unbaked artifact",
+    );
+    assert.match(
+      rust,
+      /cargo test --manifest-path src-tauri\/Cargo\.toml --lib github_http/,
+      "baked run must actually execute the resolver tests",
+    );
+  });
+
   it("ci gate needs frontend and rust", () => {
     const yml = readWorkflow();
     const ci = jobBlock(yml, "ci");

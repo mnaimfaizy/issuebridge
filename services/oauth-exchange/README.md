@@ -2,7 +2,7 @@
 
 Tiny HTTPS backend that holds the GitHub App **client secret** and exchanges Authorization Code + PKCE tokens for the desktop app.
 
-Official NSIS builds bake only `ISSUEBRIDGE_OAUTH_EXCHANGE_URL` (public). They never embed the client secret.
+Official NSIS builds bake this URL and the public client id at compile time, and prefer the baked values over the process environment. They never embed the client secret.
 
 Free Cloudflare Workers (100k requests/day) is enough for limited users. The same JSON contract works on cPanel PHP if you prefer shared hosting.
 
