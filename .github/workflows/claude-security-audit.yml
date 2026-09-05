@@ -447,8 +447,40 @@ jobs:
 
           echo "Report bytes: $(wc -c < "$REPORT" | tr -d '[:space:]')"
           echo "Session transcript bytes: $(wc -c < "$SESSION" | tr -d '[:space:]')"
-          # Safe metadata only — never dump finding bodies or transcripts to public logs.
-          grep -E '^\- \*\*(Mode|Scope|Date|Max severity|Finding count):\*\*' "$REPORT" || true
+          # The report is written by the agent step and this log is world-readable,
+          # so no line of the report may reach stdout. Read one key at a time and
+          # emit its value only when the whole value matches a closed pattern.
+          # Duplicated in publish-draft-advisory.sh deliberately: this step runs
+          # before the trusted publisher is restored from the base ref, so it must
+          # not source a helper out of the PR-controlled workspace.
+          report_field() {
+            sed -n "s/^- [*][*]$1:[*][*][[:space:]]*//p" "$REPORT" | tail -n 1 | sed 's/[[:space:]]*$//'
+          }
+
+          log_report_field() {
+            local value
+            value="$(report_field "$1")"
+            if [ -z "$value" ]; then
+              echo "$1: (absent)"
+            elif printf '%s' "$value" | grep -qxiE "$2"; then
+              echo "$1: $value"
+            else
+              echo "$1: (unrecognized)"
+            fi
+          }
+
+          echo "Report metadata (validated):"
+          log_report_field "Mode" 'pr|full'
+          log_report_field "Date" '[0-9]{4}-[0-9]{2}-[0-9]{2}'
+          log_report_field "Max severity" 'none|medium|high|critical'
+          log_report_field "Finding count" '[0-9]{1,6}'
+          # Scope is free text by contract, so only its presence is reportable.
+          if grep -qE '^- [*][*]Scope:[*][*]' "$REPORT"; then
+            echo "Scope: present (free text, not logged)"
+          else
+            echo "Scope: (absent)"
+          fi
+
           FCOUNT="$(grep -cE '^### F[0-9]+ [—-]' "$REPORT" || true)"
           echo "F-heading count: $(printf '%s' "$FCOUNT" | tr -d '[:space:]')"
 
