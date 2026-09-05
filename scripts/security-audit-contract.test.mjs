@@ -63,6 +63,33 @@ function unreviewedBashRules(allowlist) {
   );
 }
 
+/**
+ * Shell code with `#` comments removed, whole-line and trailing alike.
+ * Assertions about a control must bind to the code, not to the prose beside it:
+ * a comment claiming the log is safe is exactly what this contract exists to
+ * distrust. A `#` inside quotes is data, not a comment, so quote state is
+ * tracked — several patterns here contain `###`.
+ */
+function stripShellComments(code) {
+  return code
+    .split("\n")
+    .map((line) => {
+      let quote = null;
+      for (let i = 0; i < line.length; i += 1) {
+        const ch = line[i];
+        if (quote) {
+          if (ch === quote) quote = null;
+        } else if (ch === "'" || ch === '"') {
+          quote = ch;
+        } else if (ch === "#" && (i === 0 || /\s/.test(line[i - 1]))) {
+          return line.slice(0, i);
+        }
+      }
+      return line;
+    })
+    .join("\n");
+}
+
 describe("security-audit Skill / prompt / workflow contract (#150)", () => {
   const yml = readWorkflow();
   const skill = readRepo(".agents", "skills", "security-audit", "SKILL.md");
@@ -358,5 +385,94 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
     assert.doesNotMatch(operatorDoc, /Copilot CLI/);
     assert.match(operatorDoc, /Sunday 14:00 UTC|Monday 00:00 AEST/);
     assert.match(operatorDoc, /schedule/i);
+  });
+  it("logs report metadata as closed-set values, never as report lines", () => {
+    const sinks = [
+      [
+        "Collect transcript step",
+        stripShellComments(namedStep(yml, "Collect transcript")),
+      ],
+      [
+        "publish-draft-advisory.sh",
+        stripShellComments(
+          readRepo(".github", "security-audit", "publish-draft-advisory.sh"),
+        ),
+      ],
+    ];
+
+    for (const [where, code] of sinks) {
+      // The report is written by the agent and this log is world-readable.
+      // Selecting lines by metadata prefix and emitting them whole was the
+      // defect: the tail of a matched line is unbounded in length and count.
+      assert.ok(
+        !code.includes("Max severity|Finding count"),
+        `${where} still selects report lines by metadata prefix`,
+      );
+
+      // Pattern-independent form of the same rule. A grep that prints matched
+      // lines puts agent-authored report text on stdout whatever it matches, so
+      // every grep reading the report must be testing (-q) or counting (-c).
+      // Each match binds to the nearest `grep` before the report argument, so a
+      // quiet grep earlier on the line cannot vouch for a printing one after it.
+      // A flag letter appearing inside the search pattern itself would fool this;
+      // the literal check above and the value assertions below are the backstop.
+      const reportGreps = [
+        ...code.matchAll(/grep\b((?:(?!grep\b)[^\n])*?)"\$REPORT"/g),
+      ];
+      assert.ok(
+        reportGreps.length > 0,
+        `${where}: expected at least one grep over the report`,
+      );
+      for (const [text, args] of reportGreps) {
+        assert.ok(
+          /(^|\s)-[A-Za-z]*[qc]/.test(args),
+          `${where} reads the report with a printing grep: ${text.trim()}`,
+        );
+      }
+
+      // Each value is matched whole (-x). A prefix match would readmit
+      // arbitrary trailing text on an otherwise well-formed line.
+      assert.ok(
+        code.includes("grep -qxiE"),
+        `${where} lost the whole-value match`,
+      );
+
+      for (const field of ["Mode", "Date", "Max severity", "Finding count"]) {
+        assert.ok(
+          code.includes(`log_report_field "${field}"`),
+          `${where} stopped logging ${field} through the validator`,
+        );
+      }
+
+      assert.ok(code.includes("'pr|full'"), `${where} lost the mode enum`);
+      assert.ok(
+        code.includes("'none|medium|high|critical'"),
+        `${where} lost the severity enum`,
+      );
+      assert.ok(
+        code.includes("'[0-9]{4}-[0-9]{2}-[0-9]{2}'"),
+        `${where} lost the date pattern`,
+      );
+      assert.ok(
+        code.includes("'[0-9]{1,6}'"),
+        `${where} lost the finding-count pattern`,
+      );
+
+      // A value that fails its pattern is replaced, not printed.
+      assert.ok(
+        code.includes("(unrecognized)"),
+        `${where} lost the rejected-value placeholder`,
+      );
+
+      // Scope is free text by contract, so only its presence is reportable.
+      assert.ok(
+        !code.includes('log_report_field "Scope"'),
+        `${where} logs the free-text Scope value`,
+      );
+      assert.ok(
+        code.includes("grep -qE '^- [*][*]Scope:[*][*]'"),
+        `${where} lost the Scope presence check`,
+      );
+    }
   });
 });

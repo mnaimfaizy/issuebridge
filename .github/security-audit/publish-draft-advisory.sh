@@ -30,24 +30,60 @@ out() {
 # Safe metadata only (no finding bodies) — helps debug false cleans in Actions logs.
 echo "Report path: $REPORT"
 echo "Report bytes: $(wc -c < "$REPORT" | tr -d '[:space:]')"
-if grep -E '^\- \*\*(Mode|Scope|Date|Max severity|Finding count):\*\*' "$REPORT" >/dev/null 2>&1; then
-  echo "Report metadata:"
-  grep -E '^\- \*\*(Mode|Scope|Date|Max severity|Finding count):\*\*' "$REPORT" || true
+# The report is written by the agent and this log is world-readable, so no line
+# of the report may reach stdout. Read one key at a time and emit its value only
+# when the whole value matches a closed pattern. Duplicated in the workflow's
+# Collect transcript step deliberately — that step runs before this script is
+# restored from the base ref, so the two cannot share a helper.
+report_field() {
+  sed -n "s/^- [*][*]$1:[*][*][[:space:]]*//p" "$REPORT" | tail -n 1 | sed 's/[[:space:]]*$//'
+}
+
+log_report_field() {
+  local value
+  value="$(report_field "$1")"
+  if [ -z "$value" ]; then
+    echo "$1: (absent)"
+  elif printf '%s' "$value" | grep -qxiE "$2"; then
+    echo "$1: $value"
+  else
+    echo "$1: (unrecognized)"
+  fi
+}
+
+echo "Report metadata (validated):"
+log_report_field "Mode" 'pr|full'
+log_report_field "Date" '[0-9]{4}-[0-9]{2}-[0-9]{2}'
+log_report_field "Max severity" 'none|medium|high|critical'
+log_report_field "Finding count" '[0-9]{1,6}'
+# Scope is free text by contract, so only its presence is reportable.
+if grep -qE '^- [*][*]Scope:[*][*]' "$REPORT"; then
+  echo "Scope: present (free text, not logged)"
+else
+  echo "Scope: (absent)"
 fi
 
 COUNT="$(grep -cE '^### F[0-9]+ [—-]' "$REPORT" || true)"
 COUNT="$(printf '%s' "$COUNT" | tr -d '[:space:]')"
 if [ -z "$COUNT" ]; then COUNT=0; fi
 
-HEADER_COUNT="$(grep -Eie '^\- \*\*Finding count:\*\*[[:space:]]*[0-9]+' "$REPORT" | head -n1 | grep -Eo '[0-9]+$' || true)"
-HEADER_COUNT="$(printf '%s' "${HEADER_COUNT:-}" | tr -d '[:space:]')"
 echo "Parsed F-headings: $COUNT"
-if [ -n "${HEADER_COUNT:-}" ]; then
-  echo "Header Finding count: $HEADER_COUNT"
+
+# The header count is agent-authored, so it is bounded before it reaches the log
+# or the mismatch message. Its value is already reported by log_report_field
+# above; only the mismatch verdict below needs it.
+HEADER_COUNT="$(report_field "Finding count")"
+HEADER_MALFORMED=false
+if [ -n "$HEADER_COUNT" ] && ! printf '%s' "$HEADER_COUNT" | grep -qxE '[0-9]{1,6}'; then
+  HEADER_MALFORMED=true
+  HEADER_COUNT=""
 fi
 
 FORMAT_MISMATCH=false
-if [ "$COUNT" = "0" ] && [ -n "${HEADER_COUNT:-}" ] && [ "$HEADER_COUNT" != "0" ]; then
+if [ "$HEADER_MALFORMED" = "true" ]; then
+  FORMAT_MISMATCH=true
+  echo "WARNING: header Finding count is not a plain number."
+elif [ "$COUNT" = "0" ] && [ -n "$HEADER_COUNT" ] && [ "$HEADER_COUNT" != "0" ]; then
   FORMAT_MISMATCH=true
   echo "WARNING: header Finding count=$HEADER_COUNT but no '### Fn —' headings matched."
 fi
@@ -68,7 +104,7 @@ else
   SUMMARY="[Security audit] ${DATE} — ${COUNT} finding(s), max=${MAX}"
 fi
 if [ "$FORMAT_MISMATCH" = "true" ]; then
-  SUMMARY="[Security audit] ${DATE} — FORMAT MISMATCH (header=${HEADER_COUNT}, headings=0)"
+  SUMMARY="[Security audit] ${DATE} — FORMAT MISMATCH (header=${HEADER_COUNT:-unparseable}, headings=0)"
 fi
 SUMMARY="$(printf '%s' "$SUMMARY" | head -c 1024)"
 
@@ -85,7 +121,7 @@ SUMMARY="$(printf '%s' "$SUMMARY" | head -c 1024)"
   fi
   echo "- Captured at (UTC): $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [ "$FORMAT_MISMATCH" = "true" ]; then
-    echo "- Format mismatch: header Finding count=${HEADER_COUNT} but F-headings=${COUNT}"
+    echo "- Format mismatch: header Finding count=${HEADER_COUNT:-unparseable} but F-headings=${COUNT}"
   fi
 
   if [ -n "$SESSION" ] && [ -f "$SESSION" ] && [ -s "$SESSION" ]; then
