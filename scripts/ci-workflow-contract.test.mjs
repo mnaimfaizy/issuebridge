@@ -49,6 +49,23 @@ const REVIEWED_BASH_RULES = new Set([
   "Bash(gh pr comment:*)",
 ]);
 
+// The implementer is a separate trust decision, so it carries its own list
+// rather than widening the one above. It has to edit, build and verify this
+// repository, and it holds `contents: write`, a live agent token and a push
+// channel. Adding `Bash(npm:*)` to the shared list would quietly grant it to
+// the planner and reviewer as well, which is the opposite of what that list is
+// for. Same rule as above: these are deliberate decisions, not commands proven
+// harmless, and the point is that a rule added here later has to be argued.
+const REVIEWED_IMPLEMENTER_BASH_RULES = new Set([
+  "Bash(npm:*)",
+  "Bash(cargo:*)",
+  "Bash(git status:*)",
+  "Bash(git diff:*)",
+  "Bash(git log:*)",
+  "Bash(gh pr create:*)",
+  "Bash(gh pr view:*)",
+]);
+
 /**
  * Every `Bash…` entry in an `--allowedTools` list, as its literal rule text.
  * Matches bare `Bash` and `Bash(<anything>)` alike, so a rule that is not in
@@ -59,10 +76,8 @@ function bashEntries(allowlist) {
 }
 
 /** Bash entries that no one has signed off on. */
-function unreviewedBashRules(allowlist) {
-  return bashEntries(allowlist).filter(
-    (rule) => !REVIEWED_BASH_RULES.has(rule),
-  );
+function unreviewedBashRules(allowlist, reviewed = REVIEWED_BASH_RULES) {
+  return bashEntries(allowlist).filter((rule) => !reviewed.has(rule));
 }
 
 /** Every `uses:` step in one workflow, with its ref and trailing version comment. */
@@ -394,6 +409,8 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     assert.match(implement, /TAURI_CONFIG:/);
 
     const allowed = implement.match(/--allowedTools "[^"]*"/)?.[0] ?? "";
+
+    assert.ok(allowed.length > 0, "expected an implementer tool allowlist");
     for (const tool of [
       "Edit",
       "Write",
@@ -410,6 +427,16 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     // branches, reading secrets - which is far beyond opening a draft PR.
     assert.doesNotMatch(allowed, /Bash\(gh:\*\)/);
     assert.doesNotMatch(allowed, /Bash\(gh api/);
+
+    // Deny by default, as the planner, reviewer and audit allowlists already
+    // are. This is the job holding `contents: write`, a live agent token and a
+    // push channel, so a rule added here later has to be argued rather than
+    // inherited from the ones it genuinely needs.
+    assert.deepEqual(
+      unreviewedBashRules(allowed, REVIEWED_IMPLEMENTER_BASH_RULES),
+      [],
+      "implementer allowlist holds a Bash rule that is not on its reviewed list",
+    );
   });
 
   it("lets the Claude App open the PR so CI actually runs", () => {
