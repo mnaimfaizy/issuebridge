@@ -4,6 +4,12 @@ All notable changes to Issuebridge are documented here. Release notes are user-f
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-06
+
+### Fixed
+
+- Official Release builds now pin the OAuth exchange endpoint baked in at build time, closing a gap where a runtime environment variable could override it.
+
 ## [0.3.0] - 2026-08-16
 
 ### Added
