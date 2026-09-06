@@ -107,6 +107,19 @@ jobs:
       - name: Tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      - name: Tests (compiled the way an official build is)
+        env:
+          ISSUEBRIDGE_GITHUB_CLIENT_ID: ci-baked-client-id
+          ISSUEBRIDGE_OAUTH_EXCHANGE_URL: https://ci-baked.invalid/exchange
+        run: |
+          # option_env! is read when the crate is compiled, so the run above has
+          # nothing baked. With nothing baked, reading the environment first and
+          # reading it last return the same value, and the pin that keeps an
+          # official build on the endpoint it shipped with is never exercised.
+          # Touch the file so cargo rebuilds it with these values baked in.
+          touch src-tauri/src/adapters/github_http.rs
+          cargo test --manifest-path src-tauri/Cargo.toml --lib github_http
+
   ci:
     needs: [frontend, rust]
     runs-on: ubuntu-latest
