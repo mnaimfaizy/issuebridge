@@ -244,15 +244,38 @@ describe("Claude security audit privilege contract", () => {
     );
     const runAudit = yml.indexOf("Run security audit (Claude Code)");
     const trustedPublisher = yml.indexOf("Use trusted publisher");
-    const firstPatUse = yml.indexOf("secrets.COPILOT_GITHUB_TOKEN");
 
     assert.ok(trustedRuntime >= 0, "expected trusted PR runtime restore step");
     assert.ok(trustedRuntime < runAudit, "restore must precede the scan");
     assert.ok(runAudit < trustedPublisher, "scan must precede the publisher");
-    // The agent step must never see the advisory PAT.
+
+    // The agent step must never see the advisory PAT. What makes a use of it
+    // dangerous is not being early in the file but being inside the window where
+    // PR-authored content is on disk and the agent is running — from the checkout
+    // to the end of the scan. The Gate preflights the PAT before that window
+    // opens, which is why this binds to the window rather than to first use.
+    const scanEnd = yml.indexOf("- name: Collect transcript");
     assert.ok(
-      firstPatUse > runAudit,
-      "advisory PAT must not be exposed before or during the scan",
+      scanEnd > runAudit,
+      "expected the transcript step after the scan",
+    );
+    const exposureWindow = yml.slice(
+      yml.indexOf("- uses: actions/checkout"),
+      scanEnd,
+    );
+    assert.doesNotMatch(
+      exposureWindow,
+      /secrets\.COPILOT_GITHUB_TOKEN/,
+      "advisory PAT must not be exposed between the checkout and the end of the scan",
+    );
+
+    // A step's env is private to that step — unless it is written to $GITHUB_ENV,
+    // which would hand the PAT to every step after it, agent included. The Gate
+    // publishes its verdict through $GITHUB_OUTPUT and must touch nothing else.
+    assert.doesNotMatch(
+      stripShellComments(namedStep(yml, "Gate")),
+      /GITHUB_ENV/,
+      "Gate must not export its env (it holds the advisory PAT) to later steps",
     );
 
     const restore = yml.slice(trustedRuntime, runAudit);
@@ -265,6 +288,36 @@ describe("Claude security audit privilege contract", () => {
     ]) {
       assert.match(restore, new RegExp(trustedPath.replaceAll(".", "\\.")));
     }
+  });
+
+  it("proves the advisory PAT is live before spending an audit on it", () => {
+    const yml = readWorkflow("claude-security-audit.yml");
+    const gate = stripShellComments(namedStep(yml, "Gate"));
+
+    // The publish step is the PAT's only consumer and it runs last, so without a
+    // preflight an expired PAT costs a whole audit: the report exists only in the
+    // runner workspace, which is never uploaded and never logged. The check has to
+    // authenticate the credential, not merely test that the secret is non-empty —
+    // the run this was written for had a populated secret that GitHub rejected.
+    assert.match(
+      gate,
+      /ADVISORY_TOKEN/,
+      "expected the PAT wired into the Gate",
+    );
+    assert.match(
+      gate,
+      /GH_TOKEN="\$ADVISORY_TOKEN"\s+gh\s+api\s+user/,
+      "expected the Gate to authenticate the advisory PAT against the API",
+    );
+
+    // The preflight is only worth having if it stops the job: reaching the agent
+    // with a dead PAT is the failure being prevented.
+    const preflight = gate.slice(gate.indexOf("ADVISORY_TOKEN:-"));
+    assert.match(preflight, /exit 1/, "a rejected PAT must fail the gate");
+    assert.ok(
+      gate.indexOf("gh api user") < gate.indexOf("proceed=true"),
+      "the preflight must run before the gate reports proceed=true",
+    );
   });
 
   it("denies PR-mode audits any code-execution tools", () => {

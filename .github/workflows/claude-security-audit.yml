@@ -69,6 +69,12 @@ jobs:
           EVENT: ${{ github.event_name }}
           PR: ${{ github.event.pull_request.number || 0 }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Preflighted below and never exported. This is the one place the PAT can
+          # appear without widening its exposure: the Gate runs before any checkout,
+          # so no PR-controlled file is on disk yet, and a step's env reaches no
+          # other step. It is deliberately NOT named GH_TOKEN — the gh calls above
+          # are the job token's work, and the PAT must not answer for them.
+          ADVISORY_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           MODE=full
@@ -108,6 +114,33 @@ jobs:
           if [ "$EVENT" = "pull_request" ] && [ "${PR:-0}" != "0" ]; then
             gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --remove-label "agent:security-audit" || true
           fi
+
+          # Preflight the advisory PAT. The publish step is the only consumer, and it
+          # runs last, so a PAT that expired since the previous audit discards a
+          # finished report: the findings exist solely in the runner workspace, which
+          # this workflow deliberately never uploads as an artifact and never prints.
+          # Authenticating here costs one API call and fails in seconds instead.
+          # (Run 34037940766, 2026-09-06, lost a 3-finding report to Bad credentials.)
+          #
+          # `gh api user` needs no scope, so this proves the credential is live, not
+          # that it still carries advisories:write. Expiry is what actually bites —
+          # a fine-grained PAT defaults to a 30-day life.
+          if [ -z "${ADVISORY_TOKEN:-}" ]; then
+            echo "COPILOT_GITHUB_TOKEN missing — cannot create a private draft advisory."
+            exit 1
+          fi
+          TOKEN_ERR="$RUNNER_TEMP/advisory-token.err"
+          if ! GH_TOKEN="$ADVISORY_TOKEN" gh api user --silent 2>"$TOKEN_ERR"; then
+            # gh's diagnostic lands in a world-readable log, so match a status out of
+            # it rather than echoing the line back verbatim.
+            STATUS="$(grep -oE 'HTTP [0-9]{3}' "$TOKEN_ERR" | head -n 1 | grep -oE '[0-9]{3}' || true)"
+            rm -f "$TOKEN_ERR"
+            echo "COPILOT_GITHUB_TOKEN rejected by GitHub (HTTP ${STATUS:-unknown})."
+            echo "Rotate it — fine-grained PAT, Repository security advisories: write."
+            exit 1
+          fi
+          rm -f "$TOKEN_ERR"
+          echo "Advisory PAT accepted."
 
           echo "proceed=true" >> "$GITHUB_OUTPUT"
 

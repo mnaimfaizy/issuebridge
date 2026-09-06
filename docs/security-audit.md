@@ -20,12 +20,14 @@ Issuebridge is **public**. Actions logs and artifacts are world-readable. Delive
 1. Repo variable `CLAUDE_SECURITY_AUDIT_ENABLED=true`
 2. Repo variable `SECURITY_AUDIT_ALLOWLIST=mnaimfaizy` (comma-separated; label + `workflow_dispatch`)
 3. Label `agent:security-audit`
-4. Fine-grained PAT in `COPILOT_GITHUB_TOKEN` with **Repository security advisories: Write** (token owner = admin or security manager)
+4. Fine-grained PAT in `COPILOT_GITHUB_TOKEN` with **Repository security advisories: Write** (token owner = admin or security manager). Give it a long expiry and diarise the rotation — GitHub's form defaults to 30 days, and this PAT is used roughly weekly, so it expires unnoticed between audits.
 5. Optional model override `CLAUDE_SECURITY_AUDIT_MODEL` (default `claude-opus-5`)
 6. Optional email — see below
 7. Optional: enable private vulnerability reporting under repo Settings → Code security
 
 GitHub disables scheduled workflows on public repos after 60 days without activity. `workflow_dispatch` is the manual fallback.
+
+The Gate step authenticates `COPILOT_GITHUB_TOKEN` against the API before the agent runs, and fails the job in seconds if GitHub rejects it. That check exists because the publish step is the PAT's only consumer and it runs last: on 2026-09-06 an expired PAT threw away a completed 3-finding report, which lived only in the runner workspace and is never uploaded or logged. If the Gate reports `COPILOT_GITHUB_TOKEN rejected by GitHub (HTTP 401)`, rotate the PAT and re-dispatch — there is nothing to salvage from the failed run.
 
 ## Model
 
