@@ -20,12 +20,14 @@ Issuebridge is **public**. Actions logs and artifacts are world-readable. Delive
 1. Repo variable `CLAUDE_SECURITY_AUDIT_ENABLED=true`
 2. Repo variable `SECURITY_AUDIT_ALLOWLIST=mnaimfaizy` (comma-separated; label + `workflow_dispatch`)
 3. Label `agent:security-audit`
-4. Fine-grained PAT in `COPILOT_GITHUB_TOKEN` with **Repository security advisories: Write** (token owner = admin or security manager)
+4. Fine-grained PAT in `COPILOT_GITHUB_TOKEN` with **Repository security advisories: Write** (token owner = admin or security manager). Give it a long expiry and diarise the rotation — GitHub's form defaults to 30 days, and this PAT is used roughly weekly, so it expires unnoticed between audits.
 5. Optional model override `CLAUDE_SECURITY_AUDIT_MODEL` (default `claude-opus-5`)
 6. Optional email — see below
 7. Optional: enable private vulnerability reporting under repo Settings → Code security
 
 GitHub disables scheduled workflows on public repos after 60 days without activity. `workflow_dispatch` is the manual fallback.
+
+The Gate step checks `COPILOT_GITHUB_TOKEN` twice before the agent runs, and fails the job in seconds if either check fails: once for liveness (`gh api user`), and once for advisory access, by listing draft advisories. The second check exists because `gh api user` needs no permissions — a live but mis-scoped PAT passes it and still dies at publish. Drafts are the signal rather than the status code: this repo is public, so the advisories endpoint returns `200` even with no credential at all, but drafts stay invisible without advisory access. A zero-draft result fails the gate, which cannot distinguish a mis-scoped token from a repo that genuinely has no drafts — every full audit files one, so an empty list is unusual. That check exists because the publish step is the PAT's only consumer and it runs last: on 2026-09-06 an expired PAT threw away a completed 3-finding report, which lived only in the runner workspace and is never uploaded or logged. If the Gate reports `COPILOT_GITHUB_TOKEN rejected by GitHub (HTTP 401)`, rotate the PAT and re-dispatch — there is nothing to salvage from the failed run.
 
 ## Model
 

@@ -69,6 +69,12 @@ jobs:
           EVENT: ${{ github.event_name }}
           PR: ${{ github.event.pull_request.number || 0 }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Preflighted below and never exported. This is the one place the PAT can
+          # appear without widening its exposure: the Gate runs before any checkout,
+          # so no PR-controlled file is on disk yet, and a step's env reaches no
+          # other step. It is deliberately NOT named GH_TOKEN — the gh calls above
+          # are the job token's work, and the PAT must not answer for them.
+          ADVISORY_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           MODE=full
@@ -108,6 +114,66 @@ jobs:
           if [ "$EVENT" = "pull_request" ] && [ "${PR:-0}" != "0" ]; then
             gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --remove-label "agent:security-audit" || true
           fi
+
+          # Preflight the advisory PAT. The publish step is the only consumer, and it
+          # runs last, so a PAT that expired since the previous audit discards a
+          # finished report: the findings exist solely in the runner workspace, which
+          # this workflow deliberately never uploads as an artifact and never prints.
+          # Authenticating here costs one API call and fails in seconds instead.
+          # (Run 34037940766, 2026-09-06, lost a 3-finding report to Bad credentials.)
+          #
+          # Two checks, because liveness alone is not the failure being prevented.
+          if [ -z "${ADVISORY_TOKEN:-}" ]; then
+            echo "COPILOT_GITHUB_TOKEN missing — cannot create a private draft advisory."
+            exit 1
+          fi
+          TOKEN_ERR="$RUNNER_TEMP/advisory-token.err"
+
+          # 1. Liveness. `gh api user` needs no permissions, so this catches only an
+          # expired or revoked credential — the 2026-09-06 failure. A fine-grained
+          # PAT defaults to a 30-day life against a weekly audit.
+          if ! GH_TOKEN="$ADVISORY_TOKEN" gh api user --silent 2>"$TOKEN_ERR"; then
+            # gh's diagnostic lands in a world-readable log, so match a status out of
+            # it rather than echoing the line back verbatim.
+            STATUS="$(grep -oE 'HTTP [0-9]{3}' "$TOKEN_ERR" | head -n 1 | grep -oE '[0-9]{3}' || true)"
+            rm -f "$TOKEN_ERR"
+            echo "COPILOT_GITHUB_TOKEN rejected by GitHub (HTTP ${STATUS:-unknown})."
+            echo "Rotate it — fine-grained PAT, Repository security advisories: write."
+            exit 1
+          fi
+
+          # 2. Permission. A live but mis-scoped PAT — the shape a fresh rotation
+          # produces when the permission is mis-set — passes check 1 and still fails
+          # at publish, discarding the audit exactly as an expired one does.
+          #
+          # The status code cannot carry this signal: this repository is public, so
+          # the advisories endpoint answers 200 to callers with no credential at all.
+          # Draft advisories are the discriminator. They are invisible without
+          # Repository security advisories access, so an unauthorised caller gets
+          # 200 with an empty list where an authorised one sees every draft.
+          # (Verified 2026-09-07: unauthenticated ?state=draft returned 200 and zero
+          # drafts; an authorised token returned 8.) per_page=1 because only
+          # existence matters, and `length` keeps advisory content out of the log.
+          DRAFTS="$(GH_TOKEN="$ADVISORY_TOKEN" gh api \
+            "repos/${GITHUB_REPOSITORY}/security-advisories?state=draft&per_page=1" \
+            --jq 'length' 2>"$TOKEN_ERR" || true)"
+          if ! printf '%s' "${DRAFTS:-}" | grep -qxE '[0-9]+'; then
+            STATUS="$(grep -oE 'HTTP [0-9]{3}' "$TOKEN_ERR" | head -n 1 | grep -oE '[0-9]{3}' || true)"
+            rm -f "$TOKEN_ERR"
+            echo "COPILOT_GITHUB_TOKEN could not list draft advisories (HTTP ${STATUS:-unknown})."
+            exit 1
+          fi
+          rm -f "$TOKEN_ERR"
+          if [ "$DRAFTS" = "0" ]; then
+            # Deliberately fatal, and deliberately ambiguous in the message: the API
+            # cannot distinguish these two causes. Failing here is loud and fixed in
+            # minutes; the alternative is discarding a finished audit at publish.
+            echo "COPILOT_GITHUB_TOKEN sees no draft advisories. Either it lacks"
+            echo "Repository security advisories access, or this repository genuinely"
+            echo "has none — every full audit files one, so an empty list is unusual."
+            exit 1
+          fi
+          echo "Advisory PAT accepted (live, and can read draft advisories)."
 
           echo "proceed=true" >> "$GITHUB_OUTPUT"
 
