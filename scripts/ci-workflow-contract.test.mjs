@@ -310,8 +310,33 @@ describe("Claude security audit privilege contract", () => {
       "expected the Gate to authenticate the advisory PAT against the API",
     );
 
+    // Liveness is not sufficient on its own. `gh api user` needs no permissions,
+    // so a live PAT with the advisory permission mis-set — what a careless
+    // rotation produces — passes it and still fails at publish, discarding the
+    // audit just as an expired one does. The permission has to be probed too.
+    assert.match(
+      gate,
+      /security-advisories\?state=draft/,
+      "expected the Gate to probe advisory access, not just token liveness",
+    );
+
+    // The probe must read drafts, not merely reach the endpoint. This repository
+    // is public, so the advisories endpoint answers 200 with an empty list to a
+    // caller holding no credential at all; a check that accepted any 2xx would
+    // pass for precisely the mis-scoped token it exists to catch.
+    const zeroCheck = '"$DRAFTS" = "0"';
+    assert.ok(
+      gate.includes(zeroCheck),
+      "expected the Gate to test the draft count it read",
+    );
+    assert.match(
+      gate.slice(gate.indexOf(zeroCheck), gate.indexOf(zeroCheck) + 400),
+      /exit 1/,
+      "seeing zero draft advisories must fail the gate",
+    );
+
     // The preflight is only worth having if it stops the job: reaching the agent
-    // with a dead PAT is the failure being prevented.
+    // with an unusable PAT is the failure being prevented.
     const preflight = gate.slice(gate.indexOf("ADVISORY_TOKEN:-"));
     assert.match(preflight, /exit 1/, "a rejected PAT must fail the gate");
     assert.ok(
