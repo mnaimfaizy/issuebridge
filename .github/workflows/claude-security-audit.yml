@@ -518,7 +518,7 @@ jobs:
             and nothing else.
           claude_args: |
             --model ${{ steps.tools.outputs.model }}
-            --max-turns 60
+            --max-turns 100
             --allowedTools "${{ steps.tools.outputs.allowed }}"
 
       - name: Collect transcript
