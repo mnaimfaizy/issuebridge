@@ -310,7 +310,7 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
   it("keeps the default model at Opus 5 with the existing override and turn budget", () => {
     assert.match(yml, /claude-opus-5/);
     assert.match(yml, /CLAUDE_SECURITY_AUDIT_MODEL/);
-    assert.match(yml, /--max-turns 60/);
+    assert.match(yml, /--max-turns 100/);
     assert.doesNotMatch(yml, /claude-fable|fable-5/i);
   });
 
