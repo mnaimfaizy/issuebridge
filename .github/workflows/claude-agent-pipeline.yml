@@ -19,7 +19,8 @@
 # CI (.github/workflows/ci.yml) triggers on `pull_request` targeting main. GitHub does not
 # start workflow runs for events raised by GITHUB_TOKEN, so a PR opened with GITHUB_TOKEN
 # would get no CI. In tag mode the action pushes and opens the PR as the Claude GitHub App,
-# so CI fires normally. Do not add a `github_token:` input to that step.
+# so CI fires normally. Do not add a `github_token:` input to that step. The planner is
+# the opposite case: it never pushes, so it passes the job token and holds no id-token.
 
 name: Claude agent pipeline
 
@@ -113,8 +114,6 @@ jobs:
     permissions:
       contents: read
       issues: write
-      # Required for the action's default Claude GitHub App authentication.
-      id-token: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -154,6 +153,11 @@ jobs:
         uses: anthropics/claude-code-action@239e3a730883eeb5c53db12b0fc9573b3024b126 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The job token, scoped by this job's permissions block. Without this
+          # input the action uses the Claude App token, which can write this
+          # repository; the planner reads untrusted issue text and never pushes.
+          # The implementer below is the exception: see the header note.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
             Read the planner brief at planner-brief.md in the repository root and follow it exactly.
             Write your complete plan to agent-plan.md in the repository root.
@@ -168,6 +172,7 @@ jobs:
             --model ${{ vars.CLAUDE_PIPELINE_MODEL || 'claude-opus-5' }}
             --max-turns 40
             --allowedTools "Read,Glob,Grep,Write"
+            --disallowedTools "Read(./.git/**)"
 
       - name: Post plan comment
         env:

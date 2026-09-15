@@ -7,6 +7,7 @@ import {
   namedStep,
   stripShellComments,
   trackedSymlinkTarget,
+  workflowPermissions,
 } from "./workflow-contract-helpers.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -131,10 +132,7 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
     const fetch = namedStep(yml, "Fetch open Dependabot alerts");
     assert.match(fetch, /steps\.gate\.outputs\.mode == 'full'/);
     assert.match(yml, /vulnerability-alerts:\s*read/);
-    assert.doesNotMatch(
-      yml.slice(yml.indexOf("permissions:"), yml.indexOf("jobs:")),
-      /security-events:/,
-    );
+    assert.doesNotMatch(workflowPermissions(yml), /security-events:/);
     assert.match(fetch, /dependabot\/alerts/);
     assert.match(fetch, /state=open/);
     assert.match(fetch, /security-audit-dependabot\.json/);

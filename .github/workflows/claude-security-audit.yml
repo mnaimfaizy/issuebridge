@@ -9,6 +9,8 @@
 # Auth:    CLAUDE_CODE_OAUTH_TOKEN — subscription OAuth token from `claude setup-token`
 #          (Pro/Max/Team/Enterprise; valid one year). Runs bill against the subscription,
 #          not API credits. The token can only make model requests.
+#          GitHub: the job's GITHUB_TOKEN via the action's github_token input, not the
+#          Claude App token — no id-token grant.
 # Secrets: CLAUDE_CODE_OAUTH_TOKEN (required)
 #          COPILOT_GITHUB_TOKEN — advisory publisher PAT. Despite the name it is no longer
 #          used for Copilot: it needs only `Repository security advisories: write` and an
@@ -48,8 +50,6 @@ permissions:
   pull-requests: write
   # Open Dependabot alerts on CI full only (workflow step, not the agent).
   vulnerability-alerts: read
-  # Required for the action's default Claude GitHub App authentication.
-  id-token: write
 
 jobs:
   audit:
@@ -504,6 +504,10 @@ jobs:
         uses: anthropics/claude-code-action@239e3a730883eeb5c53db12b0fc9573b3024b126 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The job token, scoped by the permissions block above. Without this
+          # input the action uses the Claude App token, which can write this
+          # repository; this job reads attacker-influenced text and never pushes.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
             Read the audit brief at security-audit-brief.md in the repository root and follow it exactly.
 
@@ -520,6 +524,7 @@ jobs:
             --model ${{ steps.tools.outputs.model }}
             --max-turns 100
             --allowedTools "${{ steps.tools.outputs.allowed }}"
+            --disallowedTools "Read(./.git/**)"
 
       - name: Collect transcript
         if: steps.gate.outputs.proceed == 'true'
