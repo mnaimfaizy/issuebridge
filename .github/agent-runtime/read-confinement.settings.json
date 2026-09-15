@@ -1,0 +1,16 @@
+{
+  "$comment": "Passed to claude-code-action via the settings input. Registers a PreToolUse hook that confines Read/Grep/Glob to $GITHUB_WORKSPACE. Run through node (no +x bit needed, no jq dependency); $CLAUDE_PROJECT_DIR resolves to the checkout root. See .github/agent-runtime/confine-reads-to-workspace.mjs.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.github/agent-runtime/confine-reads-to-workspace.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -258,6 +258,7 @@ jobs:
             AGENTS.md \
             CLAUDE.md \
             .claude \
+            .github/agent-runtime \
             .github/security-audit/prompt.md \
             .agents/skills
           do
@@ -537,6 +538,11 @@ jobs:
         uses: anthropics/claude-code-action@239e3a730883eeb5c53db12b0fc9573b3024b126 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # A PreToolUse hook confines Read/Glob/Grep to the workspace — an
+          # allowlist entry only pre-approves and cannot revoke the action's base
+          # read grant, so scoping must be a deny decision (see the hook script).
+          # On a PR run it is restored from the base before the agent runs.
+          settings: .github/agent-runtime/read-confinement.settings.json
           # The job token, scoped by the permissions block above. Without this
           # input the action uses the Claude App token, which can write this
           # repository; this job reads attacker-influenced text and never pushes.
