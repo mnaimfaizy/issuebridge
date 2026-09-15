@@ -507,20 +507,20 @@ jobs:
           MODEL: ${{ vars.CLAUDE_SECURITY_AUDIT_MODEL }}
         run: |
           set -euo pipefail
-          # Read-only inspection everywhere. PR mode is deliberately tighter: PR-authored
-          # code is untrusted, so it gets no git execution at all.
+          # Read-only inspection in both modes, and the same tools in each: the
+          # agent reads workspace grounding files and nothing in the Skill or
+          # prompt shells out, so Read / Glob / Grep cover the whole procedure.
           #
-          # The agent reads workspace grounding files. It does not run lockfile scanners
-          # or fetch advisories. No spawn / worker tools.
-          # Read / Glob / Grep are workspace-scoped and cover everything the
-          # audit procedure asks for; nothing in the Skill or prompt shells out
-          # to a read command. Bash rules are command-prefix rules, not path
-          # rules, so cat / ls / head / rg / grep would each reach the whole
-          # runner, including process state holding this job's credentials.
-          # `find` is worse than a read: `find -exec` runs arbitrary commands.
-          # The contract test denies by default rather than banning by name.
+          # No Bash rule. A `Bash(git …:*)` rule is a command-prefix match, not a
+          # flag-checked one, so it admits `git log --output=<path>` / `git diff
+          # --output=<path>` — writes to an arbitrary file the runner user can
+          # reach, outside the workspace the built-in Write tool is confined to.
+          # A later step reads that file with a credential (the advisory PAT, the
+          # email key), so the write is a real sink. Full mode audits the trusted
+          # default-branch tree, not a diff, so it needs no git; PR mode gets the
+          # diff pre-computed into the brief. The contract denies by default.
           PR_TOOLS='Read,Glob,Grep,Write'
-          FULL_TOOLS="${PR_TOOLS},Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git ls-files:*)"
+          FULL_TOOLS="${PR_TOOLS}"
 
           if [ "$MODE" = "pr" ]; then
             echo "allowed=$PR_TOOLS" >> "$GITHUB_OUTPUT"
@@ -632,6 +632,10 @@ jobs:
           # Must be able to create draft advisories (admin/security manager + advisories:write).
           GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          # Defence in depth: resolve gh's config from an empty per-run directory
+          # rather than $HOME, so an ambient hosts.yml cannot redirect this call
+          # while the advisory PAT is set. gh creates the directory if it is absent.
+          GH_CONFIG_DIR: ${{ runner.temp }}/gh-empty-config
           SECURITY_AUDIT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SECURITY_AUDIT_MODE: ${{ steps.gate.outputs.mode }}
           SCRIPT_SHA256: ${{ steps.stage.outputs.publisher_sha256 }}

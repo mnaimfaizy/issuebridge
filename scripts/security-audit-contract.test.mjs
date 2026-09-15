@@ -47,26 +47,16 @@ function toolAllowlists(yml) {
   return { prTools, fullTools, resolvedFull };
 }
 
-// Bash rules are command-prefix rules, not path rules: `Bash(cat:*)` permits
-// that binary with any argument, so it reads anywhere the runner user can, not
-// just the workspace. This agent runs over attacker-influenced PR text and its
-// report reaches a world-readable log, so its Bash rules are reviewed one by
-// one. Deny by default — enumerate what is permitted, never what is banned.
-//
-// Read / Glob / Grep are the workspace-scoped tools the audit procedure asks
-// for; nothing in the Skill or prompt shells out. `find` is deliberately absent:
-// `find -exec` runs arbitrary commands and would escape this list entirely.
-// Deliberately not the same set as the one in ci-workflow-contract.test.mjs,
-// which guards the planner and reviewer: this job has no public comment channel,
-// so it needs no `gh pr` rule, and it enumerates `git ls-files` because `find`
-// was removed. Each workflow's set is its own trust decision — keep them apart,
-// and change one without assuming the other should follow.
-const REVIEWED_BASH_RULES = new Set([
-  "Bash(git diff:*)",
-  "Bash(git log:*)",
-  "Bash(git show:*)",
-  "Bash(git ls-files:*)",
-]);
+// This job holds no reviewed Bash rule at all. A `Bash(cmd:*)` rule is a
+// command-prefix match, not a flag-checked one, so even a "read-only" git
+// subcommand admits a write flag — `git log --output=<path>` and `git diff
+// --output=<path>` write an arbitrary file the runner user can reach, outside
+// the workspace the built-in Write tool is confined to, and a later credentialed
+// step reads that file. Read / Glob / Grep cover the whole procedure; nothing in
+// the Skill or prompt shells out. Deny by default: any Bash rule must be argued
+// onto this set, never inherited. Kept separate from the planner/reviewer set in
+// ci-workflow-contract.test.mjs — each workflow's trust decision is its own.
+const REVIEWED_BASH_RULES = new Set();
 
 /** Every `Bash…` entry in an allowlist, as its literal rule text. */
 function bashEntries(allowlist) {
@@ -255,9 +245,52 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
       "Edit",
       "WebFetch",
     ]);
+    // This job reviews no Bash rule, so every shell entry is unreviewed —
+    // including a "read-only" git subcommand, which admits a write flag.
     assert.deepEqual(
-      unreviewedEntries("Bash(git diff:*),Bash(curl:*),Bash,Bash(git diff)"),
-      ["Bash(curl:*)", "Bash", "Bash(git diff)"],
+      unreviewedEntries("Read,Bash(git diff:*),Bash(curl:*),Bash"),
+      ["Bash(git diff:*)", "Bash(curl:*)", "Bash"],
+    );
+  });
+
+  it("grants the agent no git rule, whose --output flag writes outside the workspace", () => {
+    // A `Bash(git …:*)` rule is a prefix match with no flag analysis, so it
+    // admits `git log --output=<path>` / `git diff --output=<path>`, an
+    // arbitrary-file write a later credentialed step reads. Full mode audits the
+    // tree, not a diff, so it needs no git.
+    const { prTools, resolvedFull } = toolAllowlists(yml);
+    for (const [mode, tools] of [
+      ["pr", prTools],
+      ["full", resolvedFull],
+    ]) {
+      assert.doesNotMatch(
+        tools,
+        /Bash\(\s*git\b/,
+        `${mode} allowlist must grant no git rule`,
+      );
+    }
+  });
+
+  it("neutralizes ambient config for the credentialed consumers, defence in depth", () => {
+    // The git write primitive is gone, but the sink is config a consumer reads
+    // at runtime, so the consumers ignore ambient config too.
+    const notifier = readRepo(".github", "security-audit", "notify-email.sh");
+    assert.match(
+      notifier,
+      /curl -q\b/,
+      "notify-email.sh must call curl -q so it ignores ~/.curlrc while the key is set",
+    );
+
+    const publish = namedStep(
+      yml,
+      "Publish draft Security Advisory (private, always)",
+    );
+    const configDir = publish.match(/GH_CONFIG_DIR:\s*(.+)/)?.[1];
+    assert.ok(configDir, "publish step must pin GH_CONFIG_DIR");
+    assert.match(
+      configDir,
+      /runner\.temp/,
+      "GH_CONFIG_DIR must resolve outside $HOME so a planted gh config is not read",
     );
   });
 
