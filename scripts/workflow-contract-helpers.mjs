@@ -26,6 +26,19 @@ export function namedStep(yml, heading) {
 }
 
 /**
+ * The workflow-level `permissions:` block, before `jobs:`; empty when absent.
+ *
+ * Anchored to column 0 so a job-level block, or the word in a comment, is never
+ * mistaken for it.
+ */
+export function workflowPermissions(yml) {
+  const start = yml.search(/^permissions:\s*$/m);
+  const jobs = yml.search(/^jobs:\s*$/m);
+  assert.ok(jobs >= 0, "expected a jobs: block");
+  return start < 0 || start > jobs ? "" : yml.slice(start, jobs);
+}
+
+/**
  * Shell code with `#` comments removed, whole-line and trailing alike.
  *
  * Assertions about a control must bind to the code, not to the prose beside it:

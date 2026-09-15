@@ -7,6 +7,7 @@ import {
   namedStep,
   stripShellComments,
   trackedSymlinkTarget,
+  workflowPermissions,
 } from "./workflow-contract-helpers.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -780,6 +781,19 @@ describe("Claude code review contract", () => {
     );
 
     const block = yml.slice(verify);
+    // The action comments as whoever its token belongs to. With the job token
+    // that is github-actions[bot], which other workflows also comment as, so the
+    // tracking comment is identified by the link to this run rather than author.
+    const code = stripShellComments(block);
+    assert.match(code, /RUN_LINK="actions\/runs\/\$\{GITHUB_RUN_ID\}\)"/);
+    assert.match(
+      code,
+      /select\(\.user\.login == "github-actions\[bot\]"\) \| select\(\.body \| contains\("'"\$RUN_LINK"'"\)\) \| \.body \| @json'/,
+    );
+    // A re-run keeps the run id: judge only the newest matching comment, or an
+    // earlier attempt's finished report would satisfy the heading checks.
+    assert.match(code, /\| tail -n 1 \| jq -r '\. \/\/ empty'\)/);
+    assert.doesNotMatch(code, /claude\[bot\]/);
     // The incomplete #147 comment had checklist items, not these headings.
     assert.match(block, /## Standards/);
     assert.match(block, /## Spec/);
@@ -817,10 +831,120 @@ describe("Claude workflow supply-chain contract", () => {
       // Subscription auth only - an API key here would bill separately and
       // silently bypass the plan the pipeline is meant to run on.
       assert.doesNotMatch(yml, /anthropic_api_key:/);
-      // Required for the action's default Claude GitHub App authentication.
-      assert.match(yml, /id-token:\s*write/);
     });
   }
+});
+
+// Agent steps that read third-party text and never push. Each authenticates
+// GitHub with the job's own token, so the only GitHub credential its session
+// can hold is the one scoped by that job's `permissions:` block. Without a
+// `github_token` input the action would use the Claude GitHub App token, which
+// can write this repository.
+const JOB_TOKEN_AGENT_STEPS = [
+  {
+    workflow: "claude-security-audit.yml",
+    job: "audit",
+    step: "Run security audit (Claude Code)",
+  },
+  {
+    workflow: "claude-agent-pipeline.yml",
+    job: "plan",
+    step: "Run planner (Claude Code)",
+  },
+  {
+    workflow: "claude-code-review.yml",
+    job: "review",
+    step: "Run code review (Claude Code)",
+  },
+];
+
+// The one agent step that keeps the Claude App token: it pushes and opens the
+// PR, and GitHub starts no CI for a PR opened with GITHUB_TOKEN. It already
+// runs npm and cargo, so it is a separate, already-accepted trust decision.
+const APP_TOKEN_AGENT_STEP = {
+  workflow: "claude-agent-pipeline.yml",
+  job: "implement",
+  step: "Run implementer (Claude Code)",
+};
+
+const AGENT_ACTION_USE = /uses: anthropics\/claude-code-action@/;
+
+describe("Claude agent credential contract", () => {
+  // Read and comment-strip each workflow once, so prose cannot satisfy a check.
+  const workflows = new Map(
+    readdirSync(join(root, ".github", "workflows"))
+      .filter((name) => name.endsWith(".yml"))
+      .map((name) => [name, stripShellComments(readWorkflow(name))]),
+  );
+
+  it("accounts for every claude-code-action step in every workflow", () => {
+    const expected = [...JOB_TOKEN_AGENT_STEPS, APP_TOKEN_AGENT_STEP];
+    for (const [workflow, code] of workflows) {
+      const listed = expected.filter((s) => s.workflow === workflow);
+      assert.equal(
+        [...code.matchAll(new RegExp(AGENT_ACTION_USE, "g"))].length,
+        listed.length,
+        `${workflow} has an agent step this contract does not classify`,
+      );
+      for (const { step } of listed) {
+        assert.match(
+          namedStep(code, step),
+          AGENT_ACTION_USE,
+          `expected "${step}" to be the agent step`,
+        );
+      }
+    }
+  });
+
+  for (const { workflow, job, step } of JOB_TOKEN_AGENT_STEPS) {
+    it(`${step} authenticates GitHub with the job token`, () => {
+      const code = workflows.get(workflow);
+
+      assert.match(
+        namedStep(code, step),
+        /^\s+github_token:\s*\$\{\{\s*secrets\.GITHUB_TOKEN\s*\}\}\s*$/m,
+        `${step} must pass the job token, not fall back to the Claude App token`,
+      );
+      // The App token is exchanged over OIDC. With the job token passed there is
+      // nothing to exchange, so neither the job nor the workflow may keep the grant.
+      assert.doesNotMatch(
+        workflowPermissions(code),
+        /id-token:/,
+        `${workflow} must not grant id-token at workflow level`,
+      );
+      assert.doesNotMatch(
+        jobBlock(code, job),
+        /id-token:/,
+        `${job} must not grant id-token`,
+      );
+    });
+
+    it(`${step} denies built-in reads of the git directory`, () => {
+      const agent = namedStep(workflows.get(workflow), step);
+      const denied = agent.match(/--disallowedTools "([^"]*)"/)?.[1] ?? "";
+
+      // Defence in depth, not the control: it narrows the built-in tools only.
+      assert.ok(
+        denied
+          .split(",")
+          .map((rule) => rule.trim())
+          .includes("Read(./.git/**)"),
+        `${step} must deny Read(./.git/**)`,
+      );
+    });
+  }
+
+  it("keeps the OIDC grant to the job that needs the Claude App token", () => {
+    const { workflow, job, step } = APP_TOKEN_AGENT_STEP;
+    const code = workflows.get(workflow);
+
+    assert.doesNotMatch(namedStep(code, step), /github_token:/);
+    assert.match(jobBlock(code, job), /id-token:\s*write/);
+    const grants = [...workflows.values()].flatMap((yml) => [
+      ...yml.matchAll(/id-token:\s*write/g),
+    ]);
+    assert.equal(grants.length, 1, `only ${job} may grant id-token`);
+  });
 });
 
 describe("Release workflow supply-chain contract", () => {

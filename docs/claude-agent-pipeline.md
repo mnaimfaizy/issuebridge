@@ -16,8 +16,9 @@ subscription. Replaces the Copilot pipeline archived at
 ### 1. Install the Claude GitHub App
 
 Install [github.com/apps/claude](https://github.com/apps/claude) on this repository. The
-action authenticates as this App for git operations, which is what makes CI fire on
-Claude's pull requests.
+implementer authenticates as this App for git operations, which is what makes CI fire on
+Claude's pull requests. The planner, reviewer, and audit use the job's own `GITHUB_TOKEN`
+instead, so their comments appear as `github-actions[bot]`.
 
 ### 2. Mint a subscription token
 
@@ -90,6 +91,13 @@ human-actor checks.
   inspection only. Full mode (scheduled/dispatch, trusted default-branch code) adds
   read-only git subcommands. Lockfile scanners run as workflow steps on `full` only. This is tighter than the archived Copilot
   config, which granted `shell(git:*)`, `shell(cargo:*)`, and `shell(npm:*)`.
+- **Only the implementer holds the Claude App token.** The planner, reviewer, and audit
+  read third-party text and never push, so they authenticate GitHub with the job's
+  `GITHUB_TOKEN`, scoped by each job's `permissions:` block, and deny built-in reads of
+  `.git/`. Only the implementer job grants `id-token: write`. A contract test holds this.
+  Without the App token exchange, the action no longer skips a run whose workflow file
+  differs from the default branch. That check was not a boundary here: anyone who can
+  push a same-repository branch can already run an edited workflow with these secrets.
 - **The reviewer cannot modify or run what it reviews.** `claude-code-review.yml` checks
   out untrusted PR code, so it is granted no `Edit`/`Write` and no `npm`/`cargo` — read,
   reason, comment. It also restores `AGENTS.md`, `CLAUDE.md`, `.claude/` and the

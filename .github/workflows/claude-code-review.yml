@@ -5,6 +5,8 @@
 # quota, and a PR is worth reviewing when a maintainer says so. Apply `agent:review`.
 #
 # Auth:  CLAUDE_CODE_OAUTH_TOKEN — subscription OAuth token from `claude setup-token`.
+#        GitHub: the job's GITHUB_TOKEN via the action's github_token input, not the
+#        Claude App token — no id-token grant; comments post as github-actions[bot].
 # Vars:  CLAUDE_REVIEW_ENABLED=true            (kill switch)
 #        AGENT_PIPELINE_ALLOWLIST=mnaimfaizy   (comma logins; reused)
 #        CLAUDE_REVIEW_MODEL                   (optional; default claude-opus-5)
@@ -36,8 +38,6 @@ concurrency:
 permissions:
   contents: read
   pull-requests: write
-  # Required for the action's default Claude GitHub App authentication.
-  id-token: write
 
 jobs:
   review:
@@ -289,6 +289,11 @@ jobs:
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The job token, which can only read contents and comment. Without this
+          # input the action uses the Claude App token, which can write this
+          # repository; this job reads untrusted PR text and never pushes.
+          # Comments therefore post as github-actions[bot].
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           track_progress: true
           prompt: |
             Read the review brief at review-brief.md in the repository root and follow it exactly.
@@ -304,6 +309,7 @@ jobs:
             --model ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-opus-5' }}
             --max-turns 120
             --allowedTools "Read,Glob,Grep,Task,Agent,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"
+            --disallowedTools "Read(./.git/**)"
             --append-system-prompt "This is a non-interactive CI session: ending your turn terminates the run and kills background work. Launch Agent/Task subagents with run_in_background: false (several in one message still run in parallel). Never end your turn until the tracking comment has the aggregated report. If Agent is denied, run the axes sequentially in this session instead."
 
       - name: Fail if the review report was not posted
@@ -316,11 +322,17 @@ jobs:
 
           # The action reports success when the SDK session ends, even if Claude
           # backgrounded the three axis agents and never posted the report (#147).
+          # The action comments with the job token, as github-actions[bot], which
+          # other workflows comment as too. Its tracking comment links this run;
+          # the closing `)` ends that markdown link so run 123 never matches 1234.
+          # A re-run keeps the run id, so take the newest match, not every match.
+          RUN_LINK="actions/runs/${GITHUB_RUN_ID})"
           BODY=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate \
-            --jq '[.[] | select(.user.login == "claude[bot]")] | last | .body // empty')
+            --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("'"$RUN_LINK"'")) | .body | @json' \
+            | tail -n 1 | jq -r '. // empty')
 
           if [ -z "$BODY" ]; then
-            echo "No claude[bot] comment on PR #${PR} — review did not post."
+            echo "No tracking comment for this run on PR #${PR} — review did not post."
             exit 1
           fi
 
