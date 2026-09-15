@@ -16,6 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+use crate::adapters::system_exec::system_command;
 use crate::core::{
     RewriteEngine, RewriteEngineError, RewriteInput, RewriteProposal, StubRewriteEngine,
 };
@@ -436,7 +437,7 @@ fn run_with_job(
 fn kill_process(pid: u32) {
     #[cfg(windows)]
     {
-        let mut command = Command::new("taskkill");
+        let mut command = system_command("taskkill");
         command
             .args(["/PID", &pid.to_string(), "/F"])
             .stdout(Stdio::null())
@@ -446,7 +447,7 @@ fn kill_process(pid: u32) {
     }
     #[cfg(not(windows))]
     {
-        let _ = Command::new("kill")
+        let _ = system_command("kill")
             .args(["-9", &pid.to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
