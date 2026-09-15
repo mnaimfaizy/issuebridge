@@ -25,14 +25,17 @@ fn system_binary_path(name: &str) -> PathBuf {
 }
 
 /// The Windows system directory. `%SystemRoot%` is a protected system variable;
-/// fall back to the documented default only when it is unset, and never to a
-/// relative path that the search this exists to remove could satisfy.
+/// fall back to the documented default unless it holds an absolute path, so a
+/// relative override (`win`, `C:`) — which `Command::new` would resolve against
+/// the working directory, the exact search this module exists to remove — can
+/// never reach the spawn.
 #[cfg(windows)]
 fn system32_dir() -> PathBuf {
-    let root = std::env::var_os("SystemRoot")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| std::ffi::OsString::from(r"C:\Windows"));
-    PathBuf::from(root).join("System32")
+    std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .filter(|value| value.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("System32")
 }
 
 /// Absolute path to a stock system executable. Prefer the known locations; fall
@@ -92,6 +95,24 @@ mod tests {
             system_binary_path("kill"),
             PathBuf::from(r"C:\Windows\System32\kill.exe")
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_relative_system_root_to_default() {
+        use crate::adapters::test_env::{env_lock, EnvGuard};
+        let _lock = env_lock();
+        // A relative override would otherwise resolve against the working
+        // directory — the substitution this module removes. Both a bare name
+        // and a drive-relative value must fall back to the absolute default.
+        for relative in ["win", "C:", r"..\win"] {
+            let _root = EnvGuard::set("SystemRoot", relative);
+            assert_eq!(
+                system_binary_path("taskkill"),
+                PathBuf::from(r"C:\Windows\System32\taskkill.exe"),
+                "SystemRoot={relative}"
+            );
+        }
     }
 
     #[cfg(not(windows))]

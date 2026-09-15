@@ -13,10 +13,17 @@
 //
 // These are static assertions over the adapter source: the runtime win requires
 // planting and executing a substituted binary, which the triage rules forbid, so
-// the control is asserted at the source instead.
+// the control is asserted at the source instead. The bare-spawn scan is a literal
+// tripwire against the obvious revert (`Command::new("taskkill")`), not a proof —
+// a binding through a variable (`let p = "taskkill"; Command::new(p)`) would slip
+// past it. It is exact today because no adapter spawns `taskkill`/`kill` other
+// than the two production `kill_process` sites; the `ping`/`sleep`/`echo` test
+// helpers are `#[cfg(test)]` and out of the threat model. Assertions match code
+// expressions, never a doc comment, so reverting the fix cannot leave prose that
+// keeps the check green.
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -24,34 +31,51 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const readRepo = (...p) => readFileSync(join(root, ...p), "utf8");
 
-const SPAWN_SITES = [
-  "src-tauri/src/adapters/whisper_voice.rs",
-  "src-tauri/src/adapters/llama_rewrite.rs",
-];
-const PROBE = "src-tauri/src/adapters/system_hardware_probe.rs";
-const MOD = "src-tauri/src/adapters/mod.rs";
-const HELPER = "src-tauri/src/adapters/system_exec.rs";
+const ADAPTERS_DIR = "src-tauri/src/adapters";
+const PROBE = join(ADAPTERS_DIR, "system_hardware_probe.rs");
+const MOD = join(ADAPTERS_DIR, "mod.rs");
+const HELPER = join(ADAPTERS_DIR, "system_exec.rs");
+
+// The adapters whose `kill_process` terminates a sidecar; each must route the
+// spawn through the resolver. Not an exhaustive list of adapters — the bare-name
+// prohibition below covers every adapter file, present and future.
+const PROCESS_TERMINATION_SITES = ["whisper_voice.rs", "llama_rewrite.rs"];
+
+function adapterRustFiles() {
+  return readdirSync(join(root, ADAPTERS_DIR)).filter((f) => f.endsWith(".rs"));
+}
 
 describe("adapter system search-path contract", () => {
-  it("spawns stock system binaries through a resolver, never a bare name", () => {
-    for (const path of SPAWN_SITES) {
-      const src = readRepo(path);
-      // taskkill / kill appear only in production process-termination code;
-      // no test in these files spawns them, so a whole-file check is exact.
+  it("no adapter spawns a process-termination binary by bare name", () => {
+    const files = adapterRustFiles();
+    // Guard the glob itself: an empty or trivially small set would pass vacuously.
+    assert.ok(
+      files.length >= 3,
+      `expected several adapters, found ${files.length}`,
+    );
+    for (const f of files) {
+      const src = readRepo(ADAPTERS_DIR, f);
       assert.doesNotMatch(
         src,
         /Command::new\("taskkill"\)/,
-        `${path} spawns taskkill by bare name`,
+        `${f} spawns taskkill by bare name`,
       );
       assert.doesNotMatch(
         src,
         /Command::new\("kill"\)/,
-        `${path} spawns kill by bare name`,
+        `${f} spawns kill by bare name`,
       );
+    }
+  });
+
+  it("process-termination adapters resolve the binary through system_command()", () => {
+    for (const f of PROCESS_TERMINATION_SITES) {
+      const src = readRepo(ADAPTERS_DIR, f);
+      // Bind to a call site (`= system_command(`), not a mention in a comment.
       assert.match(
         src,
-        /system_command\(/,
-        `${path} must resolve system binaries through system_command()`,
+        /=\s*system_command\(/,
+        `${f} must call system_command() to resolve the binary`,
       );
     }
   });
@@ -75,7 +99,7 @@ describe("adapter system search-path contract", () => {
     );
   });
 
-  it("provides the resolver as a registered adapter module", () => {
+  it("provides the resolver as a registered adapter module anchored to System32", () => {
     assert.match(
       readRepo(MOD),
       /mod system_exec;/,
@@ -87,11 +111,22 @@ describe("adapter system search-path contract", () => {
       /fn system_command\(/,
       "system_exec must expose system_command()",
     );
-    // The Windows resolver must anchor to the system directory, not a bare name.
+    // Anchor to the resolver expressions, not the doc comment: the Windows path
+    // must be composed under System32 and read from the protected system root.
     assert.match(
       helper,
-      /System32/,
-      "the Windows resolver must anchor to the system directory",
+      /\.join\("System32"\)/,
+      "the Windows resolver must compose the path under System32",
+    );
+    assert.match(
+      helper,
+      /var_os\("SystemRoot"\)/,
+      "the Windows resolver must read the system root from the protected variable",
+    );
+    assert.match(
+      helper,
+      /is_absolute\(\)/,
+      "the Windows resolver must reject a relative SystemRoot",
     );
   });
 });
