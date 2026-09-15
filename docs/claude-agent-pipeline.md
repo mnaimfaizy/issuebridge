@@ -107,13 +107,14 @@ human-actor checks.
   reason, comment. It also restores `AGENTS.md`, `CLAUDE.md`, `.claude/` and the
   code-review skill from the PR base, so a PR cannot rewrite the instructions reviewing
   it.
-- **The agent read tools are workspace-scoped, and the whole allowlist is reviewed.** The
-  planner and reviewer grant `Read`/`Glob`/`Grep` bound to the working tree (`(./**)`),
-  not bare — a bare rule is not workspace-scoped — so an out-of-tree read is not
-  pre-approved and, with no approver in CI, is refused, keeping a runner file off the
-  public comment channel. A contract holds every allowlist entry (Bash rules by text,
-  other tools by name) to a reviewed set per job, so a new tool has to be argued on rather
-  than silently inheriting the channel — the same bar the audit workflow already meets.
+- **Every agent allowlist entry is reviewed.** A contract holds the planner, reviewer,
+  implementer and audit allowlists to a reviewed set per job — Bash rules by literal text,
+  other tools by name — so `Task`/`Agent`, an `mcp__*` server, `WebFetch`, or any new tool
+  has to be argued on rather than silently inheriting the public channel. A `--disallowedTools`
+  deny refuses `.git` across the read tools. Confining the read tools to the workspace as a
+  whole is **not** yet in place: an `--allowedTools` entry only pre-approves a call, so it
+  cannot revoke the action's base `Read`/`Glob`/`Grep` grant, and an out-of-tree read is
+  still possible. That gap is tracked in the findings ledger (`agent-allowlist-unscoped-read-tools`).
 - **Untrusted input is fenced.** Issue bodies, PR diffs, and the plan handed to the Spec
   axis are wrapped in explicit `<untrusted_issue_context>` / `<untrusted_pr_diff>` /
   `<untrusted_spec>` markers instructing the model to treat the contents as data, never

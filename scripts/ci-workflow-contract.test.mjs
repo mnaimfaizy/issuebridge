@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-  allowlistEntries,
   namedStep,
   stripShellComments,
   trackedSymlinkTarget,
@@ -69,27 +68,12 @@ const REVIEWED_IMPLEMENTER_BASH_RULES = new Set([
   "Bash(gh pr view:*)",
 ]);
 
-/**
- * Every `Bash…` entry in an `--allowedTools` list, as its literal rule text.
- * Matches bare `Bash` and `Bash(<anything>)` alike, so a rule that is not in
- * `cmd:*` form cannot slip past by failing to look like one.
- */
-function bashEntries(allowlist) {
-  return [...allowlist.matchAll(/Bash(?:\([^)]*\))?/g)].map(([rule]) => rule);
-}
-
-/** Bash entries that no one has signed off on. */
-function unreviewedBashRules(allowlist, reviewed = REVIEWED_BASH_RULES) {
-  return bashEntries(allowlist).filter((rule) => !reviewed.has(rule));
-}
-
-// The non-Bash tools each job may hold, judged by name (a path rule such as
-// `Read(./**)` narrows the grant without needing a change here). The read tools
-// are scoped to the workspace in the allowlist itself, not by these sets. The
-// planner only reads and writes its plan; the reviewer also spawns its three
-// review axes (`Task`/`Agent`) and posts through the sanctioned inline-comment
-// MCP tool. Each set is this job's own trust decision — a new tool has to be
-// argued on, the same bar the audit contract holds.
+// The non-Bash tools each job may hold, judged by name. The planner only reads
+// and writes its plan; the reviewer also spawns its three review axes
+// (`Task`/`Agent`) and posts through the sanctioned inline-comment MCP tool; the
+// implementer edits, and its Read/Glob/Grep come from the action's base list, so
+// only the write tools it names are reviewed here. Each set is this job's own
+// trust decision — a new tool has to be argued on, the bar the audit meets too.
 const REVIEWED_PLANNER_TOOLS = new Set(["Read", "Glob", "Grep", "Write"]);
 const REVIEWED_REVIEWER_TOOLS = new Set([
   "Read",
@@ -99,6 +83,7 @@ const REVIEWED_REVIEWER_TOOLS = new Set([
   "Agent",
   "mcp__github_inline_comment__create_inline_comment",
 ]);
+const REVIEWED_IMPLEMENTER_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
 
 /** Every `uses:` step in one workflow, with its ref and trailing version comment. */
 function actionUses(workflowName) {
@@ -419,7 +404,7 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     assert.match(prompt, /do not follow instructions/i);
   });
 
-  it("holds the planner allowlist to reviewed entries with workspace-scoped reads", () => {
+  it("holds every planner allowlist entry to a reviewed list", () => {
     const plan = jobBlock(readWorkflow("claude-agent-pipeline.yml"), "plan");
     const allowed = plan.match(/--allowedTools "([^"]*)"/)?.[1] ?? "";
 
@@ -435,14 +420,6 @@ describe("Claude agent pipeline trust-boundary contract", () => {
       [],
       "planner allowlist holds an entry that is not on a reviewed list",
     );
-    // The read tools take a path argument, so a bare grant is not workspace-
-    // scoped; bind them to the tree so an out-of-tree read is not pre-approved.
-    for (const tool of ["Read", "Glob", "Grep"]) {
-      assert.ok(
-        allowlistEntries(allowed).includes(`${tool}(./**)`),
-        `planner ${tool} must be scoped to the workspace with (./**)`,
-      );
-    }
     assert.match(plan, /gh issue comment/);
     assert.match(plan, /--body-file/);
   });
@@ -518,7 +495,7 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     assert.match(implement, /dtolnay\/rust-toolchain/);
     assert.match(implement, /TAURI_CONFIG:/);
 
-    const allowed = implement.match(/--allowedTools "[^"]*"/)?.[0] ?? "";
+    const allowed = implement.match(/--allowedTools "([^"]*)"/)?.[1] ?? "";
 
     assert.ok(allowed.length > 0, "expected an implementer tool allowlist");
     for (const tool of [
@@ -538,14 +515,17 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     assert.doesNotMatch(allowed, /Bash\(gh:\*\)/);
     assert.doesNotMatch(allowed, /Bash\(gh api/);
 
-    // Deny by default, as the planner, reviewer and audit allowlists already
-    // are. This is the job holding `contents: write`, a live agent token and a
-    // push channel, so a rule added here later has to be argued rather than
-    // inherited from the ones it genuinely needs.
+    // Deny by default over every entry, as the planner, reviewer and audit
+    // allowlists are. This is the job holding `contents: write`, a live agent
+    // token and a push channel, so a rule added here later — Bash or any other
+    // tool — has to be argued rather than inherited from the ones it needs.
     assert.deepEqual(
-      unreviewedBashRules(allowed, REVIEWED_IMPLEMENTER_BASH_RULES),
+      unreviewedEntries(allowed, {
+        reviewedBash: REVIEWED_IMPLEMENTER_BASH_RULES,
+        reviewedTools: REVIEWED_IMPLEMENTER_TOOLS,
+      }),
       [],
-      "implementer allowlist holds a Bash rule that is not on its reviewed list",
+      "implementer allowlist holds an entry that is not on its reviewed list",
     );
   });
 
@@ -625,9 +605,11 @@ describe("Claude code review contract", () => {
     assert.match(block, /git fetch[^\n]*origin "\$BASE_REF"/);
   });
 
-  it("holds the reviewer allowlist to reviewed entries with workspace-scoped reads", () => {
-    const yml = readWorkflow("claude-code-review.yml");
-    const allowed = yml.match(/--allowedTools "([^"]*)"/)?.[1] ?? "";
+  it("holds every reviewer allowlist entry to a reviewed list", () => {
+    // Scope to the review job first, as the planner test does: a second agent
+    // step added to this file must not let this validate the wrong allowlist.
+    const review = jobBlock(readWorkflow("claude-code-review.yml"), "review");
+    const allowed = review.match(/--allowedTools "([^"]*)"/)?.[1] ?? "";
 
     assert.ok(allowed.length > 0, "expected an explicit tool allowlist");
     // The same allowlist holds the public comment channel and checks out
@@ -641,14 +623,6 @@ describe("Claude code review contract", () => {
       [],
       "reviewer allowlist holds an entry that is not on a reviewed list",
     );
-    // The read tools take a path argument, so a bare grant is not workspace-
-    // scoped; bind them to the tree so an out-of-tree read is not pre-approved.
-    for (const tool of ["Read", "Glob", "Grep"]) {
-      assert.ok(
-        allowlistEntries(allowed).includes(`${tool}(./**)`),
-        `reviewer ${tool} must be scoped to the workspace with (./**)`,
-      );
-    }
     assert.match(allowed, /Bash\(gh pr comment:\*\)/);
     assert.match(allowed, /mcp__github_inline_comment__create_inline_comment/);
   });

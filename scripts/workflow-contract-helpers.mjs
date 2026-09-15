@@ -82,16 +82,27 @@ export function allowlistEntries(allowlist) {
     .filter(Boolean);
 }
 
+/** Every `Bash…` entry in an allowlist, bare `Bash` and `Bash(<anything>)` alike. */
+export function bashEntries(allowlist) {
+  return [...allowlist.matchAll(/Bash(?:\([^)]*\))?/g)].map(([rule]) => rule);
+}
+
+/** The tool name of one allowlist entry — the text before any `(` — or the entry itself. */
+export function toolName(entry) {
+  return entry.match(/^[^(]+/)?.[0] ?? entry;
+}
+
 /**
  * Allowlist entries no one has signed off on. Shell rules are judged by their
  * literal text against `reviewedBash` (a `Bash(cmd:*)` prefix rule is not a
  * path rule, so its exact form is the unit of review); every other tool is
  * judged by name against `reviewedTools`, so narrowing one with a path rule
- * such as `Read(./**)` needs no change here while a new tool always does.
+ * such as `Read(./**)` needs no change here while a new tool always does. A
+ * malformed entry with no name (a stray leading `(`) is unreviewed, not a throw.
  */
 export function unreviewedEntries(allowlist, { reviewedBash, reviewedTools }) {
   return allowlistEntries(allowlist).filter((entry) => {
-    const tool = entry.match(/^[^(]+/)[0];
+    const tool = toolName(entry);
     return tool === "Bash"
       ? !reviewedBash.has(entry)
       : !reviewedTools.has(tool);

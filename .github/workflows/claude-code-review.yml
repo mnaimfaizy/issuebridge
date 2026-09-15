@@ -299,16 +299,16 @@ jobs:
             Read the review brief at review-brief.md in the repository root and follow it exactly.
             It contains the fixed point, the spec source, and the full code-review skill.
           # Read and comment only. No Edit/Write and no npm/cargo/build: this job
-          # checks out untrusted PR code and holds a public comment channel. A
-          # bare `Read` rule is not workspace-scoped — the tools take a path
-          # argument — so the read tools are bound to the working directory with
-          # `(./**)`; an out-of-tree read is then not pre-approved and, with no
-          # approver in CI, is refused. The git/gh Bash rules are reviewed one by
-          # one, and the contract reviews every entry, not only the Bash family.
+          # checks out untrusted PR code and holds a public comment channel. The
+          # git/gh Bash rules are reviewed one by one, and the contract reviews
+          # every entry, not only the Bash family. --disallowedTools refuses
+          # `.git` across the read tools; an --allowedTools entry only pre-approves,
+          # so it cannot by itself confine these tools to the tree — broader
+          # out-of-workspace read confinement is tracked in the ledger, not here.
           claude_args: |
             --model ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-opus-5' }}
             --max-turns 120
-            --allowedTools "Read(./**),Glob(./**),Grep(./**),Task,Agent,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"
+            --allowedTools "Read,Glob,Grep,Task,Agent,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"
             --disallowedTools "Read(./.git/**)"
             --append-system-prompt "This is a non-interactive CI session: ending your turn terminates the run and kills background work. Launch Agent/Task subagents with run_in_background: false (several in one message still run in parallel). Never end your turn until the tracking comment has the aggregated report. If Agent is denied, run the axes sequentially in this session instead."
 
