@@ -1,10 +1,19 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   namedStep,
+  runBlock,
   stepsAfter,
   stripShellComments,
   trackedSymlinkTarget,
@@ -64,23 +73,65 @@ function bashEntries(allowlist) {
   return [...allowlist.matchAll(/Bash(?:\([^)]*\))?/g)].map(([rule]) => rule);
 }
 
-/** Allowlist entries no one has signed off on. */
-function unreviewedBashRules(allowlist) {
-  return bashEntries(allowlist).filter(
-    (rule) => !REVIEWED_BASH_RULES.has(rule),
-  );
-}
-
-// The non-shell half of the same decision. `Write` is here deliberately: the
-// agent must write its report, and a path rule does not narrow it. What it can
-// reach is held instead by the staging contract below — no credentialed step
-// runs code from the workspace this tool writes into.
-const REVIEWED_TOOL_RULES = new Set(["Read", "Glob", "Grep", "Write"]);
+// The non-shell half of the same decision, matched by tool name: narrowing an
+// entry with a path rule, such as `Read(./**)`, needs no edit here, while a new
+// tool always does. `Write` is here deliberately: the agent must write its
+// report. What it can reach is held instead by the staging contract below — no
+// credentialed step runs code from the workspace this tool writes into.
+const REVIEWED_TOOLS = new Set(["Read", "Glob", "Grep", "Write"]);
 
 /** Every entry in an allowlist, splitting on commas outside a rule's parens. */
 function allowlistEntries(allowlist) {
   return [...allowlist.matchAll(/[^,(]+(?:\([^)]*\))?/g)]
     .map(([entry]) => entry.trim())
+    .filter(Boolean);
+}
+
+/** Entries no one signed off on: shell rules by literal text, tools by name. */
+function unreviewedEntries(allowlist) {
+  return allowlistEntries(allowlist).filter((entry) => {
+    const tool = entry.match(/^[^(]+/)[0];
+    return tool === "Bash"
+      ? !REVIEWED_BASH_RULES.has(entry)
+      : !REVIEWED_TOOLS.has(tool);
+  });
+}
+
+// Commands a step holding a secret after the scan may run. Deny by default: the
+// agent can write anywhere in the workspace, so such a step runs the staged
+// script and the plumbing that checks it, and nothing else.
+const CREDENTIALED_STEP_COMMANDS = new Set([
+  "set",
+  "[",
+  "echo",
+  "exit",
+  "fi",
+  "printf",
+  "sha256sum",
+  '"$SCRIPT"',
+]);
+
+/** Names of the secrets a block of workflow text references, in either syntax. */
+function secretNames(text) {
+  return [
+    ...text.matchAll(/secrets(?:\.(\w+)|\[\s*['"]([^'"]+)['"]\s*\])/g),
+  ].map(([, dotted, bracketed]) => dotted ?? bracketed);
+}
+
+/** The command word of each simple command in a comment-stripped shell body. */
+function commandWords(code) {
+  return code
+    .replace(/\\\n/g, " ")
+    .split(/\n|&&|\|\||;|\|/)
+    .map((segment) => {
+      const words = segment.trim().split(/\s+/).filter(Boolean);
+      while (
+        /^(?:if|then|else|elif|!|[A-Za-z_]\w*=\S*)$/.test(words[0] ?? "")
+      ) {
+        words.shift();
+      }
+      return words[0];
+    })
     .filter(Boolean);
 }
 
@@ -174,7 +225,7 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
     // strictly stronger than naming npm / cargo / curl / gh / osv here.
   });
 
-  it("does not grant unscoped filesystem bash in either mode", () => {
+  it("holds every allowlist entry to a reviewed list, and pr mode to no shell", () => {
     const { prTools, resolvedFull } = toolAllowlists(yml);
 
     // pr mode audits attacker-authored code and needs no shell at all.
@@ -183,45 +234,52 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
       [],
       "pr allowlist must hold no Bash rule",
     );
-    assert.deepEqual(
-      unreviewedBashRules(resolvedFull),
-      [],
-      "full allowlist holds a Bash rule that is not on the reviewed list",
-    );
-  });
-
-  it("holds every allowlist entry, not only shell rules, to the reviewed list", () => {
-    const { prTools, resolvedFull } = toolAllowlists(yml);
-
     for (const [mode, tools] of [
       ["pr", prTools],
       ["full", resolvedFull],
     ]) {
-      const unreviewed = allowlistEntries(tools).filter(
-        (entry) =>
-          !REVIEWED_TOOL_RULES.has(entry) && !REVIEWED_BASH_RULES.has(entry),
-      );
       assert.deepEqual(
-        unreviewed,
+        unreviewedEntries(tools),
         [],
         `${mode} allowlist holds an entry that is not on a reviewed list`,
       );
     }
   });
 
-  it("stages the credentialed scripts outside the agent workspace before the scan, on every run", () => {
-    const heading = "Stage trusted publisher outside the agent workspace";
-    const stage = namedStep(yml, heading);
-    const stageAt = yml.indexOf(`- name: ${heading}`);
-    const restoreAt = yml.indexOf(
-      "- name: Restore trusted audit runtime from PR base",
+  it("reviews tools by name, so narrowing one with a path rule needs no test edit", () => {
+    assert.deepEqual(
+      unreviewedEntries("Read(./**),Glob,Grep(src/**),Write"),
+      [],
     );
-    const scanAt = yml.indexOf("- name: Run security audit (Claude Code)");
-    // The base commit is fetched by the restore step when a PR run lacks it.
-    assert.ok(restoreAt < stageAt, "staging must follow the base restore");
-    assert.ok(stageAt < scanAt, "staging must precede the scan");
+    assert.deepEqual(unreviewedEntries("Read,Edit,WebFetch"), [
+      "Edit",
+      "WebFetch",
+    ]);
+    assert.deepEqual(
+      unreviewedEntries("Bash(git diff:*),Bash(curl:*),Bash,Bash(git diff)"),
+      ["Bash(curl:*)", "Bash", "Bash(git diff)"],
+    );
+  });
 
-    const code = stripShellComments(stage);
+  it("stages the credentialed scripts outside the agent workspace before the scan, on every run", () => {
+    const heading = "Stage trusted audit scripts outside the agent workspace";
+    const position = (name) => {
+      const at = yml.indexOf(`- name: ${name}`);
+      assert.ok(at >= 0, `expected step "${name}"`);
+      return at;
+    };
+    // The base commit is fetched by the restore step when a PR run lacks it.
+    assert.ok(
+      position("Restore trusted audit runtime from PR base") <
+        position(heading),
+      "staging must follow the base restore",
+    );
+    assert.ok(
+      position(heading) < position("Run security audit (Claude Code)"),
+      "staging must precede the scan",
+    );
+
+    const code = stripShellComments(namedStep(yml, heading));
     // Every run that proceeds, not only pull requests: a full run executes these
     // scripts with the same secrets after the same agent.
     assert.match(code, /if: steps\.gate\.outputs\.proceed == 'true'\s/);
@@ -230,22 +288,16 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
       code,
       /TRUSTED_SHA:\s*\$\{\{\s*github\.event\.pull_request\.base\.sha \|\| github\.sha\s*\}\}/,
     );
-    assert.match(code, /STAGED="\$RUNNER_TEMP\/security-audit-publisher"/);
-    for (const [script, output] of [
-      ["publish-draft-advisory.sh", "publisher_sha256"],
-      ["notify-email.sh", "notifier_sha256"],
-    ]) {
-      const escaped = script.replaceAll(".", "\\.");
+    assert.match(code, /STAGED="\$RUNNER_TEMP\/security-audit-staged"/);
+    assert.match(code, /echo "dir=\$STAGED" >> "\$GITHUB_OUTPUT"/);
+    for (const script of ["publish-draft-advisory.sh", "notify-email.sh"]) {
       // Read from the commit object, never from the working tree.
+      const escaped = script.replaceAll(".", "\\.");
       assert.match(
         code,
         new RegExp(
           `git show "\\$TRUSTED_SHA:\\.github/security-audit/${escaped}" > "\\$STAGED/${escaped}"`,
         ),
-      );
-      assert.match(
-        code,
-        new RegExp(`${output}=.*sha256sum "\\$STAGED/${escaped}"`),
       );
     }
   });
@@ -274,10 +326,10 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
       );
       assert.match(
         code,
-        new RegExp(
-          `SCRIPT="\\$RUNNER_TEMP/security-audit-publisher/${escaped}"`,
-        ),
+        /STAGED_DIR:\s*\$\{\{\s*steps\.stage\.outputs\.dir\s*\}\}/,
+        `${heading} must take the staged directory from the staging step`,
       );
+      assert.match(code, new RegExp(`SCRIPT="\\$STAGED_DIR/${escaped}"`));
       const verify = code.search(/sha256sum -c --quiet -/);
       const run = code.search(/^\s*"\$SCRIPT" \\/m);
       assert.ok(verify >= 0, `${heading} must verify the staged script`);
@@ -287,18 +339,21 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
   });
 
   it("reaches only staged scripts and report data in a step that holds a secret after the scan", () => {
-    // The agent can write anywhere in the workspace. Deny by default: a step
-    // holding a secret after the scan may name only the staged scripts and the
-    // three data files the scan produced, and runs no interpreter or git.
+    // A secret outside a step's own env would reach steps this test cannot see.
+    const beforeSteps = yml.slice(0, yml.search(/^\s+steps:\s*$/m));
+    assert.deepEqual(
+      secretNames(stripShellComments(beforeSteps)),
+      [],
+      "secrets must be passed through step env, not workflow or job env",
+    );
+
     const allowedPath =
-      /^\$RUNNER_TEMP\/security-audit-publisher\/[\w.-]+\.sh$|^\$GITHUB_WORKSPACE\/security-audit-(?:report\.md|cli\.log|session\.md)$/;
+      /^\$STAGED_DIR\/[\w.-]+\.sh$|^\$GITHUB_WORKSPACE\/security-audit-(?:report\.md|cli\.log|session\.md)$/;
     const credentialed = stepsAfter(
       yml,
       "Run security audit (Claude Code)",
     ).filter((step) =>
-      [...step.matchAll(/secrets\.(\w+)/g)].some(
-        ([, name]) => name !== "GITHUB_TOKEN",
-      ),
+      secretNames(step).some((name) => name !== "GITHUB_TOKEN"),
     );
     assert.ok(
       credentialed.length > 0,
@@ -306,21 +361,132 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
     );
     for (const step of credentialed) {
       const name = step.match(/^- name: ([^\r\n]+)/)?.[1];
-      const runAt = step.search(/^\s+run: \|/m);
-      assert.ok(runAt >= 0, `expected a run block in ${name}`);
-      const code = stripShellComments(step.slice(runAt));
+      const code = stripShellComments(runBlock(step));
 
+      assert.doesNotMatch(
+        code,
+        /\$\(|`|<\(/,
+        `${name} must not substitute command output`,
+      );
+      assert.deepEqual(
+        commandWords(code).filter(
+          (word) => !CREDENTIALED_STEP_COMMANDS.has(word),
+        ),
+        [],
+        `${name} runs a command that is not on the reviewed list`,
+      );
       const paths = [...code.matchAll(/[^\s"'=]*\/[^\s"']*/g)].map(([p]) => p);
       assert.deepEqual(
         paths.filter((path) => !allowedPath.test(path)),
         [],
         `${name} names a path outside the staged scripts and report data`,
       );
-      assert.doesNotMatch(
-        code,
-        /(?:^|[\s;&|(])(?:bash|sh|source|\.|node|npm|npx|python3?|git|make|cargo)\s/m,
-        `${name} must not run an interpreter or git`,
+    }
+  });
+
+  it("runs the staged copy and fails closed when it changed or its digest is missing", () => {
+    // Executes the shipped staging and publish shell over a scratch repository,
+    // so a later edit to either is checked by behaviour, not only by its text.
+    const tmp = mkdtempSync(join(tmpdir(), "audit-staging-")).replaceAll(
+      "\\",
+      "/",
+    );
+    try {
+      const repo = `${tmp}/repo`;
+      mkdirSync(`${repo}/.github/security-audit`, { recursive: true });
+      const git = (...args) =>
+        execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+      const commitScripts = (scripts) => {
+        for (const [script, body] of Object.entries(scripts)) {
+          const path = `${repo}/.github/security-audit/${script}`;
+          if (body === null) rmSync(path);
+          else writeFileSync(path, `#!/usr/bin/env bash\n${body}\n`);
+        }
+        git("add", "-A");
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c");
+        return git("rev-parse", "HEAD");
+      };
+      git("init", "-q");
+      const trusted = commitScripts({
+        "publish-draft-advisory.sh": 'echo "trusted publisher ran"',
+        "notify-email.sh": 'echo "trusted notifier ran"',
+      });
+      // A change the agent could make after checkout, never committed.
+      writeFileSync(
+        `${repo}/.github/security-audit/publish-draft-advisory.sh`,
+        '#!/usr/bin/env bash\necho "workspace copy ran"\n',
       );
+
+      const shell = (heading, env) =>
+        spawnSync("bash", ["-c", runBlock(namedStep(yml, heading))], {
+          cwd: repo,
+          encoding: "utf8",
+          env: { ...process.env, ...env },
+        });
+      const stage = (sha) => {
+        const out = `${tmp}/output-${sha}`;
+        writeFileSync(out, "");
+        const result = shell(
+          "Stage trusted audit scripts outside the agent workspace",
+          {
+            RUNNER_TEMP: `${tmp}/runner-${sha}`,
+            GITHUB_OUTPUT: out,
+            TRUSTED_SHA: sha,
+          },
+        );
+        assert.equal(result.status, 0, result.stderr);
+        return Object.fromEntries(
+          readFileSync(out, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => line.split(/=(.*)/s).slice(0, 2)),
+        );
+      };
+      const publish = (outputs, digest = outputs.publisher_sha256) =>
+        shell("Publish draft Security Advisory (private, always)", {
+          GH_TOKEN: "unused",
+          GITHUB_WORKSPACE: repo,
+          STAGED_DIR: outputs.dir,
+          SCRIPT_SHA256: digest ?? "",
+        });
+
+      const staged = stage(trusted);
+      const clean = publish(staged);
+      assert.equal(clean.status, 0, clean.stderr);
+      assert.match(clean.stdout, /trusted publisher ran/);
+      assert.doesNotMatch(clean.stdout, /workspace copy ran/);
+
+      assert.notEqual(
+        publish(staged, "").status,
+        0,
+        "missing digest must fail",
+      );
+
+      writeFileSync(
+        `${staged.dir}/publish-draft-advisory.sh`,
+        '#!/usr/bin/env bash\necho "changed after staging"\n',
+      );
+      const changed = publish(staged);
+      assert.notEqual(changed.status, 0, "changed staged copy must fail");
+      assert.doesNotMatch(changed.stdout, /changed after staging/);
+
+      // Email is optional: a missing notifier must not stop the scan, and its
+      // step must then be refused rather than run anything.
+      const withoutNotifier = stage(
+        commitScripts({
+          "publish-draft-advisory.sh": 'echo "trusted publisher ran"',
+          "notify-email.sh": null,
+        }),
+      );
+      assert.equal(withoutNotifier.notifier_sha256, undefined);
+      const email = shell("Email report + transcript (optional)", {
+        GITHUB_WORKSPACE: repo,
+        STAGED_DIR: withoutNotifier.dir,
+        SCRIPT_SHA256: "",
+      });
+      assert.notEqual(email.status, 0, "email without a digest must fail");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
     }
   });
 
