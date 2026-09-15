@@ -298,13 +298,13 @@ jobs:
           prompt: |
             Read the review brief at review-brief.md in the repository root and follow it exactly.
             It contains the fixed point, the spec source, and the full code-review skill.
-          # Read and comment only. No Edit/Write and no npm/cargo/build
-          # execution: this job checks out untrusted PR code, and a reviewer
-          # never needs to run it. Bash rules are command-prefix rules, not path
-          # rules, so a read command here (cat, ls, head, rg, grep, ...) reaches
-          # the whole runner while this same allowlist holds the public comment
-          # channel. Use the workspace-scoped Read / Glob / Grep tools instead;
-          # the contract test denies by default rather than banning by name.
+          # Read and comment only. No Edit/Write and no npm/cargo/build: this job
+          # checks out untrusted PR code and holds a public comment channel. The
+          # git/gh Bash rules are reviewed one by one, and the contract reviews
+          # every entry, not only the Bash family. --disallowedTools refuses
+          # `.git` across the read tools; an --allowedTools entry only pre-approves,
+          # so it cannot by itself confine these tools to the tree — broader
+          # out-of-workspace read confinement is tracked in the ledger, not here.
           claude_args: |
             --model ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-opus-5' }}
             --max-turns 120

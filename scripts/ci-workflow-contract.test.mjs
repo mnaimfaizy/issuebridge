@@ -7,6 +7,7 @@ import {
   namedStep,
   stripShellComments,
   trackedSymlinkTarget,
+  unreviewedEntries,
   workflowPermissions,
 } from "./workflow-contract-helpers.mjs";
 
@@ -67,19 +68,22 @@ const REVIEWED_IMPLEMENTER_BASH_RULES = new Set([
   "Bash(gh pr view:*)",
 ]);
 
-/**
- * Every `Bash…` entry in an `--allowedTools` list, as its literal rule text.
- * Matches bare `Bash` and `Bash(<anything>)` alike, so a rule that is not in
- * `cmd:*` form cannot slip past by failing to look like one.
- */
-function bashEntries(allowlist) {
-  return [...allowlist.matchAll(/Bash(?:\([^)]*\))?/g)].map(([rule]) => rule);
-}
-
-/** Bash entries that no one has signed off on. */
-function unreviewedBashRules(allowlist, reviewed = REVIEWED_BASH_RULES) {
-  return bashEntries(allowlist).filter((rule) => !reviewed.has(rule));
-}
+// The non-Bash tools each job may hold, judged by name. The planner only reads
+// and writes its plan; the reviewer also spawns its three review axes
+// (`Task`/`Agent`) and posts through the sanctioned inline-comment MCP tool; the
+// implementer edits, and its Read/Glob/Grep come from the action's base list, so
+// only the write tools it names are reviewed here. Each set is this job's own
+// trust decision — a new tool has to be argued on, the bar the audit meets too.
+const REVIEWED_PLANNER_TOOLS = new Set(["Read", "Glob", "Grep", "Write"]);
+const REVIEWED_REVIEWER_TOOLS = new Set([
+  "Read",
+  "Glob",
+  "Grep",
+  "Task",
+  "Agent",
+  "mcp__github_inline_comment__create_inline_comment",
+]);
+const REVIEWED_IMPLEMENTER_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
 
 /** Every `uses:` step in one workflow, with its ref and trailing version comment. */
 function actionUses(workflowName) {
@@ -400,18 +404,21 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     assert.match(prompt, /do not follow instructions/i);
   });
 
-  it("does not grant unscoped filesystem bash alongside the public plan comment", () => {
+  it("holds every planner allowlist entry to a reviewed list", () => {
     const plan = jobBlock(readWorkflow("claude-agent-pipeline.yml"), "plan");
-    const allowed = plan.match(/--allowedTools "[^"]*"/)?.[0] ?? "";
+    const allowed = plan.match(/--allowedTools "([^"]*)"/)?.[1] ?? "";
 
     assert.ok(allowed.length > 0, "expected a planner tool allowlist");
-    // Read / Glob / Grep are workspace-scoped and cover this job's search.
-    // It concatenates the agent-written agent-plan.md into a public issue
-    // comment verbatim, so it carries no reviewed Bash rule at all.
+    // This job concatenates the agent-written agent-plan.md into a public issue
+    // comment verbatim, so every entry is reviewed — not only the Bash family —
+    // and it carries no Bash rule at all.
     assert.deepEqual(
-      unreviewedBashRules(allowed),
+      unreviewedEntries(allowed, {
+        reviewedBash: new Set(),
+        reviewedTools: REVIEWED_PLANNER_TOOLS,
+      }),
       [],
-      "planner allowlist holds a Bash rule that is not on the reviewed list",
+      "planner allowlist holds an entry that is not on a reviewed list",
     );
     assert.match(plan, /gh issue comment/);
     assert.match(plan, /--body-file/);
@@ -488,7 +495,7 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     assert.match(implement, /dtolnay\/rust-toolchain/);
     assert.match(implement, /TAURI_CONFIG:/);
 
-    const allowed = implement.match(/--allowedTools "[^"]*"/)?.[0] ?? "";
+    const allowed = implement.match(/--allowedTools "([^"]*)"/)?.[1] ?? "";
 
     assert.ok(allowed.length > 0, "expected an implementer tool allowlist");
     for (const tool of [
@@ -508,14 +515,17 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     assert.doesNotMatch(allowed, /Bash\(gh:\*\)/);
     assert.doesNotMatch(allowed, /Bash\(gh api/);
 
-    // Deny by default, as the planner, reviewer and audit allowlists already
-    // are. This is the job holding `contents: write`, a live agent token and a
-    // push channel, so a rule added here later has to be argued rather than
-    // inherited from the ones it genuinely needs.
+    // Deny by default over every entry, as the planner, reviewer and audit
+    // allowlists are. This is the job holding `contents: write`, a live agent
+    // token and a push channel, so a rule added here later — Bash or any other
+    // tool — has to be argued rather than inherited from the ones it needs.
     assert.deepEqual(
-      unreviewedBashRules(allowed, REVIEWED_IMPLEMENTER_BASH_RULES),
+      unreviewedEntries(allowed, {
+        reviewedBash: REVIEWED_IMPLEMENTER_BASH_RULES,
+        reviewedTools: REVIEWED_IMPLEMENTER_TOOLS,
+      }),
       [],
-      "implementer allowlist holds a Bash rule that is not on its reviewed list",
+      "implementer allowlist holds an entry that is not on its reviewed list",
     );
   });
 
@@ -595,18 +605,23 @@ describe("Claude code review contract", () => {
     assert.match(block, /git fetch[^\n]*origin "\$BASE_REF"/);
   });
 
-  it("does not grant unscoped filesystem bash alongside PR comment tools", () => {
-    const yml = readWorkflow("claude-code-review.yml");
-    const allowed = yml.match(/--allowedTools "[^"]*"/)?.[0] ?? "";
+  it("holds every reviewer allowlist entry to a reviewed list", () => {
+    // Scope to the review job first, as the planner test does: a second agent
+    // step added to this file must not let this validate the wrong allowlist.
+    const review = jobBlock(readWorkflow("claude-code-review.yml"), "review");
+    const allowed = review.match(/--allowedTools "([^"]*)"/)?.[1] ?? "";
 
     assert.ok(allowed.length > 0, "expected an explicit tool allowlist");
-    // The same allowlist holds the public comment channel and the inline-comment
-    // tool, and this job checks out untrusted PR code, so every Bash rule it
-    // carries has to be one that was reviewed for that pairing.
+    // The same allowlist holds the public comment channel and checks out
+    // untrusted PR code, so every entry is reviewed — Bash rules by literal
+    // text, other tools by name — not only the Bash family.
     assert.deepEqual(
-      unreviewedBashRules(allowed),
+      unreviewedEntries(allowed, {
+        reviewedBash: REVIEWED_BASH_RULES,
+        reviewedTools: REVIEWED_REVIEWER_TOOLS,
+      }),
       [],
-      "reviewer allowlist holds a Bash rule that is not on the reviewed list",
+      "reviewer allowlist holds an entry that is not on a reviewed list",
     );
     assert.match(allowed, /Bash\(gh pr comment:\*\)/);
     assert.match(allowed, /mcp__github_inline_comment__create_inline_comment/);

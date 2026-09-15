@@ -12,11 +12,13 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  bashEntries,
   namedStep,
   runBlock,
   stepsAfter,
   stripShellComments,
   trackedSymlinkTarget,
+  unreviewedEntries,
   workflowPermissions,
 } from "./workflow-contract-helpers.mjs";
 
@@ -58,11 +60,6 @@ function toolAllowlists(yml) {
 // ci-workflow-contract.test.mjs — each workflow's trust decision is its own.
 const REVIEWED_BASH_RULES = new Set();
 
-/** Every `Bash…` entry in an allowlist, as its literal rule text. */
-function bashEntries(allowlist) {
-  return [...allowlist.matchAll(/Bash(?:\([^)]*\))?/g)].map(([rule]) => rule);
-}
-
 // The non-shell half of the same decision, matched by tool name: narrowing an
 // entry with a path rule, such as `Read(./**)`, needs no edit here, while a new
 // tool always does. `Write` is here deliberately: the agent must write its
@@ -70,22 +67,11 @@ function bashEntries(allowlist) {
 // credentialed step runs code from the workspace this tool writes into.
 const REVIEWED_TOOLS = new Set(["Read", "Glob", "Grep", "Write"]);
 
-/** Every entry in an allowlist, splitting on commas outside a rule's parens. */
-function allowlistEntries(allowlist) {
-  return [...allowlist.matchAll(/[^,(]+(?:\([^)]*\))?/g)]
-    .map(([entry]) => entry.trim())
-    .filter(Boolean);
-}
-
-/** Entries no one signed off on: shell rules by literal text, tools by name. */
-function unreviewedEntries(allowlist) {
-  return allowlistEntries(allowlist).filter((entry) => {
-    const tool = entry.match(/^[^(]+/)[0];
-    return tool === "Bash"
-      ? !REVIEWED_BASH_RULES.has(entry)
-      : !REVIEWED_TOOLS.has(tool);
-  });
-}
+/** This job's reviewed sets, for the shared `unreviewedEntries` mechanic. */
+const AUDIT_REVIEWED = {
+  reviewedBash: REVIEWED_BASH_RULES,
+  reviewedTools: REVIEWED_TOOLS,
+};
 
 // Commands a step holding a secret after the scan may run. Deny by default: the
 // agent can write anywhere in the workspace, so such a step runs the staged
@@ -229,7 +215,7 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
       ["full", resolvedFull],
     ]) {
       assert.deepEqual(
-        unreviewedEntries(tools),
+        unreviewedEntries(tools, AUDIT_REVIEWED),
         [],
         `${mode} allowlist holds an entry that is not on a reviewed list`,
       );
@@ -238,19 +224,26 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
 
   it("reviews tools by name, so narrowing one with a path rule needs no test edit", () => {
     assert.deepEqual(
-      unreviewedEntries("Read(./**),Glob,Grep(src/**),Write"),
+      unreviewedEntries("Read(./**),Glob,Grep(src/**),Write", AUDIT_REVIEWED),
       [],
     );
-    assert.deepEqual(unreviewedEntries("Read,Edit,WebFetch"), [
+    assert.deepEqual(unreviewedEntries("Read,Edit,WebFetch", AUDIT_REVIEWED), [
       "Edit",
       "WebFetch",
     ]);
     // This job reviews no Bash rule, so every shell entry is unreviewed —
     // including a "read-only" git subcommand, which admits a write flag.
     assert.deepEqual(
-      unreviewedEntries("Read,Bash(git diff:*),Bash(curl:*),Bash"),
+      unreviewedEntries(
+        "Read,Bash(git diff:*),Bash(curl:*),Bash",
+        AUDIT_REVIEWED,
+      ),
       ["Bash(git diff:*)", "Bash(curl:*)", "Bash"],
     );
+    // A malformed entry with no name is reported unreviewed, not a TypeError.
+    assert.deepEqual(unreviewedEntries("Read, (curl:*)", AUDIT_REVIEWED), [
+      "(curl:*)",
+    ]);
   });
 
   it("grants the agent no git rule, whose --output flag writes outside the workspace", () => {

@@ -162,12 +162,13 @@ jobs:
             Read the planner brief at planner-brief.md in the repository root and follow it exactly.
             Write your complete plan to agent-plan.md in the repository root.
             Your final message must be one short line confirming the plan was written.
-          # Read / Glob / Grep are workspace-scoped and cover every search this
-          # job needs. Bash rules are command-prefix rules, not path rules, so
-          # any read command here (cat, ls, head, rg, grep, ...) reaches the
-          # whole runner - and this job publishes agent-plan.md to a public
-          # issue comment verbatim. Keep the Bash list empty; the contract test
-          # denies by default rather than banning commands by name.
+          # This job publishes agent-plan.md to a public issue comment verbatim.
+          # Read / Glob / Grep cover its search; no Bash rule (a command-prefix
+          # rule reaches the whole runner). The contract reviews every entry, not
+          # only the Bash family. --disallowedTools refuses `.git` across the read
+          # tools; an --allowedTools entry only pre-approves, so it cannot by
+          # itself confine these tools to the tree — broader out-of-workspace
+          # read confinement is tracked in the ledger, not asserted here.
           claude_args: |
             --model ${{ vars.CLAUDE_PIPELINE_MODEL || 'claude-opus-5' }}
             --max-turns 40

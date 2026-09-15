@@ -4,8 +4,9 @@
  * Deliberately free of policy: what each workflow is allowed to do stays in its
  * own contract file, because each is a separate trust decision. Only mechanics
  * live here — locating a step, extracting its shell, stripping shell comments,
- * reading a tracked symlink — so the two suites cannot drift on how they read
- * the same YAML.
+ * splitting an allowlist, reading a tracked symlink — so the two suites cannot
+ * drift on how they read the same YAML. The reviewed sets each check against
+ * stay in the suites, because what a job may hold is its own trust decision.
  */
 
 import assert from "node:assert/strict";
@@ -68,6 +69,44 @@ export function runBlock(step) {
     .map((line) => line.slice(indent))
     .join("\n")
     .trimEnd()}\n`;
+}
+
+/**
+ * Every entry in an `--allowedTools` list, splitting on commas that separate
+ * entries while leaving a rule's own `(…)` intact — so `Read(./**)` and
+ * `Bash(git diff:*)` each come back whole.
+ */
+export function allowlistEntries(allowlist) {
+  return [...allowlist.matchAll(/[^,(]+(?:\([^)]*\))?/g)]
+    .map(([entry]) => entry.trim())
+    .filter(Boolean);
+}
+
+/** Every `Bash…` entry in an allowlist, bare `Bash` and `Bash(<anything>)` alike. */
+export function bashEntries(allowlist) {
+  return [...allowlist.matchAll(/Bash(?:\([^)]*\))?/g)].map(([rule]) => rule);
+}
+
+/** The tool name of one allowlist entry — the text before any `(` — or the entry itself. */
+export function toolName(entry) {
+  return entry.match(/^[^(]+/)?.[0] ?? entry;
+}
+
+/**
+ * Allowlist entries no one has signed off on. Shell rules are judged by their
+ * literal text against `reviewedBash` (a `Bash(cmd:*)` prefix rule is not a
+ * path rule, so its exact form is the unit of review); every other tool is
+ * judged by name against `reviewedTools`, so narrowing one with a path rule
+ * such as `Read(./**)` needs no change here while a new tool always does. A
+ * malformed entry with no name (a stray leading `(`) is unreviewed, not a throw.
+ */
+export function unreviewedEntries(allowlist, { reviewedBash, reviewedTools }) {
+  return allowlistEntries(allowlist).filter((entry) => {
+    const tool = toolName(entry);
+    return tool === "Bash"
+      ? !reviewedBash.has(entry)
+      : !reviewedTools.has(tool);
+  });
 }
 
 /**
