@@ -167,12 +167,14 @@ jobs:
             fi
           }
 
-          # A PR must not be able to rewrite the instructions reviewing it. Claude Code
-          # auto-loads AGENTS.md / CLAUDE.md and .claude/; the skill is the review policy.
+          # A PR must not be able to rewrite the instructions reviewing it, nor the
+          # read-confinement hook. Claude Code auto-loads AGENTS.md / CLAUDE.md and
+          # .claude/; the skill is the review policy; agent-runtime holds the hook.
           for path in \
             AGENTS.md \
             CLAUDE.md \
             .claude \
+            .github/agent-runtime \
             .agents/skills
           do
             restore_from_base "$path"
@@ -289,6 +291,11 @@ jobs:
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # A PreToolUse hook confines Read/Glob/Grep to the workspace — an
+          # allowlist entry only pre-approves and cannot revoke the action's base
+          # read grant, so scoping must be a deny decision (see the hook script).
+          # Restored from the PR base before the agent runs, like the other runtime.
+          settings: .github/agent-runtime/read-confinement.settings.json
           # The job token, which can only read contents and comment. Without this
           # input the action uses the Claude App token, which can write this
           # repository; this job reads untrusted PR text and never pushes.

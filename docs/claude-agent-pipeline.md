@@ -110,11 +110,14 @@ human-actor checks.
 - **Every agent allowlist entry is reviewed.** A contract holds the planner, reviewer,
   implementer and audit allowlists to a reviewed set per job — Bash rules by literal text,
   other tools by name — so `Task`/`Agent`, an `mcp__*` server, `WebFetch`, or any new tool
-  has to be argued on rather than silently inheriting the public channel. A `--disallowedTools`
-  deny refuses `.git` across the read tools. Confining the read tools to the workspace as a
-  whole is **not** yet in place: an `--allowedTools` entry only pre-approves a call, so it
-  cannot revoke the action's base `Read`/`Glob`/`Grep` grant, and an out-of-tree read is
-  still possible. That gap is tracked in the findings ledger (`agent-allowlist-unscoped-read-tools`).
+  has to be argued on rather than silently inheriting the public channel.
+- **The read tools are confined to the workspace by a PreToolUse hook.** An `--allowedTools`
+  entry only pre-approves a call and cannot revoke the action's base `Read`/`Glob`/`Grep`
+  grant, so scoping has to be a deny decision. `.github/agent-runtime/confine-reads-to-workspace.mjs`
+  runs before each Read/Grep/Glob and denies a path that resolves outside `$GITHUB_WORKSPACE`,
+  keeping a runner file (`/etc/*`, `/proc/self/environ`, `~/.config/*`) off the public
+  comment channel. It is wired through the action's `settings` input and restored from the
+  PR base in the reviewer and audit jobs, so a PR cannot disable the control confining it.
 - **Untrusted input is fenced.** Issue bodies, PR diffs, and the plan handed to the Spec
   axis are wrapped in explicit `<untrusted_issue_context>` / `<untrusted_pr_diff>` /
   `<untrusted_spec>` markers instructing the model to treat the contents as data, never
