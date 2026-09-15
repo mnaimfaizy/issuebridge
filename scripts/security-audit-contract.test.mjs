@@ -12,11 +12,13 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  allowlistEntries,
   namedStep,
   runBlock,
   stepsAfter,
   stripShellComments,
   trackedSymlinkTarget,
+  unreviewedEntries,
   workflowPermissions,
 } from "./workflow-contract-helpers.mjs";
 
@@ -70,22 +72,11 @@ function bashEntries(allowlist) {
 // credentialed step runs code from the workspace this tool writes into.
 const REVIEWED_TOOLS = new Set(["Read", "Glob", "Grep", "Write"]);
 
-/** Every entry in an allowlist, splitting on commas outside a rule's parens. */
-function allowlistEntries(allowlist) {
-  return [...allowlist.matchAll(/[^,(]+(?:\([^)]*\))?/g)]
-    .map(([entry]) => entry.trim())
-    .filter(Boolean);
-}
-
-/** Entries no one signed off on: shell rules by literal text, tools by name. */
-function unreviewedEntries(allowlist) {
-  return allowlistEntries(allowlist).filter((entry) => {
-    const tool = entry.match(/^[^(]+/)[0];
-    return tool === "Bash"
-      ? !REVIEWED_BASH_RULES.has(entry)
-      : !REVIEWED_TOOLS.has(tool);
-  });
-}
+/** This job's reviewed sets, for the shared `unreviewedEntries` mechanic. */
+const reviewed = {
+  reviewedBash: REVIEWED_BASH_RULES,
+  reviewedTools: REVIEWED_TOOLS,
+};
 
 // Commands a step holding a secret after the scan may run. Deny by default: the
 // agent can write anywhere in the workspace, so such a step runs the staged
@@ -229,7 +220,7 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
       ["full", resolvedFull],
     ]) {
       assert.deepEqual(
-        unreviewedEntries(tools),
+        unreviewedEntries(tools, reviewed),
         [],
         `${mode} allowlist holds an entry that is not on a reviewed list`,
       );
@@ -238,17 +229,17 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
 
   it("reviews tools by name, so narrowing one with a path rule needs no test edit", () => {
     assert.deepEqual(
-      unreviewedEntries("Read(./**),Glob,Grep(src/**),Write"),
+      unreviewedEntries("Read(./**),Glob,Grep(src/**),Write", reviewed),
       [],
     );
-    assert.deepEqual(unreviewedEntries("Read,Edit,WebFetch"), [
+    assert.deepEqual(unreviewedEntries("Read,Edit,WebFetch", reviewed), [
       "Edit",
       "WebFetch",
     ]);
     // This job reviews no Bash rule, so every shell entry is unreviewed —
     // including a "read-only" git subcommand, which admits a write flag.
     assert.deepEqual(
-      unreviewedEntries("Read,Bash(git diff:*),Bash(curl:*),Bash"),
+      unreviewedEntries("Read,Bash(git diff:*),Bash(curl:*),Bash", reviewed),
       ["Bash(git diff:*)", "Bash(curl:*)", "Bash"],
     );
   });
