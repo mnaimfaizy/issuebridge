@@ -78,14 +78,18 @@ fn windows_ram_gb() -> Option<u64> {
 fn windows_vulkan_loaded() -> bool {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::FreeLibrary;
-    use windows::Win32::System::LibraryLoader::LoadLibraryW;
+    use windows::Win32::System::LibraryLoader::{LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32};
 
+    // Constrain the search to System32 so a `vulkan-1.dll` planted in the working
+    // directory or on PATH cannot be loaded in-process when the real loader is
+    // absent — precisely the no-Vulkan host this probe exists to identify.
     let name: Vec<u16> = "vulkan-1.dll"
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
     unsafe {
-        let Ok(handle) = LoadLibraryW(PCWSTR(name.as_ptr())) else {
+        let Ok(handle) = LoadLibraryExW(PCWSTR(name.as_ptr()), None, LOAD_LIBRARY_SEARCH_SYSTEM32)
+        else {
             return false;
         };
         let _ = FreeLibrary(handle);
