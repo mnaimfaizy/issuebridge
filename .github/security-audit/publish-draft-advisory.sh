@@ -33,8 +33,8 @@ echo "Report bytes: $(wc -c < "$REPORT" | tr -d '[:space:]')"
 # The report is written by the agent and this log is world-readable, so no line
 # of the report may reach stdout. Read one key at a time and emit its value only
 # when the whole value matches a closed pattern. Duplicated in the workflow's
-# Collect transcript step deliberately — that step runs before this script is
-# restored from the base ref, so the two cannot share a helper.
+# Collect transcript step deliberately — this script runs only from a copy staged
+# outside the workspace, so the two cannot share a helper.
 report_field() {
   sed -n "s/^- [*][*]$1:[*][*][[:space:]]*//p" "$REPORT" | tail -n 1 | sed 's/[[:space:]]*$//'
 }

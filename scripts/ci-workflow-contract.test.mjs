@@ -244,11 +244,12 @@ describe("Claude security audit privilege contract", () => {
       "Restore trusted audit runtime from PR base",
     );
     const runAudit = yml.indexOf("Run security audit (Claude Code)");
-    const trustedPublisher = yml.indexOf("Use trusted publisher");
+    const publish = yml.indexOf("Publish draft Security Advisory");
 
     assert.ok(trustedRuntime >= 0, "expected trusted PR runtime restore step");
     assert.ok(trustedRuntime < runAudit, "restore must precede the scan");
-    assert.ok(runAudit < trustedPublisher, "scan must precede the publisher");
+    // Where the publisher comes from is held in security-audit-contract.test.mjs.
+    assert.ok(runAudit < publish, "scan must precede the publisher");
 
     // The agent step must never see the advisory PAT. What makes a use of it
     // dangerous is not being early in the file but being inside the window where

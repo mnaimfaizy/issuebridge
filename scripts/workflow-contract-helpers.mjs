@@ -26,6 +26,22 @@ export function namedStep(yml, heading) {
 }
 
 /**
+ * Every step after the `- name: <heading>` step, each cut at the same boundary
+ * `namedStep` uses, so the two can never disagree about where a step ends.
+ * The last step runs to the end of the file, as it does in `namedStep`.
+ */
+export function stepsAfter(yml, heading) {
+  const start = yml.indexOf(`- name: ${heading}`);
+  assert.ok(start >= 0, `expected step "${heading}"`);
+  const bounds = [...yml.slice(start + 1).matchAll(/^\s+- name:/gm)].map(
+    (match) => start + 1 + match.index,
+  );
+  return bounds.map((from, i) =>
+    yml.slice(from, bounds[i + 1] ?? yml.length).replace(/^\s+/, ""),
+  );
+}
+
+/**
  * The workflow-level `permissions:` block, before `jobs:`; empty when absent.
  *
  * Anchored to column 0 so a job-level block, or the word in a comment, is never
