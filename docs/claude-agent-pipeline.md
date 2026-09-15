@@ -83,8 +83,12 @@ human-actor checks.
   "fix" a fork PR failing by switching triggers.
 - **PR-authored code cannot rewrite its own audit.** Before scanning a PR, the audit
   restores `AGENTS.md`, `CLAUDE.md`, `.claude/`, the audit prompt, and the skill assets
-  from the PR base. The advisory publisher is likewise re-checked-out from base before it
-  runs with the privileged PAT.
+  from the PR base.
+- **Credentialed scripts never run from the agent's workspace.** On every run, before the
+  scan, the advisory publisher and email notifier are copied from a trusted commit (the PR
+  base, or the checked-out commit on a full run) to a directory outside the workspace, and
+  their digests recorded. The steps holding the PAT and email key verify those digests and
+  run only that copy. The agent can still write its report; nothing it writes is executed.
 - **The advisory PAT is never exposed to the agent.** It first appears in the workflow
   after the Claude step has exited. A contract test enforces the ordering.
 - **PR-mode audits get no code execution.** No `git`, `npm`, `cargo`, or `find` — read-only

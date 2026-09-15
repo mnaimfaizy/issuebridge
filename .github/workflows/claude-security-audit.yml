@@ -291,6 +291,39 @@ jobs:
           fi
           echo "Audit runtime restored from PR base $BASE_SHA"
 
+      - name: Stage trusted audit scripts outside the agent workspace
+        if: steps.gate.outputs.proceed == 'true'
+        id: stage
+        env:
+          # The PR base on a pull request; the checked-out commit on a full run.
+          TRUSTED_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          # The agent can write its report into the workspace, and the steps after
+          # it run these scripts with the advisory PAT and the email key. Copy them
+          # from the commit object, not the working tree, to a directory outside
+          # the workspace before it starts — on every event, not just PRs. The
+          # digests let those steps refuse a copy that changed after staging.
+          STAGED="$RUNNER_TEMP/security-audit-staged"
+          mkdir -p "$STAGED"
+          echo "dir=$STAGED" >> "$GITHUB_OUTPUT"
+
+          # Publishing is the point of the run, so a missing publisher fails it.
+          git show "$TRUSTED_SHA:.github/security-audit/publish-draft-advisory.sh" > "$STAGED/publish-draft-advisory.sh"
+          chmod 700 "$STAGED/publish-draft-advisory.sh"
+          echo "publisher_sha256=$(sha256sum "$STAGED/publish-draft-advisory.sh" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+          # Email is optional and non-fatal. A missing notifier records no digest,
+          # so the email step fails its own check instead of stopping the scan.
+          if git cat-file -e "$TRUSTED_SHA:.github/security-audit/notify-email.sh" 2>/dev/null; then
+            git show "$TRUSTED_SHA:.github/security-audit/notify-email.sh" > "$STAGED/notify-email.sh"
+            chmod 700 "$STAGED/notify-email.sh"
+            echo "notifier_sha256=$(sha256sum "$STAGED/notify-email.sh" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          else
+            echo "Email notifier absent at $TRUSTED_SHA; the email step will be refused."
+          fi
+          echo "Audit scripts staged from $TRUSTED_SHA"
+
       - name: Scan lockfiles (OSV)
         if: >-
           steps.gate.outputs.proceed == 'true' &&
@@ -556,9 +589,9 @@ jobs:
           # The report is written by the agent step and this log is world-readable,
           # so no line of the report may reach stdout. Read one key at a time and
           # emit its value only when the whole value matches a closed pattern.
-          # Duplicated in publish-draft-advisory.sh deliberately: this step runs
-          # before the trusted publisher is restored from the base ref, so it must
-          # not source a helper out of the PR-controlled workspace.
+          # Duplicated in publish-draft-advisory.sh deliberately: the staged copies
+          # are runnable scripts, not a library, and this step must not source a
+          # helper out of the agent-writable workspace.
           report_field() {
             sed -n "s/^- [*][*]$1:[*][*][[:space:]]*//p" "$REPORT" | tail -n 1 | sed 's/[[:space:]]*$//'
           }
@@ -592,28 +625,6 @@ jobs:
 
       # Do NOT upload-artifact on a public repo — artifacts are world-readable.
       # Do NOT print secret-gist URLs — they would leak via public Actions logs.
-      - name: Use trusted publisher script from default branch
-        if: >-
-          steps.gate.outputs.proceed == 'true' &&
-          github.event_name == 'pull_request'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          # See the note on BASE_BRANCH in the restore step above.
-          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
-        run: |
-          set -euo pipefail
-          # Avoid executing a PR-modified publisher with the privileged PAT (F3 class).
-          # persist-credentials: false makes a want anonymous, and GitHub rejects
-          # an anonymous want for an unadvertised object. The base branch is
-          # advertised; skip the fetch when the object is already present.
-          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
-            git fetch --no-tags origin "$BASE_BRANCH"
-          fi
-          git checkout "$BASE_SHA" -- \
-            .github/security-audit/publish-draft-advisory.sh \
-            .github/security-audit/notify-email.sh
-          echo "Publisher + email notifier restored from PR base $BASE_SHA"
-
       - name: Publish draft Security Advisory (private, always)
         if: steps.gate.outputs.proceed == 'true'
         id: publish
@@ -623,14 +634,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           SECURITY_AUDIT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SECURITY_AUDIT_MODE: ${{ steps.gate.outputs.mode }}
+          SCRIPT_SHA256: ${{ steps.stage.outputs.publisher_sha256 }}
+          STAGED_DIR: ${{ steps.stage.outputs.dir }}
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "COPILOT_GITHUB_TOKEN missing — cannot create private draft advisory."
             exit 1
           fi
-          chmod +x .github/security-audit/publish-draft-advisory.sh
-          .github/security-audit/publish-draft-advisory.sh \
+          # Staged before the scan from a trusted commit; never the workspace copy.
+          SCRIPT="$STAGED_DIR/publish-draft-advisory.sh"
+          printf '%s  %s\n' "$SCRIPT_SHA256" "$SCRIPT" | sha256sum -c --quiet -
+          "$SCRIPT" \
             "$GITHUB_WORKSPACE/security-audit-report.md" \
             "$GITHUB_WORKSPACE/security-audit-cli.log" \
             "$GITHUB_WORKSPACE/security-audit-session.md"
@@ -646,10 +661,14 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           SECURITY_AUDIT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GHSA_ID: ${{ steps.publish.outputs.ghsa_id }}
+          SCRIPT_SHA256: ${{ steps.stage.outputs.notifier_sha256 }}
+          STAGED_DIR: ${{ steps.stage.outputs.dir }}
         run: |
           set -euo pipefail
-          chmod +x .github/security-audit/notify-email.sh
-          .github/security-audit/notify-email.sh \
+          # Staged before the scan from a trusted commit; never the workspace copy.
+          SCRIPT="$STAGED_DIR/notify-email.sh"
+          printf '%s  %s\n' "$SCRIPT_SHA256" "$SCRIPT" | sha256sum -c --quiet -
+          "$SCRIPT" \
             "$GITHUB_WORKSPACE/security-audit-report.md" \
             "$GITHUB_WORKSPACE/security-audit-cli.log" \
             "$GITHUB_WORKSPACE/security-audit-session.md" \
