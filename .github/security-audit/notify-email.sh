@@ -98,7 +98,9 @@ jq -n \
   '{from:$from, to:[$to], subject:$subject, text:$text, attachments:$attachments[0]}' \
   > "$PAYLOAD_FILE"
 
-HTTP_CODE="$(curl -sS -o "$WORK/resend-out.json" -w '%{http_code}' \
+# -q first disables ~/.curlrc: defence in depth, so an ambient config file
+# cannot add a header or redirect this request while the Resend key is set.
+HTTP_CODE="$(curl -q -sS -o "$WORK/resend-out.json" -w '%{http_code}' \
   -X POST 'https://api.resend.com/emails' \
   -H "Authorization: Bearer ${KEY}" \
   -H 'Content-Type: application/json' \
