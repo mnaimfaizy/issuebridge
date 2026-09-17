@@ -16,6 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+use crate::adapters::process_kill::report_termination;
 use crate::adapters::system_exec::system_command;
 use crate::core::{
     RewriteEngine, RewriteEngineError, RewriteInput, RewriteProposal, StubRewriteEngine,
@@ -443,15 +444,16 @@ fn kill_process(pid: u32) {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         hide_console_window(&mut command);
-        let _ = command.status();
+        report_termination("rewrite", pid, command);
     }
     #[cfg(not(windows))]
     {
-        let _ = system_command("kill")
+        let mut command = system_command("kill");
+        command
             .args(["-9", &pid.to_string()])
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+            .stderr(Stdio::null());
+        report_termination("rewrite", pid, command);
     }
 }
 
