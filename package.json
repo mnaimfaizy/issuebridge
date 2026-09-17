@@ -21,7 +21,7 @@
     "tauri": "tauri",
     "test:core": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:packaging": "node --test scripts/packaging-contract.test.mjs",
-    "test:ci-contract": "node --test scripts/ci-workflow-contract.test.mjs scripts/security-audit-contract.test.mjs scripts/agent-read-confinement-contract.test.mjs",
+    "test:ci-contract": "node --test scripts/ci-workflow-contract.test.mjs scripts/security-audit-contract.test.mjs scripts/agent-read-confinement-contract.test.mjs scripts/adapter-search-path-contract.test.mjs",
     "test:release-contract": "node --test scripts/release-preflight.test.mjs scripts/release-workflow-contract.test.mjs",
     "preflight:release": "node scripts/check-release-preflight.mjs --git --environment release --ref",
     "test:help-coverage": "node --test scripts/help-coverage.test.mjs",
