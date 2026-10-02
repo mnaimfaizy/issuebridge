@@ -39,7 +39,10 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// re-checking the pid.
 pub(crate) fn kill_process(tag: &str, pid: u32) {
     if let Some(reason) = failure_reason(terminate_command(pid).status()) {
-        crate::diag_warn!(tag, "terminate pid={pid} may not have taken effect: {reason}");
+        crate::diag_warn!(
+            tag,
+            "terminate pid={pid} may not have taken effect: {reason}"
+        );
     }
 }
 
