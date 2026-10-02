@@ -1,6 +1,11 @@
 pub mod adapters;
 pub mod core;
 
+// Re-export the diagnostic macros at the crate root so call sites across the
+// adapters keep invoking them as `crate::diag_warn!` / `diag_error!` / `diag_info!`.
+// They are crate-internal (no `#[macro_export]`); see `adapters::diagnostics`.
+pub(crate) use adapters::{diag_error, diag_info, diag_warn};
+
 use adapters::{
     add_all_app_visible_to_testing_set, add_custom_rewrite_style, add_testing_set_repo,
     all_repositories_warning, app_visible_repos, apply_ptt, auth_state, build_app_core,
@@ -83,6 +88,26 @@ pub fn run() {
             save_timestamp_display
         ])
         .setup(|app| {
+            // Attach the diagnostics sink before the rest of setup so launch
+            // diagnostics are captured. It is attached here, not in the builder
+            // chain, because the file target resolves and creates the per-user
+            // log dir and can fail (unwritable / occupied path); a builder-time
+            // failure would propagate to `.run().expect(...)` and panic — on a
+            // release build that is a *silent* failure to launch (no stderr). So
+            // we degrade to no sink instead of taking the app down over logging.
+            //
+            // The notice below is best-effort: if the sink failed to attach there
+            // is, by definition, no sink to record its own failure, and release
+            // has no stderr either. That is an accepted trade — a diagnostics sink
+            // that cannot start is rare (an unwritable log dir, or a second
+            // instance holding the file across a rollover), and a launch that
+            // continues blind beats a launch that panics.
+            if let Err(err) = app.handle().plugin(adapters::log_plugin()) {
+                eprintln!(
+                    "[issuebridge] diagnostics: file log sink unavailable; continuing without it: {err}"
+                );
+            }
+
             setup_tray(app.handle())?;
 
             // A vaulted token is only a session while GitHub still accepts it. Validate off

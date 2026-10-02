@@ -9,7 +9,7 @@ export const VOICE_MESSAGES: Record<VoiceKind, string> = {
     "Voice needs microphone access. Allow Issuebridge in Windows privacy settings, or type instead.",
   no_device: "No microphone found. Plug one in or type instead.",
   sidecar_failed:
-    "Voice could not run (Whisper sidecar). Check the terminal for [issuebridge] whisper logs, or type instead.",
+    "Voice could not run (Whisper sidecar). Check the Issuebridge logs, or type instead.",
   empty_transcript:
     "Didn’t catch that. Hold a bit longer, speak clearly, then release — or type.",
 };

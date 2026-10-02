@@ -33,14 +33,14 @@ impl Default for KeyringTokenStore {
 impl KeyringTokenStore {
     fn access_entry() -> Result<Entry, TokenStoreError> {
         Entry::new(SERVICE, ACCESS_USER).map_err(|err| {
-            eprintln!("[issuebridge] keyring: Entry::new access failed: {err}");
+            crate::diag_error!("keyring", "Entry::new access failed: {err}");
             TokenStoreError::Unavailable
         })
     }
 
     fn refresh_entry() -> Result<Entry, TokenStoreError> {
         Entry::new(SERVICE, REFRESH_USER).map_err(|err| {
-            eprintln!("[issuebridge] keyring: Entry::new refresh failed: {err}");
+            crate::diag_error!("keyring", "Entry::new refresh failed: {err}");
             TokenStoreError::Unavailable
         })
     }
@@ -50,7 +50,7 @@ impl KeyringTokenStore {
             Ok(()) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()),
             Err(err) => {
-                eprintln!("[issuebridge] keyring: delete failed: {err}");
+                crate::diag_error!("keyring", "delete failed: {err}");
                 Err(TokenStoreError::Unavailable)
             }
         }
@@ -80,15 +80,15 @@ impl TokenStore for KeyringTokenStore {
         let access = match Self::access_entry()?.get_password() {
             Ok(token) if !token.is_empty() => token,
             Ok(_) => {
-                eprintln!("[issuebridge] keyring: load access empty; trying memory");
+                crate::diag_info!("keyring", "load access empty; trying memory");
                 return self.memory_get();
             }
             Err(keyring::Error::NoEntry) => {
-                eprintln!("[issuebridge] keyring: load access NoEntry; trying memory");
+                crate::diag_info!("keyring", "load access NoEntry; trying memory");
                 return self.memory_get();
             }
             Err(err) => {
-                eprintln!("[issuebridge] keyring: load access failed: {err}; trying memory");
+                crate::diag_warn!("keyring", "load access failed: {err}; trying memory");
                 return self.memory_get();
             }
         };
@@ -97,7 +97,7 @@ impl TokenStore for KeyringTokenStore {
             Ok(token) if !token.is_empty() => Some(token),
             Ok(_) | Err(keyring::Error::NoEntry) => None,
             Err(err) => {
-                eprintln!("[issuebridge] keyring: load refresh failed: {err}");
+                crate::diag_warn!("keyring", "load refresh failed: {err}");
                 return Err(TokenStoreError::Unavailable);
             }
         };
@@ -106,8 +106,9 @@ impl TokenStore for KeyringTokenStore {
             access_token: access,
             refresh_token,
         };
-        eprintln!(
-            "[issuebridge] keyring: load ok (access_len={})",
+        crate::diag_info!(
+            "keyring",
+            "load ok (access_len={})",
             credentials.access_token.len()
         );
         let _ = self.memory_set(Some(credentials.clone()));
@@ -115,20 +116,20 @@ impl TokenStore for KeyringTokenStore {
     }
 
     fn store(&mut self, credentials: StoredCredentials) -> Result<(), TokenStoreError> {
-        eprintln!("[issuebridge] keyring: storing credentials…");
+        crate::diag_info!("keyring", "storing credentials…");
         let _guard = self.lock.lock().map_err(|_| TokenStoreError::Unavailable)?;
 
         Self::access_entry()?
             .set_password(&credentials.access_token)
             .map_err(|err| {
-                eprintln!("[issuebridge] keyring: store access token failed: {err}");
+                crate::diag_error!("keyring", "store access token failed: {err}");
                 TokenStoreError::Unavailable
             })?;
 
         let refresh = Self::refresh_entry()?;
         match &credentials.refresh_token {
             Some(token) if !token.is_empty() => refresh.set_password(token).map_err(|err| {
-                eprintln!("[issuebridge] keyring: store refresh token failed: {err}");
+                crate::diag_error!("keyring", "store refresh token failed: {err}");
                 TokenStoreError::Unavailable
             })?,
             _ => Self::delete_if_present(&refresh)?,
@@ -137,11 +138,12 @@ impl TokenStore for KeyringTokenStore {
         // Round-trip check: catch missing platform backend immediately.
         match Self::access_entry()?.get_password() {
             Ok(token) if token == credentials.access_token => {
-                eprintln!("[issuebridge] keyring: store ok (round-trip verified)");
+                crate::diag_info!("keyring", "store ok (round-trip verified)");
             }
             Ok(_) | Err(_) => {
-                eprintln!(
-                    "[issuebridge] keyring: vault round-trip failed after store; keeping memory mirror"
+                crate::diag_warn!(
+                    "keyring",
+                    "vault round-trip failed after store; keeping memory mirror"
                 );
             }
         }

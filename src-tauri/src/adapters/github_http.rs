@@ -171,7 +171,7 @@ impl GitHub for HttpGitHub {
             .header("X-GitHub-Api-Version", API_VERSION)
             .send()
             .map_err(|err| {
-                eprintln!("[issuebridge] GitHub /user request failed: {err}");
+                crate::diag_error!("GitHub", "/user request failed: {err}");
                 GitHubError::Unavailable
             })?;
 
@@ -196,8 +196,9 @@ impl GitHub for HttpGitHub {
         let secret = match self.client_secret.as_deref() {
             Some(secret) => secret,
             None => {
-                eprintln!(
-                    "[issuebridge] OAuth exchange blocked: set ISSUEBRIDGE_OAUTH_EXCHANGE_URL \
+                crate::diag_warn!(
+                    "OAuth",
+                    "exchange blocked: set ISSUEBRIDGE_OAUTH_EXCHANGE_URL \
                      (release) or ISSUEBRIDGE_GITHUB_CLIENT_SECRET (local/dev)"
                 );
                 return Err(GitHubError::Unavailable);
@@ -218,7 +219,7 @@ impl GitHub for HttpGitHub {
             }))
             .send()
             .map_err(|err| {
-                eprintln!("[issuebridge] OAuth token request failed: {err}");
+                crate::diag_error!("OAuth", "token request failed: {err}");
                 GitHubError::Unavailable
             })?;
 
@@ -430,12 +431,12 @@ impl GitHub for HttpGitHub {
 }
 
 fn map_request_error(op: &str, err: reqwest::Error) -> GitHubError {
-    eprintln!("[issuebridge] GitHub {op} request failed: {err}");
+    crate::diag_error!("GitHub", "{op} request failed: {err}");
     GitHubError::Unavailable
 }
 
 fn map_json_error(op: &str, err: reqwest::Error) -> GitHubError {
-    eprintln!("[issuebridge] GitHub {op} JSON parse failed: {err}");
+    crate::diag_error!("GitHub", "{op} JSON parse failed: {err}");
     GitHubError::Unavailable
 }
 
@@ -450,8 +451,9 @@ fn match_github_status(
         return Ok(response);
     }
     let body = response.text().unwrap_or_default();
-    eprintln!(
-        "[issuebridge] GitHub {op} error status={status} body={}",
+    crate::diag_warn!(
+        "GitHub",
+        "{op} error status={status} body={}",
         truncate_for_log(&body)
     );
     match status {
@@ -490,7 +492,7 @@ impl HttpGitHub {
             ))
             .send()
             .map_err(|err| {
-                eprintln!("[issuebridge] OAuth exchange backend request failed: {err}");
+                crate::diag_error!("OAuth", "exchange backend request failed: {err}");
                 GitHubError::Unavailable
             })?;
         self.parse_token_response(response)
@@ -504,21 +506,19 @@ impl HttpGitHub {
         eprintln!("[issuebridge] OAuth token status={status}");
         if !response.status().is_success() {
             let body = response.text().unwrap_or_default();
-            eprintln!(
-                "[issuebridge] OAuth token error body={}",
-                truncate_for_log(&body)
-            );
+            crate::diag_warn!("OAuth", "token error body={}", truncate_for_log(&body));
             return Err(GitHubError::Unavailable);
         }
 
         let body: TokenResponse = response.json().map_err(|err| {
-            eprintln!("[issuebridge] OAuth token JSON parse failed: {err}");
+            crate::diag_error!("OAuth", "token JSON parse failed: {err}");
             GitHubError::Unavailable
         })?;
 
         if let Some(ref err) = body.error {
-            eprintln!(
-                "[issuebridge] OAuth token error={} desc={}",
+            crate::diag_warn!(
+                "OAuth",
+                "token error={} desc={}",
                 err,
                 body.error_description.as_deref().unwrap_or("")
             );
@@ -554,7 +554,7 @@ impl HttpGitHub {
                 .header("X-GitHub-Api-Version", API_VERSION)
                 .send()
                 .map_err(|err| {
-                    eprintln!("[issuebridge] installations request failed: {err}");
+                    crate::diag_error!("installations", "request failed: {err}");
                     GitHubError::Unavailable
                 })?;
 
@@ -564,16 +564,18 @@ impl HttpGitHub {
                 200 => {}
                 401 | 403 => {
                     let body = response.text().unwrap_or_default();
-                    eprintln!(
-                        "[issuebridge] installations auth error body={}",
+                    crate::diag_warn!(
+                        "installations",
+                        "auth error body={}",
                         body.chars().take(300).collect::<String>()
                     );
                     return Err(GitHubError::InvalidCredentials);
                 }
                 other => {
                     let body = response.text().unwrap_or_default();
-                    eprintln!(
-                        "[issuebridge] installations unexpected status={other} body={}",
+                    crate::diag_warn!(
+                        "installations",
+                        "unexpected status={other} body={}",
                         body.chars().take(300).collect::<String>()
                     );
                     return Err(GitHubError::Unavailable);
@@ -582,7 +584,7 @@ impl HttpGitHub {
 
             let next = next_link(response.headers().get(LINK).and_then(|v| v.to_str().ok()));
             let body: InstallationsResponse = response.json().map_err(|err| {
-                eprintln!("[issuebridge] installations JSON parse failed: {err}");
+                crate::diag_error!("installations", "JSON parse failed: {err}");
                 GitHubError::Unavailable
             })?;
             eprintln!(

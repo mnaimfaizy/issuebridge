@@ -76,7 +76,7 @@ export function SignInStep({ onAdvanced }: SignInStepProps) {
         (step as FirstRunWizardStep | "ready") === "sign_in"
       ) {
         setError(
-          "Credentials were accepted, but the app stayed on Sign in. Check the terminal for [issuebridge] keyring logs.",
+          "Credentials were accepted, but the app stayed on Sign in. Check the Issuebridge logs for keyring details.",
         );
       }
     } catch (err) {

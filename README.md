@@ -91,6 +91,13 @@ In `npm run tauri dev` (debug builds):
 2. **Terminal** shows `[issuebridge]` logs: OAuth, keyring, installations, `whisper: …`.
 3. Webview console shows PAT / PTT lines (`target: "title" | "body"`, etc.).
 
+In **every** build (including an official Release, which has no terminal), the
+same `[issuebridge]` diagnostics are written to a rotating log file under the
+per-user app log dir — on Windows `%LOCALAPPDATA%\com.issuebridge.app\logs\issuebridge.log`.
+Highest-value signals (failed sidecar terminate, OAuth / Publish / sign-in /
+voice errors) route there today; the remaining informational breadcrumbs are
+still terminal-only pending a follow-up sweep.
+
 To re-test the first-run progress strip from scratch (Sign out does not rewind it), see [`docs/dev-first-run-reset.md`](docs/dev-first-run-reset.md). Chromium `Chrome_WidgetWin_0` / Error `1412` lines on Quit are usually harmless WebView2 teardown noise — ignore unless Quit hangs or crashes.
 
 ```bash

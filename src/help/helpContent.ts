@@ -391,6 +391,24 @@ export const HELP_TOPICS: HelpTopic[] = [
     },
   },
   {
+    id: "logs",
+    heading: "Logs and diagnostics",
+    intro:
+      "When something fails quietly, Issuebridge records a diagnostic you can inspect — in every build, not just developer ones.",
+    points: [
+      {
+        term: "Where logs live",
+        detail:
+          "Issuebridge writes a rotating issuebridge.log under its per-user app log folder — on Windows, %LOCALAPPDATA%\\com.issuebridge.app\\logs. Messages that say to check the Issuebridge logs point here.",
+      },
+      {
+        term: "What is recorded",
+        detail:
+          "Failures worth tracing — a failed Publish, sign-in, or voice transcription — are kept in every build. Routine step-by-step breadcrumbs appear only in developer builds.",
+      },
+    ],
+  },
+  {
     id: "about",
     heading: "About",
     intro: "Issuebridge is a Windows-first desktop app, built in the open.",
