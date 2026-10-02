@@ -80,11 +80,11 @@ impl TokenStore for KeyringTokenStore {
         let access = match Self::access_entry()?.get_password() {
             Ok(token) if !token.is_empty() => token,
             Ok(_) => {
-                eprintln!("[issuebridge] keyring: load access empty; trying memory");
+                crate::diag_info!("keyring", "load access empty; trying memory");
                 return self.memory_get();
             }
             Err(keyring::Error::NoEntry) => {
-                eprintln!("[issuebridge] keyring: load access NoEntry; trying memory");
+                crate::diag_info!("keyring", "load access NoEntry; trying memory");
                 return self.memory_get();
             }
             Err(err) => {
@@ -106,8 +106,9 @@ impl TokenStore for KeyringTokenStore {
             access_token: access,
             refresh_token,
         };
-        eprintln!(
-            "[issuebridge] keyring: load ok (access_len={})",
+        crate::diag_info!(
+            "keyring",
+            "load ok (access_len={})",
             credentials.access_token.len()
         );
         let _ = self.memory_set(Some(credentials.clone()));
@@ -115,7 +116,7 @@ impl TokenStore for KeyringTokenStore {
     }
 
     fn store(&mut self, credentials: StoredCredentials) -> Result<(), TokenStoreError> {
-        eprintln!("[issuebridge] keyring: storing credentials…");
+        crate::diag_info!("keyring", "storing credentials…");
         let _guard = self.lock.lock().map_err(|_| TokenStoreError::Unavailable)?;
 
         Self::access_entry()?
@@ -137,7 +138,7 @@ impl TokenStore for KeyringTokenStore {
         // Round-trip check: catch missing platform backend immediately.
         match Self::access_entry()?.get_password() {
             Ok(token) if token == credentials.access_token => {
-                eprintln!("[issuebridge] keyring: store ok (round-trip verified)");
+                crate::diag_info!("keyring", "store ok (round-trip verified)");
             }
             Ok(_) | Err(_) => {
                 crate::diag_warn!(
