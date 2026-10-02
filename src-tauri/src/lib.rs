@@ -26,9 +26,6 @@ pub fn run() {
     let rewrite_job = RewriteJobHandle::new();
     let model_download = Arc::new(ModelDownloadHandle::new());
     tauri::Builder::default()
-        // Attach the diagnostics sink first so a failure in any later plugin or
-        // the setup hook is itself captured. See `adapters::diagnostics`.
-        .plugin(adapters::log_plugin())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState {
@@ -86,6 +83,19 @@ pub fn run() {
             save_timestamp_display
         ])
         .setup(|app| {
+            // Attach the diagnostics sink before the rest of setup so launch
+            // diagnostics are captured. It is attached here, not in the builder
+            // chain, because the file target resolves and creates the per-user
+            // log dir and can fail (unwritable / occupied path); a builder-time
+            // failure would propagate to `.run().expect(...)` and panic — on a
+            // release build that is a *silent* failure to launch (no stderr). So
+            // we degrade to no sink instead of taking the app down over logging.
+            if let Err(err) = app.handle().plugin(adapters::log_plugin()) {
+                eprintln!(
+                    "[issuebridge] diagnostics: file log sink unavailable; continuing without it: {err}"
+                );
+            }
+
             setup_tray(app.handle())?;
 
             // A vaulted token is only a session while GitHub still accepts it. Validate off
