@@ -37,19 +37,21 @@ impl VoiceTranscriber for WhisperVoiceTranscriber {
     fn transcribe(&self, audio_path: &str) -> Result<String, VoiceError> {
         let audio = Path::new(audio_path);
         if !audio.is_file() {
-            eprintln!("[issuebridge] whisper: audio missing at {audio_path}");
+            crate::diag_error!("whisper", "audio missing at {audio_path}");
             return Err(VoiceError::SidecarFailed);
         }
 
         let sidecar = resolve_sidecar_path().ok_or_else(|| {
-            eprintln!(
-                "[issuebridge] whisper: sidecar not found (run scripts/fetch-whisper-assets.ps1)"
+            crate::diag_error!(
+                "whisper",
+                "sidecar not found (run scripts/fetch-whisper-assets.ps1)"
             );
             VoiceError::SidecarFailed
         })?;
         let model = resolve_model_path().ok_or_else(|| {
-            eprintln!(
-                "[issuebridge] whisper: model not found (run scripts/fetch-whisper-assets.ps1)"
+            crate::diag_error!(
+                "whisper",
+                "model not found (run scripts/fetch-whisper-assets.ps1)"
             );
             VoiceError::SidecarFailed
         })?;
@@ -86,8 +88,9 @@ impl VoiceTranscriber for WhisperVoiceTranscriber {
         let output = run_with_timeout(command, self.timeout)?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            eprintln!(
-                "[issuebridge] whisper: exit={:?} stderr={}",
+            crate::diag_warn!(
+                "whisper",
+                "exit={:?} stderr={}",
                 output.status.code(),
                 truncate_for_log(&stderr)
             );
@@ -190,7 +193,7 @@ fn run_with_timeout(
 ) -> Result<std::process::Output, VoiceError> {
     hide_console_window(&mut command);
     let child = command.spawn().map_err(|err| {
-        eprintln!("[issuebridge] whisper: spawn failed: {err}");
+        crate::diag_error!("whisper", "spawn failed: {err}");
         VoiceError::SidecarFailed
     })?;
     let pid = child.id();
@@ -202,12 +205,12 @@ fn run_with_timeout(
     match rx.recv_timeout(timeout) {
         Ok(Ok(output)) => Ok(output),
         Ok(Err(err)) => {
-            eprintln!("[issuebridge] whisper: wait failed: {err}");
+            crate::diag_error!("whisper", "wait failed: {err}");
             kill_process("whisper", pid);
             Err(VoiceError::SidecarFailed)
         }
         Err(_) => {
-            eprintln!("[issuebridge] whisper: timed out after {timeout:?}");
+            crate::diag_warn!("whisper", "timed out after {timeout:?}");
             kill_process("whisper", pid);
             Err(VoiceError::SidecarFailed)
         }
