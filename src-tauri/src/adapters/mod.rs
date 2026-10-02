@@ -38,7 +38,7 @@ pub use commands::{
     testing_set_max, update_linked_draft, use_theirs, validate_session, validate_session_on_launch,
     AppState, ModelDownloadHandle,
 };
-pub(crate) use diagnostics::{plugin as log_plugin, DIAG_TARGET};
+pub(crate) use diagnostics::{diag_error, diag_info, diag_warn, plugin as log_plugin, DIAG_TARGET};
 pub(crate) use file_draft_store::system_time_millis;
 pub use llama_rewrite::RewriteJobHandle;
 pub use tray::setup_tray;
