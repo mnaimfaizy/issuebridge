@@ -683,7 +683,7 @@ pub fn publish_draft(
     let draft = match core.publish_draft(&id) {
         Ok(draft) => draft,
         Err(err) => {
-            eprintln!("[issuebridge] publish_draft failed: {err:?}");
+            crate::diag_error!("publish", "publish_draft failed: {err:?}");
             let auth = core.auth_state();
             drop(core);
             emit_if_signed_out(&app, auth);
@@ -734,7 +734,7 @@ pub fn update_linked_draft(
             })
         }
         Err(err) => {
-            eprintln!("[issuebridge] update_linked_draft failed: {err:?}");
+            crate::diag_error!("publish", "update_linked_draft failed: {err:?}");
             let auth = core.auth_state();
             drop(core);
             emit_if_signed_out(&app, auth);
@@ -1324,8 +1324,7 @@ fn publish_error_message(err: PublishError) -> String {
             "GitHub rejected your sign-in. Sign out, then Sign in with GitHub again.".into()
         }
         PublishError::ProviderUnavailable => {
-            "Could not create the GitHub issue. Check the terminal [issuebridge] logs and try again."
-                .into()
+            "Could not create the GitHub issue. Check the Issuebridge logs and try again.".into()
         }
     }
 }
@@ -1342,8 +1341,7 @@ fn update_error_message(err: UpdateError) -> String {
             "GitHub rejected your sign-in. Sign out, then Sign in with GitHub again.".into()
         }
         UpdateError::ProviderUnavailable => {
-            "Could not update the GitHub issue. Check the terminal [issuebridge] logs and try again."
-                .into()
+            "Could not update the GitHub issue. Check the Issuebridge logs and try again.".into()
         }
     }
 }
@@ -1366,7 +1364,7 @@ fn install_error_message(err: InstallError) -> String {
             "Continue needs a GitHub App sign-in token. Personal access tokens (even classic) cannot list App installations. Sign out, then use Sign in with GitHub. Re-installing the App is not required if it is already installed.".into()
         }
         InstallError::ProviderUnavailable => {
-            "Could not refresh installations from GitHub. Check the terminal [issuebridge] logs and try again.".into()
+            "Could not refresh installations from GitHub. Check the Issuebridge logs and try again.".into()
         }
         InstallError::StorageUnavailable => "Could not save first-run progress.".into(),
     }

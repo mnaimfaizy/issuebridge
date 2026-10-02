@@ -26,6 +26,9 @@ pub fn run() {
     let rewrite_job = RewriteJobHandle::new();
     let model_download = Arc::new(ModelDownloadHandle::new());
     tauri::Builder::default()
+        // Attach the diagnostics sink first so a failure in any later plugin or
+        // the setup hook is itself captured. See `adapters::diagnostics`.
+        .plugin(adapters::log_plugin())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState {

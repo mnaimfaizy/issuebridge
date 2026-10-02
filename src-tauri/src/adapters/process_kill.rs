@@ -17,11 +17,10 @@
 //! too — for whisper an already-gone pid is anomalous, but silencing it is better
 //! than a false "did not take effect" on the common exit race.
 //!
-//! The failure is logged through the app's `[issuebridge]` channel, which is only
-//! attached under `tauri dev`: a release build (`windows_subsystem = "windows"`,
-//! no log sink) discards it, so user-visible reporting on a release build waits on
-//! an app-wide log sink, tracked separately. This change keeps the signal correct
-//! for that sink to carry.
+//! The failure is logged through the app's `[issuebridge]` channel via
+//! [`crate::diag_warn!`], which `adapters::diagnostics` routes to a rotating file
+//! under the per-user app log dir in every build — so the warning survives on a
+//! release build (`windows_subsystem = "windows"`), not just under `tauri dev`.
 
 use std::process::{Command, ExitStatus, Stdio};
 
@@ -40,7 +39,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// re-checking the pid.
 pub(crate) fn kill_process(tag: &str, pid: u32) {
     if let Some(reason) = failure_reason(terminate_command(pid).status()) {
-        eprintln!("[issuebridge] {tag}: terminate pid={pid} may not have taken effect: {reason}");
+        crate::diag_warn!(tag, "terminate pid={pid} may not have taken effect: {reason}");
     }
 }
 

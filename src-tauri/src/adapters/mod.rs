@@ -4,6 +4,7 @@
 mod app_core;
 mod capture_window;
 mod commands;
+mod diagnostics;
 mod file_draft_store;
 mod file_label_catalog_store;
 mod file_rewrite_model_store;
@@ -37,6 +38,7 @@ pub use commands::{
     testing_set_max, update_linked_draft, use_theirs, validate_session, validate_session_on_launch,
     AppState, ModelDownloadHandle,
 };
+pub(crate) use diagnostics::{plugin as log_plugin, DIAG_TARGET};
 pub(crate) use file_draft_store::system_time_millis;
 pub use llama_rewrite::RewriteJobHandle;
 pub use tray::setup_tray;
