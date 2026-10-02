@@ -16,9 +16,10 @@
 // the control is asserted at the source instead. The bare-spawn scan is a literal
 // tripwire against the obvious revert (`Command::new("taskkill")`), not a proof —
 // a binding through a variable (`let p = "taskkill"; Command::new(p)`) would slip
-// past it. It is exact today because no adapter spawns `taskkill`/`kill` other
-// than the two production `kill_process` sites; the `ping`/`sleep`/`echo` test
-// helpers are `#[cfg(test)]` and out of the threat model. Assertions match code
+// past it. It is exact today because the one production terminate command lives
+// in `process_kill.rs` (via `system_command`), so no adapter spawns `taskkill`/
+// `kill` directly; the `ping`/`sleep`/`echo` test helpers are `#[cfg(test)]` and
+// out of the threat model. Assertions match code
 // expressions, never a doc comment, so reverting the fix cannot leave prose that
 // keeps the check green.
 
@@ -36,9 +37,11 @@ const PROBE = join(ADAPTERS_DIR, "system_hardware_probe.rs");
 const MOD = join(ADAPTERS_DIR, "mod.rs");
 const HELPER = join(ADAPTERS_DIR, "system_exec.rs");
 
-// The adapters whose `kill_process` terminates a sidecar; each must route the
-// spawn through the resolver. Not an exhaustive list of adapters — the bare-name
-// prohibition below covers every adapter file, present and future.
+// The single module that owns the terminate command (resolves the stock binary
+// through system_command), and the adapters that must route termination through
+// it rather than spawning their own. Not an exhaustive list of adapters — the
+// bare-name prohibition below covers every adapter file, present and future.
+const KILL_HELPER = "process_kill.rs";
 const PROCESS_TERMINATION_SITES = ["whisper_voice.rs", "llama_rewrite.rs"];
 
 function adapterRustFiles() {
@@ -68,14 +71,25 @@ describe("adapter system search-path contract", () => {
     }
   });
 
-  it("process-termination adapters resolve the binary through system_command()", () => {
+  it("the shared terminate helper resolves the binary through system_command()", () => {
+    const src = readRepo(ADAPTERS_DIR, KILL_HELPER);
+    // Bind to a call site (`= system_command(`), not a mention in a comment.
+    assert.match(
+      src,
+      /=\s*system_command\(/,
+      `${KILL_HELPER} must call system_command() to resolve the terminate binary`,
+    );
+  });
+
+  it("process-termination adapters route through the shared kill_process()", () => {
     for (const f of PROCESS_TERMINATION_SITES) {
       const src = readRepo(ADAPTERS_DIR, f);
-      // Bind to a call site (`= system_command(`), not a mention in a comment.
+      // Bind to a tagged call site (`kill_process("rewrite"`/`"whisper"`), not the
+      // import line or the definition in the helper.
       assert.match(
         src,
-        /=\s*system_command\(/,
-        `${f} must call system_command() to resolve the binary`,
+        /kill_process\("/,
+        `${f} must terminate via the shared kill_process() helper`,
       );
     }
   });

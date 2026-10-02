@@ -1,147 +1,130 @@
-//! Best-effort child termination that leaves a trace when it fails.
+//! Best-effort termination of the Rewrite/PTT sidecars that leaves a trace when
+//! it genuinely fails.
 //!
-//! The Rewrite and PTT cancel/timeout paths call `kill_process(pid)` and then
-//! report the sidecar cancelled regardless of whether the terminate command
-//! actually ran. When it discards the result, a failed kill — the resolved
-//! system binary missing, or the pid already reaped/reused — is indistinguishable
-//! from success, so the UI says "cancelled" while `llama-cli`/`whisper-cli` may
-//! still be running to its full timeout holding the GGUF and the GPU. This keeps
-//! the terminate best-effort (the cancel path does not block on re-checking the
-//! pid) and logs a *genuine* failure — distinguished from the already-gone pid a
-//! healthy cancel produces — through the app's `[issuebridge]` diagnostic channel.
+//! `kill_process(tag, pid)` owns the platform terminate command — the `cfg`
+//! split, the `taskkill`/`kill` argv, and hiding the console window — so the
+//! adapters do not each carry a copy. It is reached from the Rewrite **cancel**
+//! path (`RewriteJobHandle::cancel`) and from the wait-failure / timeout arms of
+//! both sidecars' run loops. Whisper has no cancel port — `VoiceTranscriber` only
+//! transcribes — so its two call sites are the mutually exclusive timeout and
+//! wait-failure arms of `run_with_timeout`, not a cancel.
 //!
-//! That channel is only attached under `tauri dev`: an official build runs with
-//! `windows_subsystem = "windows"` (no stderr handle) and the project has no log
-//! sink, so the line is discarded there. Surfacing a failed terminate to a user
-//! on a release build therefore waits on an app-wide log sink, tracked
-//! separately; this change makes the signal correct and testable so that sink has
-//! something accurate to carry.
+//! An "already gone" pid counts as success, not failure. On the cancel path a pid
+//! can be terminated when it is already dead: a sidecar that exited on its own
+//! just as the timeout fired. (A double cancel of the same pid used to be the main
+//! source; `RewriteJobHandle` now claims the pid before killing, so that no longer
+//! reaches here.) This allowance is a Rewrite-shaped concession applied to whisper
+//! too — for whisper an already-gone pid is anomalous, but silencing it is better
+//! than a false "did not take effect" on the common exit race.
+//!
+//! The failure is logged through the app's `[issuebridge]` channel, which is only
+//! attached under `tauri dev`: a release build (`windows_subsystem = "windows"`,
+//! no log sink) discards it, so user-visible reporting on a release build waits on
+//! an app-wide log sink, tracked separately. This change keeps the signal correct
+//! for that sink to carry.
 
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Stdio};
 
-/// Run `command` to terminate `pid`, logging when it did not clearly take
-/// effect. `component` is the log tag (`whisper` / `rewrite`) matching the
-/// `[issuebridge] <component>: …` lines the caller already emits.
-pub(crate) fn report_termination(component: &str, pid: u32, mut command: Command) {
-    if let Some(reason) = failure_reason(command.status()) {
-        eprintln!(
-            "[issuebridge] {component}: terminate pid={pid} may not have taken effect: {reason}"
-        );
+use crate::adapters::system_exec::system_command;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+/// Avoid a flashing console window when spawning the terminate helper.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Terminate `pid` with the platform's stock tool, logging only when the
+/// terminate did not clearly take effect. `tag` is the `[issuebridge] <tag>:` log
+/// component (`rewrite` / `whisper`). Best-effort: the caller does not block on
+/// re-checking the pid.
+pub(crate) fn kill_process(tag: &str, pid: u32) {
+    if let Some(reason) = failure_reason(terminate_command(pid).status()) {
+        eprintln!("[issuebridge] {tag}: terminate pid={pid} may not have taken effect: {reason}");
     }
 }
 
-/// `None` when the terminate left no child behind — a clean kill, or an
-/// "already gone" result, which on the cancel path is success, not failure.
-/// `Some(reason)` is a terminate that never ran (missing binary) or, on Windows,
-/// a genuinely failing exit. Split out so both branches are unit-testable
-/// without spawning a real victim process.
-///
-/// Already-gone is reachable on the healthy path: `RewriteJobHandle::cancel`
-/// kills the stored pid without clearing it, so a second cancel — or a user
-/// cancel racing the backend timeout branch — issues a second kill against a pid
-/// that is already dead. Flagging that as a failure would devalue the signal.
+#[cfg(windows)]
+fn terminate_command(pid: u32) -> Command {
+    let mut command = system_command("taskkill");
+    command
+        .args(["/PID", &pid.to_string(), "/F"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+#[cfg(not(windows))]
+fn terminate_command(pid: u32) -> Command {
+    let mut command = system_command("kill");
+    command
+        .args(["-9", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
+}
+
+/// `None` when the terminate left no child behind — a clean kill or an
+/// already-gone pid; `Some(reason)` when it never ran (missing binary) or, on
+/// Windows, failed for a real reason. Thin wiring over [`left_no_child`] so the
+/// platform decision is one pure function testable on any host.
 fn failure_reason(result: std::io::Result<ExitStatus>) -> Option<String> {
     match result {
-        Ok(status) if terminate_left_no_child(&status) => None,
+        Ok(status) if left_no_child(status.code(), cfg!(windows)) => None,
         Ok(status) => Some(format!("terminate command exited with {status}")),
         Err(err) => Some(format!("terminate command failed to run: {err}")),
     }
 }
 
-/// Whether the terminate command's exit means no child remains (the cancel
-/// worked), covering both a clean kill and a pid that was already gone.
-#[cfg(windows)]
-fn terminate_left_no_child(status: &ExitStatus) -> bool {
-    // `taskkill /F`: 0 = killed, 128 = the pid no longer existed. Both leave no
-    // child; other non-zero codes (e.g. 1 = access denied) are real failures.
-    matches!(status.code(), Some(0) | Some(128))
-}
-
-/// `kill` reports failure only through a non-zero exit and cannot tell ESRCH
-/// (already gone) from other errors by code; SIGKILL to our own child never
-/// leaves it running, so any exit here means the child is gone. The actionable
-/// failure on this platform is the spawn error (missing binary), handled above.
-#[cfg(not(windows))]
-fn terminate_left_no_child(status: &ExitStatus) -> bool {
-    let _ = status;
-    true
+/// Whether a terminate exit `code` means no child remains. Pure and platform-
+/// parameterised so both tables run on Linux CI, where the `#[cfg(windows)]`
+/// runtime path is never compiled.
+///
+/// Windows `taskkill /F`: 0 = killed, 128 = the pid was already gone — both leave
+/// no child; any other code (1 = access denied, or a process caught mid-exit) is
+/// a real failure. Non-Windows `kill`: a non-zero exit cannot distinguish ESRCH
+/// from other errors, and SIGKILL to our own child never leaves it running, so
+/// every exit means the child is gone — the only detectable failure there is the
+/// spawn error (missing binary), handled by [`failure_reason`].
+fn left_no_child(code: Option<i32>, windows: bool) -> bool {
+    !windows || matches!(code, Some(0) | Some(128))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // A command that exits 0 / non-zero on the test host, without depending on a
-    // constructable `ExitStatus` (which has no cross-platform public constructor).
-    fn exit_command(code: u8) -> Command {
-        #[cfg(windows)]
-        {
-            let mut command = Command::new("cmd");
-            command.args(["/C", "exit", &code.to_string()]);
-            command
-        }
-        #[cfg(not(windows))]
-        {
-            let mut command = Command::new("sh");
-            command.args(["-c", &format!("exit {code}")]);
-            command
-        }
-    }
-
     #[test]
-    fn missing_terminate_binary_is_reported_as_failure() {
-        // The reviewer's scenario: the resolved terminate binary is absent, so
-        // the spawn itself fails. A cancel must not report success over this.
-        let mut command = Command::new("issuebridge-no-such-terminator-xyz");
-        let reason = failure_reason(command.status());
-        assert!(reason.is_some(), "expected a failure reason");
+    fn windows_table_keeps_only_killed_or_already_gone() {
+        assert!(left_no_child(Some(0), true), "0 = killed");
+        assert!(left_no_child(Some(128), true), "128 = already gone");
         assert!(
-            reason.unwrap().contains("failed to run"),
-            "spawn failure should be named"
+            !left_no_child(Some(1), true),
+            "1 = access denied is a failure"
         );
-    }
-
-    #[test]
-    fn zero_exit_is_treated_as_success() {
-        let reason = failure_reason(exit_command(0).status());
-        assert_eq!(reason, None);
-    }
-
-    // `taskkill /F` exits 128 for a pid that is already gone — the cancel worked.
-    #[cfg(windows)]
-    #[test]
-    fn already_gone_exit_128_is_success_on_windows() {
-        let reason = failure_reason(exit_command(128).status());
-        assert_eq!(reason, None, "an already-gone pid is not a failure");
-    }
-
-    // A non-zero taskkill exit other than 128 (e.g. 1 = access denied) is real.
-    #[cfg(windows)]
-    #[test]
-    fn genuine_nonzero_exit_is_failure_on_windows() {
-        let reason = failure_reason(exit_command(1).status());
+        assert!(!left_no_child(Some(255), true), "other codes are failures");
         assert!(
-            reason.is_some(),
-            "a genuine terminate failure must be surfaced"
+            !left_no_child(None, true),
+            "no exit code is a failure on Windows"
         );
     }
 
-    // `kill` cannot distinguish already-gone from other errors by exit code, and
-    // SIGKILL to our own child never leaves it alive, so any exit means gone.
-    #[cfg(not(windows))]
     #[test]
-    fn nonzero_kill_exit_is_treated_as_already_gone_on_unix() {
-        let reason = failure_reason(exit_command(1).status());
-        assert_eq!(reason, None, "an already-gone pid is not a failure");
+    fn unix_table_treats_every_exit_as_gone() {
+        assert!(left_no_child(Some(0), false));
+        assert!(left_no_child(Some(1), false));
+        assert!(left_no_child(Some(255), false));
+        assert!(left_no_child(None, false));
     }
 
     #[test]
-    fn report_termination_over_a_missing_binary_does_not_panic() {
-        // The public entry point must stay infallible on the cancel path.
-        report_termination(
-            "test",
-            std::process::id(),
-            Command::new("issuebridge-no-such-xyz"),
-        );
+    fn spawn_failure_is_reported() {
+        // The terminate binary was missing, so the command never ran. This is the
+        // one failure detectable on every platform, and must not be forgiven.
+        let err = std::io::Error::new(std::io::ErrorKind::NotFound, "no terminate binary");
+        let reason = failure_reason(Err(err));
+        assert!(reason.is_some(), "a spawn failure must be surfaced");
+        assert!(reason.unwrap().contains("failed to run"));
     }
 }
