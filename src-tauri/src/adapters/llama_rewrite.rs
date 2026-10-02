@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-use crate::adapters::system_exec::system_command;
+use crate::adapters::process_kill::kill_process;
 use crate::core::{
     RewriteEngine, RewriteEngineError, RewriteInput, RewriteProposal, StubRewriteEngine,
 };
@@ -43,10 +43,7 @@ impl RewriteJobHandle {
 
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::SeqCst);
-        let pid = self.pid.load(Ordering::SeqCst);
-        if pid != 0 {
-            kill_process(pid);
-        }
+        self.take_pid_and_kill();
     }
 
     fn begin(&self) {
@@ -60,6 +57,22 @@ impl RewriteJobHandle {
 
     fn clear_pid(&self) {
         self.pid.store(0, Ordering::SeqCst);
+    }
+
+    /// Atomically claim the stored pid, returning it (and clearing it to 0). Only
+    /// the caller that observes a non-zero pid owns the kill, so a given pid is
+    /// terminated at most once even when a second cancel — or a cancel racing the
+    /// wait thread's timeout/failure arms — runs concurrently.
+    fn take_pid(&self) -> u32 {
+        self.pid.swap(0, Ordering::SeqCst)
+    }
+
+    /// Claim the pid and, if this caller won it, terminate it.
+    fn take_pid_and_kill(&self) {
+        let pid = self.take_pid();
+        if pid != 0 {
+            kill_process("rewrite", pid);
+        }
     }
 
     fn is_cancelled(&self) -> bool {
@@ -412,8 +425,7 @@ fn run_with_job(
         }
         Ok(Err(err)) => {
             eprintln!("[issuebridge] rewrite: wait failed: {err}");
-            kill_process(pid);
-            job.clear_pid();
+            job.take_pid_and_kill();
             if job.is_cancelled() {
                 Err(RewriteEngineError::Cancelled)
             } else {
@@ -422,8 +434,7 @@ fn run_with_job(
         }
         Err(_) => {
             eprintln!("[issuebridge] rewrite: timed out after {timeout:?}");
-            kill_process(pid);
-            job.clear_pid();
+            job.take_pid_and_kill();
             if job.is_cancelled() {
                 Err(RewriteEngineError::Cancelled)
             } else {
@@ -432,27 +443,6 @@ fn run_with_job(
         }
     };
     result
-}
-
-fn kill_process(pid: u32) {
-    #[cfg(windows)]
-    {
-        let mut command = system_command("taskkill");
-        command
-            .args(["/PID", &pid.to_string(), "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        hide_console_window(&mut command);
-        let _ = command.status();
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = system_command("kill")
-            .args(["-9", &pid.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
 }
 
 fn resolve_sidecar_path() -> Option<PathBuf> {
@@ -725,6 +715,18 @@ JSON:\n\
         });
         let err = run_with_job(command, Duration::from_secs(30), &job).expect_err("cancelled");
         assert_eq!(err, RewriteEngineError::Cancelled);
+    }
+
+    #[test]
+    fn claiming_the_pid_twice_yields_it_only_once() {
+        // cancel() and the wait-thread arms kill only the pid they claim, so a
+        // second cancel (or a cancel racing the timeout arm) finds it cleared and
+        // issues no second kill — no spurious "already gone" terminate. Exercises
+        // the claim directly so no real process is spawned against an arbitrary pid.
+        let job = RewriteJobHandle::default();
+        job.set_pid(424_242);
+        assert_eq!(job.take_pid(), 424_242, "first claim takes the stored pid");
+        assert_eq!(job.take_pid(), 0, "second claim finds it cleared");
     }
 
     #[test]

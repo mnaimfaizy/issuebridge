@@ -12,6 +12,7 @@ mod github_http;
 mod keyring_token_store;
 mod llama_rewrite;
 mod oauth_loopback;
+mod process_kill;
 mod system_exec;
 mod system_hardware_probe;
 #[cfg(test)]

@@ -10,7 +10,7 @@ use std::time::Duration;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-use crate::adapters::system_exec::system_command;
+use crate::adapters::process_kill::kill_process;
 use crate::core::{VoiceError, VoiceTranscriber};
 
 /// Avoid a flashing console window when spawning `whisper-cli` (console subsystem).
@@ -203,35 +203,14 @@ fn run_with_timeout(
         Ok(Ok(output)) => Ok(output),
         Ok(Err(err)) => {
             eprintln!("[issuebridge] whisper: wait failed: {err}");
-            kill_process(pid);
+            kill_process("whisper", pid);
             Err(VoiceError::SidecarFailed)
         }
         Err(_) => {
             eprintln!("[issuebridge] whisper: timed out after {timeout:?}");
-            kill_process(pid);
+            kill_process("whisper", pid);
             Err(VoiceError::SidecarFailed)
         }
-    }
-}
-
-fn kill_process(pid: u32) {
-    #[cfg(windows)]
-    {
-        let mut command = system_command("taskkill");
-        command
-            .args(["/PID", &pid.to_string(), "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        hide_console_window(&mut command);
-        let _ = command.status();
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = system_command("kill")
-            .args(["-9", &pid.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
     }
 }
 
