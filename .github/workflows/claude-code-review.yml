@@ -169,7 +169,8 @@ jobs:
 
           # A PR must not be able to rewrite the instructions reviewing it, nor the
           # read-confinement hook. Claude Code auto-loads AGENTS.md / CLAUDE.md and
-          # .claude/; the skill is the review policy; agent-runtime holds the hook.
+          # .claude/; the skill is the review policy; agent-runtime is the hook's
+          # source, though the agent runs only the copy staged from the base below.
           for path in \
             AGENTS.md \
             CLAUDE.md \
@@ -206,6 +207,29 @@ jobs:
             echo "Restore skipped $SKIPPED_THROUGH_LINK path(s) resolving through a symlink."
           fi
           echo "Review runtime restored from PR base $BASE_SHA"
+
+      - name: Stage trusted read-confinement hook outside the agent workspace
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          # The PR base, which the restore step above has fetched.
+          TRUSTED_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # The hook confining the reviewer's reads is code its own session runs
+          # on every read, and the checkout is not out of that session's reach.
+          # Copy the hook and its settings from the commit object, not the
+          # working tree, to a read-only directory outside the workspace before
+          # the agent starts.
+          STAGED="$RUNNER_TEMP/agent-read-confinement"
+          mkdir -p "$STAGED"
+          for file in confine-reads-to-workspace.mjs read-confinement.settings.json; do
+            git show "$TRUSTED_SHA:.github/agent-runtime/$file" > "$STAGED/$file"
+            # An empty script would run and decide nothing; never stage one.
+            test -s "$STAGED/$file"
+            chmod 400 "$STAGED/$file"
+          done
+          chmod 500 "$STAGED"
+          echo "Read-confinement hook staged from $TRUSTED_SHA"
 
       - name: Build review brief
         if: steps.gate.outputs.proceed == 'true'
@@ -294,8 +318,8 @@ jobs:
           # A PreToolUse hook confines Read/Glob/Grep to the workspace — an
           # allowlist entry only pre-approves and cannot revoke the action's base
           # read grant, so scoping must be a deny decision (see the hook script).
-          # Restored from the PR base before the agent runs, like the other runtime.
-          settings: .github/agent-runtime/read-confinement.settings.json
+          # Loaded from the copy staged from the PR base, never from the checkout.
+          settings: ${{ runner.temp }}/agent-read-confinement/read-confinement.settings.json
           # The job token, which can only read contents and comment. Without this
           # input the action uses the Claude App token, which can write this
           # repository; this job reads untrusted PR text and never pushes.
