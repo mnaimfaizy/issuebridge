@@ -48,6 +48,27 @@ function stepsFrom(yml, heading) {
 }
 
 /**
+ * The job block — from its `  <id>:` header under `jobs:` to the next job's —
+ * that contains the `- name: <heading>` step.
+ *
+ * Steps in different jobs run on different runners, so a property such as
+ * "this step runs before that one" only means something within one job; a
+ * position taken over the whole file cannot tell.
+ */
+export function jobContaining(yml, heading) {
+  const at = yml.indexOf(`- name: ${heading}`);
+  assert.ok(at >= 0, `expected step "${heading}"`);
+  const jobsAt = yml.search(/^jobs:\s*$/m);
+  assert.ok(jobsAt >= 0 && jobsAt < at, `expected "${heading}" under jobs:`);
+  const headers = [
+    ...yml.slice(jobsAt).matchAll(/^ {2}[A-Za-z0-9_-]+:\s*$/gm),
+  ].map((match) => jobsAt + match.index);
+  const start = headers.filter((header) => header < at).at(-1);
+  assert.ok(start !== undefined, `expected a job header above "${heading}"`);
+  return yml.slice(start, headers.find((header) => header > at) ?? yml.length);
+}
+
+/**
  * The shell body of a step's `run: |` block, dedented, with LF line endings, as
  * the runner would hand it to bash. Lets a test execute the shipped code rather
  * than a copy of it.

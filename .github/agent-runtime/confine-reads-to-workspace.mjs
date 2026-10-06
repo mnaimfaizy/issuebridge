@@ -17,6 +17,11 @@
 // permission flow proceed. A hook error is not a deny, so malformed input that we
 // cannot judge is allowed through rather than exiting non-zero — except a missing
 // workspace, where we fail closed.
+//
+// The agent jobs do not run this file from the checkout: the session it governs
+// can write there. Each stages it from a trusted commit into $RUNNER_TEMP and
+// the hook command runs that copy, refusing the read when the copy cannot run.
+// Ledger concept: agent-writable-read-confinement-hook (GHSA-8fp9-89wc-g9f6).
 import { resolve } from "node:path";
 
 const READ_TOOLS = new Set(["Read", "Grep", "Glob"]);

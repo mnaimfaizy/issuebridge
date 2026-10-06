@@ -116,8 +116,14 @@ human-actor checks.
   grant, so scoping has to be a deny decision. `.github/agent-runtime/confine-reads-to-workspace.mjs`
   runs before each Read/Grep/Glob and denies a path that resolves outside `$GITHUB_WORKSPACE`,
   keeping a runner file (`/etc/*`, `/proc/self/environ`, `~/.config/*`) off the public
-  comment channel. It is wired through the action's `settings` input and restored from the
-  PR base in the reviewer and audit jobs, so a PR cannot disable the control confining it.
+  comment channel. The planner, reviewer and audit jobs do not run it from the checkout,
+  which the session it governs can write: before the agent starts, each stages the script
+  and its settings from a trusted commit (the default branch for the planner, the PR base
+  for the reviewer, and the PR base or the checked-out commit for the audit) into a
+  read-only directory under `$RUNNER_TEMP`, and the action's `settings` input loads that
+  copy. The staged settings name the staged script by its absolute path, and the hook
+  command refuses the read when that script cannot run, so a missing or broken copy blocks
+  rather than allows.
 - **Untrusted input is fenced.** Issue bodies, PR diffs, and the plan handed to the Spec
   axis are wrapped in explicit `<untrusted_issue_context>` / `<untrusted_pr_diff>` /
   `<untrusted_spec>` markers instructing the model to treat the contents as data, never
