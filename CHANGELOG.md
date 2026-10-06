@@ -4,6 +4,21 @@ All notable changes to Issuebridge are documented here. Release notes are user-f
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-06
+
+### Added
+
+- Issuebridge now keeps a diagnostic log in official Release builds: `issuebridge.log` in the per-user app log folder (`%LOCALAPPDATA%\com.issuebridge.app\logs`), rotating at about 5 MiB and keeping the three most recent older files. Sign-in exchange, Publish and Rewrite/voice cancel errors that previously vanished outside development builds are now recorded there, and error messages point to these logs instead of a terminal. (#188)
+
+### Fixed
+
+- Cancelling a Rewrite, or a voice capture timing out, no longer reports success when the background process could not actually be stopped; the failure is now logged. (#187)
+
+### Security
+
+- Issuebridge now runs the Windows tools that stop a cancelled Rewrite or voice capture, and loads the Vulkan runtime it uses to detect your GPU, only from the Windows system directory, never from the folder Issuebridge was started from. (#186)
+- Updated the bundled TLS library (rustls 0.23.45). (#191)
+
 ## [0.3.1] - 2026-09-06
 
 ### Fixed
