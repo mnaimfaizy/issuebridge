@@ -6,7 +6,7 @@ All notable changes to Issuebridge are documented here. Release notes are user-f
 
 ### Fixed
 
-- The repository you pick in Capture now stays picked. Switching between title and body, holding to dictate, or clicking back into the Capture window no longer snaps the selection back to the default repository — and a refocus no longer jumps the caret to the title or interrupts a dictation in progress. Capture still picks up Testing set changes you make in Settings while it is open, and a new Capture (after Save, Esc or Cancel) still opens clean. (#197)
+- The repository you pick in Capture now stays picked: switching between title and body, holding to dictate, or clicking back into the Capture window no longer resets it to the default repository. (#197)
 
 ## [0.4.0] - 2026-10-06
 

@@ -24,24 +24,74 @@ function readRoot(...parts) {
 }
 
 /**
- * Slice the body of a `const <name> = ... => { ... }` binding by matching braces
- * from its first `{`. Anchored on the identifier, not on formatting, so it
+ * The code of a `const <name> = ... => { ... }` binding: its `{ ... }` body,
+ * with comments removed. Anchored on the identifier, not on formatting, so it
  * survives reflows.
+ *
+ * Braces inside strings, template literals and comments are not counted: a
+ * stray `}` there would otherwise end the slice early, and every "must not
+ * contain" assertion below would then pass on code it no longer sees.
+ * Comments are dropped so an assertion binds to code, not to prose about it.
  */
 function readBody(source, name) {
   const declared = source.indexOf(`const ${name} = `);
   assert.ok(declared !== -1, `expected a \`const ${name}\` binding`);
   const open = source.indexOf("{", declared);
   assert.ok(open !== -1, `expected a body for \`${name}\``);
+  const { end, code } = scanCode(source, open + 1);
+  // The binding ends here: `}, [deps])` for a hook callback, `};` otherwise.
+  assert.match(
+    source.slice(end + 1),
+    /^\s*[,;)]/,
+    `the body of \`${name}\` was cut short`,
+  );
+  return `{${code}}`;
+}
+
+/** Scan code from `from` up to its unmatched `}`; return that index and the code without comments. */
+function scanCode(source, from) {
   let depth = 0;
-  for (let i = open; i < source.length; i += 1) {
-    if (source[i] === "{") depth += 1;
-    if (source[i] === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(open, i + 1);
+  let code = "";
+  let i = from;
+  while (i < source.length) {
+    const ch = source[i];
+    if (source.startsWith("//", i)) {
+      const eol = source.indexOf("\n", i);
+      i = eol === -1 ? source.length : eol;
+    } else if (source.startsWith("/*", i)) {
+      const close = source.indexOf("*/", i + 2);
+      assert.ok(close !== -1, "unterminated block comment");
+      i = close + 2;
+    } else if (ch === '"' || ch === "'" || ch === "`") {
+      const after = skipLiteral(source, i);
+      code += source.slice(i, after);
+      i = after;
+    } else {
+      if (ch === "{") depth += 1;
+      if (ch === "}") {
+        if (depth === 0) return { end: i, code };
+        depth -= 1;
+      }
+      code += ch;
+      i += 1;
     }
   }
-  assert.fail(`could not find the end of \`${name}\``);
+  assert.fail("unbalanced braces");
+}
+
+/** The index just past the string or template literal opening at `start`. */
+function skipLiteral(source, start) {
+  const quote = source[start];
+  for (let i = start + 1; i < source.length; i += 1) {
+    if (source[i] === "\\") {
+      i += 1;
+    } else if (source[i] === quote) {
+      return i + 1;
+    } else if (quote === "`" && source.startsWith("${", i)) {
+      i = scanCode(source, i + 2).end;
+    }
+  }
+  assert.fail("unterminated literal");
 }
 
 describe("Capture popup (#39)", () => {
@@ -158,46 +208,61 @@ describe("Capture popup (#39)", () => {
     );
   });
 
+  it("readBody ignores braces in strings, templates and comments", () => {
+    const source = [
+      "const sample = () => {",
+      '  const a = "}";',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: source text under test
+      "  const b = `${a}}`;",
+      "  // a stray } in a comment",
+      "  /* and { here */",
+      "  return a + b;",
+      "};",
+    ].join("\n");
+    const body = readBody(source, "sample");
+    assert.match(body, /return a \+ b;/);
+    assert.ok(!body.includes("stray"), "comments are dropped from the slice");
+  });
+
   it("regaining focus refreshes repos but keeps the picked repo, caret and voice state (#197)", () => {
     const selection = readSrc("capture", "repoSelection.ts");
-    assert.match(selection, /export function resolveSelectedRepo/);
+    assert.match(selection, /export function defaultRepo/);
     assert.match(selection, /export function repoKey/);
     assert.match(selection, /export function parseRepo/);
-    // An existing pick wins; only an empty selection falls back to the default.
-    assert.match(selection, /if\s*\(current\)\s*return current/);
     assert.match(selection, /lastUsed\s*\?\?\s*testingSet\[0\]\s*\?\?\s*null/);
 
     const popup = readSrc("capture", "CapturePopup.tsx");
-    assert.match(popup, /resolveSelectedRepo/);
 
     // Goal 4: the window-level focus listener stays registered.
     assert.match(popup, /addEventListener\(\s*["']focus["']/);
 
+    // A new Capture is started by the explicit gate, checked before the
+    // mid-hold guard so a transcript still in flight cannot swallow it.
     const onFocus = readBody(popup, "onFocus");
-    assert.match(
-      onFocus,
-      /recordingRef\.current\s*\|\|\s*pttBusyRef\.current/,
-      "a refocus mid-hold must bail out before touching state",
+    const gateAt = onFocus.search(/if \(resetFieldsOnShowRef\.current\)/);
+    const holdAt = onFocus.search(
+      /if \(recordingRef\.current \|\| pttBusyRef\.current\) return/,
     );
-    assert.match(
-      onFocus,
-      /resetFieldsOnShowRef\.current/,
-      "reset must be gated on the fresh-session signal, not on focus",
+    assert.ok(
+      gateAt !== -1,
+      "a new Capture must be gated on resetFieldsOnShowRef",
     );
-    assert.match(onFocus, /startSession\(\)/);
+    assert.ok(
+      holdAt !== -1,
+      "a refocus mid-hold must bail out before refreshing",
+    );
+    assert.ok(gateAt < holdAt, "the new-Capture gate must be checked first");
+    assert.match(onFocus, /startCapture\(\)/);
     assert.match(onFocus, /refresh\(\)/);
 
-    // The refresh path reloads lists only: no clobbering of in-session state.
+    // The refresh path reloads lists only: it never changes the target repo
+    // or anything being composed.
     const refresh = readBody(popup, "refresh");
     assert.match(refresh, /testing_set/);
     assert.match(refresh, /app_visible_repos/);
     assert.match(refresh, /ptt_hotkey/);
-    assert.match(
-      refresh,
-      /setSelectedRepo\(\s*\(current\)\s*=>\s*\n?\s*resolveSelectedRepo\(/,
-      "refresh may only reconcile selection through resolveSelectedRepo",
-    );
     for (const forbidden of [
+      "setSelectedRepo",
       "setRepoFilter",
       "setTitle",
       "setBody",
@@ -208,26 +273,32 @@ describe("Capture popup (#39)", () => {
     ]) {
       assert.ok(
         !refresh.includes(forbidden),
-        `refresh must not call ${forbidden} — that belongs to session start`,
+        `refresh must not call ${forbidden} — that belongs to a new Capture`,
       );
     }
 
-    // Session start still opens clean (goal 5).
-    const startSession = readBody(popup, "startSession");
-    assert.match(startSession, /refresh\(\)/);
-    assert.match(startSession, /setSelectedRepo\(next\)/);
-    assert.match(startSession, /setRepoFilter\(/);
-    assert.match(startSession, /setTitle\(["']["']\)/);
-    assert.match(startSession, /setBody\(["']["']\)/);
-    assert.match(startSession, /setVoiceUi\(["']idle["']\)/);
-    assert.match(startSession, /titleRef\.current\?\.focus\(\)/);
-    assert.match(startSession, /resetFieldsOnShowRef\.current = false/);
+    // A new Capture still opens clean (goal 5), and lowers its gate before
+    // the reload awaits, so a second focus event cannot start another.
+    const startCapture = readBody(popup, "startCapture");
+    const lowerAt = startCapture.indexOf(
+      "resetFieldsOnShowRef.current = false",
+    );
+    const awaitAt = startCapture.indexOf("await refresh()");
+    assert.ok(lowerAt !== -1 && awaitAt !== -1);
+    assert.ok(lowerAt < awaitAt, "the gate must be lowered before awaiting");
+    assert.match(startCapture, /setTitle\(["']["']\)/);
+    assert.match(startCapture, /setBody\(["']["']\)/);
+    assert.match(startCapture, /setVoiceUi\(["']idle["']\)/);
+    assert.match(startCapture, /titleRef\.current\?\.focus\(\)/);
+    assert.match(startCapture, /defaultRepo\(/);
+    assert.match(startCapture, /setSelectedRepo\(next\)/);
+    assert.match(startCapture, /setRepoFilter\(/);
 
-    // Caret is only stolen by session start, never by a plain refocus.
+    // Caret is only stolen by a new Capture, never by a plain refocus.
     assert.equal(
       popup.split("titleRef.current?.focus()").length - 1,
       1,
-      "titleRef.current?.focus() belongs to the session-start path only",
+      "titleRef.current?.focus() belongs to startCapture only",
     );
 
     // Repo selection otherwise changes only through explicit user handlers.
@@ -235,10 +306,42 @@ describe("Capture popup (#39)", () => {
     for (const name of handlers) {
       assert.match(popup, new RegExp(`function ${name}\\(`));
     }
-    assert.equal(
-      popup.split("setRepoFilter(").length - 1,
-      handlers.length + 1,
-      "setRepoFilter belongs to startSession plus the two user handlers",
+    for (const setter of ["setSelectedRepo(", "setRepoFilter("]) {
+      assert.equal(
+        popup.split(setter).length - 1,
+        handlers.length + 1,
+        `${setter} belongs to startCapture plus the two user handlers`,
+      );
+    }
+  });
+
+  it("a transcript from an ended Capture never lands in the next one (#197)", () => {
+    const popup = readSrc("capture", "CapturePopup.tsx");
+
+    // Ending a Capture advances its id alongside raising the gate.
+    const hideCapture = readBody(popup, "hideCapture");
+    assert.match(hideCapture, /captureIdRef\.current \+= 1/);
+    assert.match(hideCapture, /resetFieldsOnShowRef\.current = true/);
+
+    const stopPtt = readBody(popup, "stopPtt");
+    // Busy from release, not from transcription: no refocus window between.
+    const busyAt = stopPtt.indexOf("pttBusyRef.current = true");
+    const teardownAt = stopPtt.indexOf("await teardownAudio()");
+    assert.ok(busyAt !== -1 && teardownAt !== -1);
+    assert.ok(busyAt < teardownAt, "pttBusyRef must be set before teardown");
+    assert.match(stopPtt, /finally\s*\{\s*pttBusyRef\.current = false/);
+
+    // The transcript is applied only if its Capture is still the current one.
+    const appliedAt = stopPtt.indexOf("setTitle(result.text)");
+    const checkAt = stopPtt.lastIndexOf(
+      "if (!isCurrentCapture()) return",
+      appliedAt,
+    );
+    const invokeAt = stopPtt.indexOf('"apply_ptt"');
+    assert.ok(appliedAt !== -1 && invokeAt !== -1);
+    assert.ok(
+      checkAt > invokeAt,
+      "the Capture must be re-checked after apply_ptt resolves",
     );
   });
 

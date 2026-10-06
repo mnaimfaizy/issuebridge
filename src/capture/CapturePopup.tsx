@@ -21,10 +21,10 @@ import {
   WAV_RATE,
 } from "./pttAudio";
 import {
+  defaultRepo,
   parseRepo,
   type RepoIdDto,
   repoKey,
-  resolveSelectedRepo,
 } from "./repoSelection";
 import {
   mapMicError,
@@ -42,8 +42,8 @@ type VoiceStatus =
   | { kind: "soft"; message: string }
   | { kind: "error"; voiceKind: VoiceKind; message: string };
 
-type CaptureSettings = {
-  testingRepos: RepoIdDto[];
+type LoadedRepos = {
+  testingSet: RepoIdDto[];
   lastUsed: RepoIdDto | null;
 };
 
@@ -67,6 +67,9 @@ export function CapturePopup() {
   const pttTargetRef = useRef<PttField>("body");
   const [voiceTarget, setVoiceTarget] = useState<PttField>("body");
   const resetFieldsOnShowRef = useRef(true);
+  // Advanced whenever a Capture ends, so a transcript that lands after Esc or
+  // Save is recognised as belonging to the earlier Capture and dropped.
+  const captureIdRef = useRef(0);
 
   const recordingRef = useRef(false);
   const pttBusyRef = useRef(false);
@@ -149,6 +152,7 @@ export function CapturePopup() {
     setVoiceUi("idle");
     await teardownAudio();
     // Next show should open a clean Capture form.
+    captureIdRef.current += 1;
     resetFieldsOnShowRef.current = true;
     try {
       // Hide only — do not focus the main window.
@@ -168,69 +172,72 @@ export function CapturePopup() {
     });
   }, []);
 
-  // Reload Testing set / visible repos / hotkey. Safe to repeat at any time:
-  // it never touches what the user is composing (#197).
-  const refresh = useCallback(async (): Promise<CaptureSettings | null> => {
+  // Reload the Testing set, visible repos and hotkey. Safe to repeat at any
+  // time: it never changes the target repo or anything being composed (#197).
+  const refresh = useCallback(async (): Promise<LoadedRepos | null> => {
     try {
-      const [testingRepos, visible, lastUsed, hotkey] = await Promise.all([
+      const [loadedTestingSet, visible, lastUsed, hotkey] = await Promise.all([
         invoke<RepoIdDto[]>("testing_set"),
         invoke<RepoIdDto[]>("app_visible_repos"),
         invoke<RepoIdDto | null>("last_used_repo"),
         invoke<string>("ptt_hotkey").catch(() => "Ctrl+Alt+Shift+V"),
       ]);
-      setTestingSet(testingRepos);
+      setTestingSet(loadedTestingSet);
       setVisibleRepos(visible);
       setPttHotkey(hotkey);
-      setSelectedRepo((current) =>
-        resolveSelectedRepo(current, lastUsed, testingRepos),
-      );
-      return { testingRepos, lastUsed };
+      return { testingSet: loadedTestingSet, lastUsed };
     } catch (error) {
       setSaveStatus(String(error));
       return null;
     }
   }, []);
 
-  // Open a clean Capture session: default repo, empty fields, caret in Title.
-  const startSession = useCallback(async () => {
-    const settings = await refresh();
-    if (!settings) return;
-    const next = resolveSelectedRepo(
-      null,
-      settings.lastUsed,
-      settings.testingRepos,
-    );
-    setSelectedRepo(next);
-    setRepoFilter(next ? repoKey(next) : "");
+  // Begin a new Capture: default repo, empty fields, caret in Title.
+  const startCapture = useCallback(async () => {
+    // Lowered before the reload, so a focus event arriving while it is in
+    // flight refreshes instead of starting a second Capture over typed text.
+    resetFieldsOnShowRef.current = false;
     setTitle("");
     setBody("");
     setSaveStatus(null);
     clearVoiceStatus();
     setVoiceUi("idle");
-    resetFieldsOnShowRef.current = false;
     window.requestAnimationFrame(() => {
       titleRef.current?.focus();
     });
+    const repos = await refresh();
+    // A failed reload has no default to offer; never carry the previous
+    // Capture's pick into this one.
+    const next = repos ? defaultRepo(repos.lastUsed, repos.testingSet) : null;
+    setSelectedRepo(next);
+    setRepoFilter(next ? repoKey(next) : "");
   }, [clearVoiceStatus, refresh]);
 
   useEffect(() => {
     const onFocus = () => {
-      // A refocus mid-hold must not perturb recorder-backed state.
-      if (recordingRef.current || pttBusyRef.current) return;
+      // Checked first: a transcript still in flight belongs to the Capture
+      // that hideCapture() ended, and stopPtt() drops it.
       if (resetFieldsOnShowRef.current) {
-        void startSession();
+        void startCapture();
         return;
       }
+      // A refocus mid-hold must not perturb recorder-backed state.
+      if (recordingRef.current || pttBusyRef.current) return;
       void refresh();
     };
     onFocus();
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [refresh, startSession]);
+  }, [refresh, startCapture]);
 
   const stopPtt = useCallback(async () => {
     if (!recordingRef.current) return;
     recordingRef.current = false;
+    // Busy from release until the transcript lands, so a refocus cannot slip
+    // in between the end of recording and the start of transcription.
+    pttBusyRef.current = true;
+    const captureId = captureIdRef.current;
+    const isCurrentCapture = () => captureIdRef.current === captureId;
     clearMaxHold();
     stopTimerUi();
     setVoiceUi("idle");
@@ -240,51 +247,57 @@ export function CapturePopup() {
     const chunks = pcmChunksRef.current;
     pcmChunksRef.current = [];
     const target = pttTargetRef.current;
-    await teardownAudio();
-    // Restore the snapshotted field as soon as hold ends (before transcription).
-    focusField(target);
-
-    if (elapsed < MIN_PTT_MS || chunks.length === 0) {
-      showVoiceKind("empty_transcript");
-      return;
-    }
-
-    pttBusyRef.current = true;
-    setVoiceUi("transcribing");
     try {
-      const merged = mergeFloat32(chunks);
-      const pcm16k = downsample(merged, sampleRate, WAV_RATE);
-      const wavBase64 = bytesToBase64(encodeWav(pcm16k, WAV_RATE));
-      const currentText =
-        target === "title" ? titleStateRef.current : bodyStateRef.current;
+      await teardownAudio();
+      if (!isCurrentCapture()) return;
+      // Restore the snapshotted field as soon as hold ends (before transcription).
+      focusField(target);
 
-      console.info("[issuebridge] PTT transcribing…", {
-        elapsedMs: elapsed,
-        samples: pcm16k.length,
-        target,
-      });
-
-      const result = await invoke<{ text: string }>("apply_ptt", {
-        input: {
-          text: currentText,
-          wavBase64,
-        },
-      });
-
-      if (target === "title") {
-        setTitle(result.text);
-      } else {
-        setBody(result.text);
+      if (elapsed < MIN_PTT_MS || chunks.length === 0) {
+        showVoiceKind("empty_transcript");
+        return;
       }
-      focusField(target);
-      clearVoiceStatus();
-      showVoiceSoft(
-        `Added to the ${target === "title" ? "title" : "body"}. Edit freely, then Save Draft.`,
-      );
-    } catch (error) {
-      console.error("[issuebridge] apply_ptt failed", error);
-      showVoiceKind(parseVoiceKind(error));
-      focusField(target);
+
+      setVoiceUi("transcribing");
+      try {
+        const merged = mergeFloat32(chunks);
+        const pcm16k = downsample(merged, sampleRate, WAV_RATE);
+        const wavBase64 = bytesToBase64(encodeWav(pcm16k, WAV_RATE));
+        const currentText =
+          target === "title" ? titleStateRef.current : bodyStateRef.current;
+
+        console.info("[issuebridge] PTT transcribing…", {
+          elapsedMs: elapsed,
+          samples: pcm16k.length,
+          target,
+        });
+
+        const result = await invoke<{ text: string }>("apply_ptt", {
+          input: {
+            text: currentText,
+            wavBase64,
+          },
+        });
+
+        // Esc or Save ended that Capture while Whisper ran; its transcript
+        // must not land in the new one.
+        if (!isCurrentCapture()) return;
+        if (target === "title") {
+          setTitle(result.text);
+        } else {
+          setBody(result.text);
+        }
+        focusField(target);
+        clearVoiceStatus();
+        showVoiceSoft(
+          `Added to the ${target === "title" ? "title" : "body"}. Edit freely, then Save Draft.`,
+        );
+      } catch (error) {
+        console.error("[issuebridge] apply_ptt failed", error);
+        if (!isCurrentCapture()) return;
+        showVoiceKind(parseVoiceKind(error));
+        focusField(target);
+      }
     } finally {
       pttBusyRef.current = false;
       setVoiceUi("idle");

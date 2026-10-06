@@ -2,8 +2,12 @@
  * Repository selection rules for the Capture popup.
  *
  * The Capture window is long-lived (shown/hidden, never recreated), so these
- * rules have to distinguish "a fresh Capture session started" from "the window
- * regained focus". Keeping them here makes the invariant one named thing.
+ * rules have to distinguish "a new Capture began" from "the window regained
+ * focus". Only a new Capture picks the default repo; a refocus never changes
+ * the repo a Draft is being captured for (#197).
+ *
+ * Capture-local: `repoKey` here compares as typed, unlike the case-folding
+ * `repoKey` in `src/firstrun/types.ts`.
  */
 
 export type RepoIdDto = { owner: string; name: string };
@@ -22,17 +26,12 @@ export function parseRepo(value: string): RepoIdDto | null {
 }
 
 /**
- * The repo a Capture session targets.
- *
- * An existing pick always wins: a window refocus must never silently retarget
- * the Draft the user is composing (#197). Only an empty selection falls back to
- * the default — `last_used_repo`, else the first Testing-set chip.
+ * The repo a new Capture starts on: `last_used_repo`, else the first Testing
+ * set chip, else none.
  */
-export function resolveSelectedRepo(
-  current: RepoIdDto | null,
+export function defaultRepo(
   lastUsed: RepoIdDto | null,
   testingSet: RepoIdDto[],
 ): RepoIdDto | null {
-  if (current) return current;
   return lastUsed ?? testingSet[0] ?? null;
 }
