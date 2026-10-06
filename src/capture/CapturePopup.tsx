@@ -21,6 +21,12 @@ import {
   WAV_RATE,
 } from "./pttAudio";
 import {
+  parseRepo,
+  type RepoIdDto,
+  repoKey,
+  resolveSelectedRepo,
+} from "./repoSelection";
+import {
   mapMicError,
   parseVoiceKind,
   VOICE_MESSAGES,
@@ -28,7 +34,6 @@ import {
 } from "./voiceMessages";
 import "./capture.css";
 
-type RepoIdDto = { owner: string; name: string };
 type PttField = "title" | "body";
 type VoiceUi = "idle" | "recording" | "transcribing";
 
@@ -37,18 +42,10 @@ type VoiceStatus =
   | { kind: "soft"; message: string }
   | { kind: "error"; voiceKind: VoiceKind; message: string };
 
-function repoKey(repo: RepoIdDto): string {
-  return `${repo.owner}/${repo.name}`;
-}
-
-function parseRepo(value: string): RepoIdDto | null {
-  const parts = value.split("/");
-  if (parts.length !== 2) return null;
-  const owner = parts[0]?.trim() ?? "";
-  const name = parts[1]?.trim() ?? "";
-  if (!owner || !name) return null;
-  return { owner, name };
-}
+type CaptureSettings = {
+  testingRepos: RepoIdDto[];
+  lastUsed: RepoIdDto | null;
+};
 
 export function CapturePopup() {
   const [testingSet, setTestingSet] = useState<RepoIdDto[]>([]);
@@ -171,9 +168,11 @@ export function CapturePopup() {
     });
   }, []);
 
-  const bootstrap = useCallback(async () => {
+  // Reload Testing set / visible repos / hotkey. Safe to repeat at any time:
+  // it never touches what the user is composing (#197).
+  const refresh = useCallback(async (): Promise<CaptureSettings | null> => {
     try {
-      const [testingRepos, visible, last, hotkey] = await Promise.all([
+      const [testingRepos, visible, lastUsed, hotkey] = await Promise.all([
         invoke<RepoIdDto[]>("testing_set"),
         invoke<RepoIdDto[]>("app_visible_repos"),
         invoke<RepoIdDto | null>("last_used_repo"),
@@ -181,34 +180,53 @@ export function CapturePopup() {
       ]);
       setTestingSet(testingRepos);
       setVisibleRepos(visible);
-      const next = last ?? testingRepos[0] ?? null;
-      setSelectedRepo(next);
-      setRepoFilter(next ? `${next.owner}/${next.name}` : "");
       setPttHotkey(hotkey);
-      if (resetFieldsOnShowRef.current) {
-        setTitle("");
-        setBody("");
-        resetFieldsOnShowRef.current = false;
-      }
-      setSaveStatus(null);
-      clearVoiceStatus();
-      setVoiceUi("idle");
-      window.requestAnimationFrame(() => {
-        titleRef.current?.focus();
-      });
+      setSelectedRepo((current) =>
+        resolveSelectedRepo(current, lastUsed, testingRepos),
+      );
+      return { testingRepos, lastUsed };
     } catch (error) {
       setSaveStatus(String(error));
+      return null;
     }
-  }, [clearVoiceStatus]);
+  }, []);
+
+  // Open a clean Capture session: default repo, empty fields, caret in Title.
+  const startSession = useCallback(async () => {
+    const settings = await refresh();
+    if (!settings) return;
+    const next = resolveSelectedRepo(
+      null,
+      settings.lastUsed,
+      settings.testingRepos,
+    );
+    setSelectedRepo(next);
+    setRepoFilter(next ? repoKey(next) : "");
+    setTitle("");
+    setBody("");
+    setSaveStatus(null);
+    clearVoiceStatus();
+    setVoiceUi("idle");
+    resetFieldsOnShowRef.current = false;
+    window.requestAnimationFrame(() => {
+      titleRef.current?.focus();
+    });
+  }, [clearVoiceStatus, refresh]);
 
   useEffect(() => {
-    void bootstrap();
     const onFocus = () => {
-      void bootstrap();
+      // A refocus mid-hold must not perturb recorder-backed state.
+      if (recordingRef.current || pttBusyRef.current) return;
+      if (resetFieldsOnShowRef.current) {
+        void startSession();
+        return;
+      }
+      void refresh();
     };
+    onFocus();
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [bootstrap]);
+  }, [refresh, startSession]);
 
   const stopPtt = useCallback(async () => {
     if (!recordingRef.current) return;
@@ -409,7 +427,7 @@ export function CapturePopup() {
 
   function selectRepo(repo: RepoIdDto) {
     setSelectedRepo(repo);
-    setRepoFilter(`${repo.owner}/${repo.name}`);
+    setRepoFilter(repoKey(repo));
   }
 
   function onRepoFilterChange(value: string) {

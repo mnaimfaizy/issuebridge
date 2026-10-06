@@ -23,6 +23,27 @@ function readRoot(...parts) {
   return readFileSync(path, "utf8");
 }
 
+/**
+ * Slice the body of a `const <name> = ... => { ... }` binding by matching braces
+ * from its first `{`. Anchored on the identifier, not on formatting, so it
+ * survives reflows.
+ */
+function readBody(source, name) {
+  const declared = source.indexOf(`const ${name} = `);
+  assert.ok(declared !== -1, `expected a \`const ${name}\` binding`);
+  const open = source.indexOf("{", declared);
+  assert.ok(open !== -1, `expected a body for \`${name}\``);
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === "{") depth += 1;
+    if (source[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  assert.fail(`could not find the end of \`${name}\``);
+}
+
 describe("Capture popup (#39)", () => {
   it("vanilla Capture DOM is removed; Capture mounts through React + FluentProvider", () => {
     const html = readRoot("capture.html");
@@ -134,6 +155,90 @@ describe("Capture popup (#39)", () => {
     assert.match(
       geometry,
       /issuebridge\.captureWindowSize|CAPTURE.*SIZE|writeCapture|readCapture/,
+    );
+  });
+
+  it("regaining focus refreshes repos but keeps the picked repo, caret and voice state (#197)", () => {
+    const selection = readSrc("capture", "repoSelection.ts");
+    assert.match(selection, /export function resolveSelectedRepo/);
+    assert.match(selection, /export function repoKey/);
+    assert.match(selection, /export function parseRepo/);
+    // An existing pick wins; only an empty selection falls back to the default.
+    assert.match(selection, /if\s*\(current\)\s*return current/);
+    assert.match(selection, /lastUsed\s*\?\?\s*testingSet\[0\]\s*\?\?\s*null/);
+
+    const popup = readSrc("capture", "CapturePopup.tsx");
+    assert.match(popup, /resolveSelectedRepo/);
+
+    // Goal 4: the window-level focus listener stays registered.
+    assert.match(popup, /addEventListener\(\s*["']focus["']/);
+
+    const onFocus = readBody(popup, "onFocus");
+    assert.match(
+      onFocus,
+      /recordingRef\.current\s*\|\|\s*pttBusyRef\.current/,
+      "a refocus mid-hold must bail out before touching state",
+    );
+    assert.match(
+      onFocus,
+      /resetFieldsOnShowRef\.current/,
+      "reset must be gated on the fresh-session signal, not on focus",
+    );
+    assert.match(onFocus, /startSession\(\)/);
+    assert.match(onFocus, /refresh\(\)/);
+
+    // The refresh path reloads lists only: no clobbering of in-session state.
+    const refresh = readBody(popup, "refresh");
+    assert.match(refresh, /testing_set/);
+    assert.match(refresh, /app_visible_repos/);
+    assert.match(refresh, /ptt_hotkey/);
+    assert.match(
+      refresh,
+      /setSelectedRepo\(\s*\(current\)\s*=>\s*\n?\s*resolveSelectedRepo\(/,
+      "refresh may only reconcile selection through resolveSelectedRepo",
+    );
+    for (const forbidden of [
+      "setRepoFilter",
+      "setTitle",
+      "setBody",
+      "setVoiceUi",
+      "clearVoiceStatus",
+      "titleRef",
+      "focusField",
+    ]) {
+      assert.ok(
+        !refresh.includes(forbidden),
+        `refresh must not call ${forbidden} — that belongs to session start`,
+      );
+    }
+
+    // Session start still opens clean (goal 5).
+    const startSession = readBody(popup, "startSession");
+    assert.match(startSession, /refresh\(\)/);
+    assert.match(startSession, /setSelectedRepo\(next\)/);
+    assert.match(startSession, /setRepoFilter\(/);
+    assert.match(startSession, /setTitle\(["']["']\)/);
+    assert.match(startSession, /setBody\(["']["']\)/);
+    assert.match(startSession, /setVoiceUi\(["']idle["']\)/);
+    assert.match(startSession, /titleRef\.current\?\.focus\(\)/);
+    assert.match(startSession, /resetFieldsOnShowRef\.current = false/);
+
+    // Caret is only stolen by session start, never by a plain refocus.
+    assert.equal(
+      popup.split("titleRef.current?.focus()").length - 1,
+      1,
+      "titleRef.current?.focus() belongs to the session-start path only",
+    );
+
+    // Repo selection otherwise changes only through explicit user handlers.
+    const handlers = ["selectRepo", "onRepoFilterChange"];
+    for (const name of handlers) {
+      assert.match(popup, new RegExp(`function ${name}\\(`));
+    }
+    assert.equal(
+      popup.split("setRepoFilter(").length - 1,
+      handlers.length + 1,
+      "setRepoFilter belongs to startSession plus the two user handlers",
     );
   });
 
