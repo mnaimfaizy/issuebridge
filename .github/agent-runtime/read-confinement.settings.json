@@ -1,5 +1,5 @@
 {
-  "$comment": "Passed to claude-code-action via the settings input. Registers a PreToolUse hook that confines Read/Grep/Glob to $GITHUB_WORKSPACE. Each agent job stages this file and the script from a trusted commit into $RUNNER_TEMP, read-only, and loads both from there: the checkout is writable by the session the hook governs. Run through node (no +x bit needed, no jq dependency). A hook that merely fails is no decision, so `|| exit 2` turns a missing or broken script into a refusal. See .github/agent-runtime/confine-reads-to-workspace.mjs.",
+  "$comment": "Passed to claude-code-action via the settings input. Registers a PreToolUse hook that confines Read/Grep/Glob to $GITHUB_WORKSPACE. Each agent job stages this file and the script from a trusted commit into the runner temp directory, read-only, and loads both from there: the checkout is writable by the session the hook governs. The command below is a template: staging replaces its runner-temp prefix with the absolute staged path, so the hook process need not inherit that variable. Run through node (no +x bit needed, no jq dependency). A hook that merely fails is no decision, so `|| exit 2` turns a missing or broken script into a refusal. See .github/agent-runtime/confine-reads-to-workspace.mjs.",
   "hooks": {
     "PreToolUse": [
       {

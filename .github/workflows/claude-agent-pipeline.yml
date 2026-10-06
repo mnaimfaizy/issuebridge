@@ -153,18 +153,36 @@ jobs:
           TRUSTED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          # The planner can write into the workspace, and the hook confining its
-          # reads is code its own session runs on every read. Copy the hook and
-          # its settings from the commit object, not the working tree, to a
-          # read-only directory outside the workspace before the agent starts.
+          # The agent's session can write into the workspace, and the hook that
+          # confines its reads is code that session runs on every read. Copy the
+          # hook and its settings from the commit object, not the working tree,
+          # to a read-only directory outside the workspace before the agent starts.
+          # An empty sha would read the index instead of a commit.
+          test -n "$TRUSTED_SHA"
+          # The path is substituted into the staged settings below.
+          case "$RUNNER_TEMP" in
+            "" | *[!A-Za-z0-9_./:-]*)
+              echo "RUNNER_TEMP is empty or holds an unexpected character" >&2
+              exit 1
+              ;;
+          esac
           STAGED="$RUNNER_TEMP/agent-read-confinement"
           mkdir -p "$STAGED"
           for file in confine-reads-to-workspace.mjs read-confinement.settings.json; do
             git show "$TRUSTED_SHA:.github/agent-runtime/$file" > "$STAGED/$file"
             # An empty script would run and decide nothing; never stage one.
             test -s "$STAGED/$file"
-            chmod 400 "$STAGED/$file"
           done
+          # Name the staged script by its absolute path, so the hook command
+          # does not depend on RUNNER_TEMP reaching the hook process.
+          SETTINGS="$STAGED/read-confinement.settings.json"
+          sed -i "s|[$]RUNNER_TEMP/agent-read-confinement/|$STAGED/|" "$SETTINGS"
+          grep -qF "$STAGED/confine-reads-to-workspace.mjs" "$SETTINGS"
+          if grep -qF '$RUNNER_TEMP/' "$SETTINGS"; then
+            echo "staged settings still name the hook through RUNNER_TEMP" >&2
+            exit 1
+          fi
+          chmod 400 "$STAGED/confine-reads-to-workspace.mjs" "$SETTINGS"
           chmod 500 "$STAGED"
           echo "Read-confinement hook staged from $TRUSTED_SHA"
 

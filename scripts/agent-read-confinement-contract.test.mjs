@@ -26,6 +26,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { decide } from "../.github/agent-runtime/confine-reads-to-workspace.mjs";
 import {
+  jobContaining,
   namedStep,
   runBlock,
   stripShellComments,
@@ -152,7 +153,8 @@ describe("agent read-confinement hook contract", () => {
     const [{ command }] = group.hooks;
     assert.match(command, /^node /, "hook must run through node, not jq/bash");
     // The staged copy, and nothing that resolves into the checkout: the session
-    // this hook governs can write there.
+    // this hook governs can write there. This is the tracked template; staging
+    // replaces the RUNNER_TEMP prefix with the absolute staged path.
     assert.equal(
       command,
       `node "$RUNNER_TEMP/${STAGED_DIR}/${HOOK_FILE}" || exit 2`,
@@ -192,9 +194,12 @@ describe("agent read-confinement hook contract", () => {
       gated,
     } of CONFINED_AGENT_STEPS) {
       const yml = workflow(name);
+      // Positions within the agent's own job: another job runs on another
+      // runner, whose temp directory the agent never sees.
+      const job = jobContaining(yml, step);
       const position = (heading) => {
-        const at = yml.indexOf(`- name: ${heading}`);
-        assert.ok(at >= 0, `${name}: expected step "${heading}"`);
+        const at = job.indexOf(`- name: ${heading}`);
+        assert.ok(at >= 0, `${name}: expected "${heading}" in the agent's job`);
         return at;
       };
       assert.ok(
@@ -256,12 +261,36 @@ describe("agent read-confinement hook contract", () => {
         assert.match(code, new RegExp(`\\b${escapeRegExp(file)}\\b`));
       }
       assert.doesNotMatch(code, /\bcp\b|GITHUB_WORKSPACE/);
-      // An empty script runs cleanly and decides nothing, so it is refused.
+      // An empty sha would read the index; an empty script runs cleanly and
+      // decides nothing. Both are refused.
+      assert.match(code, /^test -n "\$TRUSTED_SHA"$/m);
       assert.match(code, /^\s*test -s "\$STAGED\/\$file"$/m);
+      // The staged settings name the staged script by its absolute path, so the
+      // hook command does not depend on RUNNER_TEMP reaching the hook process.
+      // The prefix is checked before it is substituted.
+      assert.match(
+        code,
+        /case "\$RUNNER_TEMP" in\s+"" \| \*\[!A-Za-z0-9_.\/:-\]\*\)/,
+      );
+      assert.match(
+        code,
+        /^SETTINGS="\$STAGED\/read-confinement\.settings\.json"$/m,
+      );
+      assert.match(
+        code,
+        /^sed -i "s\|\[\$\]RUNNER_TEMP\/agent-read-confinement\/\|\$STAGED\/\|" "\$SETTINGS"$/m,
+      );
+      assert.match(
+        code,
+        /^grep -qF "\$STAGED\/confine-reads-to-workspace\.mjs" "\$SETTINGS"$/m,
+      );
       // Read-only, so a write primitive that reaches outside the workspace but
       // cannot change file modes — every tool these jobs grant today — cannot
       // replace the copy or drop another beside it.
-      assert.match(code, /chmod 400 "\$STAGED\/\$file"/);
+      assert.match(
+        code,
+        /^chmod 400 "\$STAGED\/confine-reads-to-workspace\.mjs" "\$SETTINGS"$/m,
+      );
       assert.match(code, /chmod 500 "\$STAGED"/);
     }
   });
@@ -308,16 +337,12 @@ describe("agent read-confinement hook contract", () => {
             env: { ...process.env, RUNNER_TEMP: runnerTemp, TRUSTED_SHA: sha },
           },
         );
-      // Runs the hook command from the settings staged under `settingsFrom`,
-      // with RUNNER_TEMP set to `runnerTemp`, or unset when it is null.
-      const hook = (runnerTemp, payload, settingsFrom = runnerTemp) => {
-        const settings = JSON.parse(
-          readFileSync(
-            `${settingsFrom}/${STAGED_DIR}/${SETTINGS_FILE}`,
-            "utf8",
-          ),
-        );
-        const [{ command }] = settings.hooks.PreToolUse[0].hooks;
+      // The hook command a settings document registers.
+      const commandIn = (settingsText) =>
+        JSON.parse(settingsText).hooks.PreToolUse[0].hooks[0].command;
+      // Runs a hook command as the runtime would, with RUNNER_TEMP set to
+      // `runnerTemp`, or unset when it is null.
+      const hook = (command, payload, runnerTemp = null) => {
         const env = { ...process.env, GITHUB_WORKSPACE: repo };
         if (runnerTemp === null) delete env.RUNNER_TEMP;
         else env.RUNNER_TEMP = runnerTemp;
@@ -333,6 +358,15 @@ describe("agent read-confinement hook contract", () => {
         const runnerTemp = `${tmp}/runner-${name}`;
         const staged = stage(name, runnerTemp, trusted);
         assert.equal(staged.status, 0, `${name}: ${staged.stderr}`);
+        // The staged settings name the staged script outright.
+        const command = commandIn(
+          readFileSync(`${runnerTemp}/${STAGED_DIR}/${SETTINGS_FILE}`, "utf8"),
+        );
+        assert.equal(
+          command,
+          `node "${runnerTemp}/${STAGED_DIR}/${HOOK_FILE}" || exit 2`,
+          `${name}: staged settings must name the staged script by absolute path`,
+        );
         // A Windows clone may hold CRLF in the working tree and LF in the object.
         const lf = (text) => text.replaceAll("\r\n", "\n");
         assert.equal(
@@ -347,46 +381,69 @@ describe("agent read-confinement hook contract", () => {
           assert.equal(mode(`${runnerTemp}/${STAGED_DIR}/${HOOK_FILE}`), 0o400);
         }
 
-        const denied = hook(runnerTemp, outside);
-        assert.equal(denied.status, 0, denied.stderr);
-        assert.match(denied.stdout, /"permissionDecision":"deny"/);
-        const allowed = hook(runnerTemp, inside);
-        assert.equal(allowed.status, 0, allowed.stderr);
-        assert.equal(allowed.stdout, "");
+        // Decided by the staged copy whether or not RUNNER_TEMP reaches the
+        // hook process.
+        for (const env of [runnerTemp, null]) {
+          const denied = hook(command, outside, env);
+          assert.equal(denied.status, 0, denied.stderr);
+          assert.match(denied.stdout, /"permissionDecision":"deny"/);
+          const allowed = hook(command, inside, env);
+          assert.equal(allowed.status, 0, allowed.stderr);
+          assert.equal(allowed.stdout, "");
+        }
       }
 
-      // A staged script that is absent or cannot be parsed blocks the read: the
-      // runtime treats exit 2 as a refusal and any other failure as no decision.
-      const settingsFrom = `${tmp}/runner-${CONFINED_AGENT_STEPS[0].workflow}`;
+      // A script that is absent or cannot be parsed blocks the read: the runtime
+      // treats exit 2 as a refusal and any other failure as no decision. Run
+      // through the template, pointed at a directory holding no usable copy.
+      const template = commandIn(readRepo(SETTINGS_PATH));
       const absent = `${tmp}/runner-absent`;
       mkdirSync(`${absent}/${STAGED_DIR}`, { recursive: true });
-      const missing = hook(absent, outside, settingsFrom);
+      const missing = hook(template, outside, absent);
       assert.equal(missing.status, 2, "a missing staged hook must block");
 
       writeFileSync(
         `${absent}/${STAGED_DIR}/${HOOK_FILE}`,
         "this is not javascript (\n",
       );
-      const broken = hook(absent, outside, settingsFrom);
+      const broken = hook(template, outside, absent);
       assert.equal(broken.status, 2, "an unparseable staged hook must block");
 
-      // The command names the staged copy through RUNNER_TEMP. Should that ever
-      // not reach the hook process, the path names nothing and the read blocks.
-      const unset = hook(null, outside, settingsFrom);
-      assert.equal(unset.status, 2, "an unset RUNNER_TEMP must block");
-
-      // A trusted commit without the hook stops the job rather than staging an
-      // empty script, which would run cleanly and confine nothing.
-      git("rm", "-q", "--cached", HOOK_PATH);
-      git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c");
-      const withoutHook = git("rev-parse", "HEAD");
-      for (const { workflow: name } of CONFINED_AGENT_STEPS) {
-        const unstaged = stage(
-          name,
-          `${tmp}/runner-empty-${name}`,
-          withoutHook,
-        );
-        assert.notEqual(unstaged.status, 0, `${name}: staging must fail`);
+      // Staging refuses what it must not stage: each case stops the job.
+      const commitWith = (contents) => {
+        if (contents === null) git("rm", "-q", "--cached", HOOK_PATH);
+        else {
+          writeFileSync(`${repo}/${HOOK_PATH}`, contents);
+          git("add", HOOK_PATH);
+        }
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c");
+        return git("rev-parse", "HEAD");
+      };
+      // Run in order, each sha taken when its case runs. An empty sha comes
+      // first, while the index still holds the committed hook, so reading the
+      // index would succeed if the sha were not checked. A committed zero-byte
+      // script: git show succeeds and writes nothing, so only the empty-script
+      // check stands between it and a hook that confines nothing.
+      const refused = [
+        ["an empty trusted sha", "nosha", () => ""],
+        [
+          "a RUNNER_TEMP holding an unexpected character",
+          "with space",
+          () => trusted,
+        ],
+        ["a zero-byte hook", "zero", () => commitWith("")],
+        ["no hook", "gone", () => commitWith(null)],
+      ];
+      for (const [label, dir, shaFor] of refused) {
+        const sha = shaFor();
+        for (const { workflow: name } of CONFINED_AGENT_STEPS) {
+          const result = stage(name, `${tmp}/runner-${dir}-${name}`, sha);
+          assert.notEqual(
+            result.status,
+            0,
+            `${name}: staging ${label} must fail`,
+          );
+        }
       }
     } finally {
       // The staged directories are read-only; open them up so cleanup can run.
