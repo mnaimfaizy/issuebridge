@@ -90,7 +90,22 @@ export function CaptureApp() {
       } catch {
         // No monitor info: fall back to the minimum clamp alone.
       }
-      const size = clampCaptureWindowSize(stored, workArea);
+      // What the title bar and borders add around the client area. The size
+      // below is an inner size and the work area is outer space, so without
+      // this the window lands a title bar taller than the work area.
+      let frame: CaptureWindowSize | null = null;
+      try {
+        const factor = await win.scaleFactor();
+        const outer = (await win.outerSize()).toLogical(factor);
+        const inner = (await win.innerSize()).toLogical(factor);
+        frame = {
+          width: outer.width - inner.width,
+          height: outer.height - inner.height,
+        };
+      } catch {
+        // No window metrics: clamp against the work area alone.
+      }
+      const size = clampCaptureWindowSize(stored, workArea, frame);
       trimmedTo = isSameSize(size, stored) ? null : size;
       try {
         await win.setSize(new LogicalSize(size.width, size.height));
