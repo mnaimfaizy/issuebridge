@@ -17,9 +17,11 @@ subscription. Replaces the Copilot pipeline archived at
 ### 1. Install the Claude GitHub App
 
 Install [github.com/apps/claude](https://github.com/apps/claude) on this repository. The
-implementer authenticates as this App for git operations, which is what makes CI fire on
-Claude's pull requests. The planner, reviewer, audit and Review responder use the job's own
-`GITHUB_TOKEN` instead, so their comments appear as `github-actions[bot]`.
+implementer authenticates as this App for git operations, so CI on Claude's pull requests
+starts without an approval step: for a pull request opened or pushed with `GITHUB_TOKEN`,
+GitHub creates the CI run but holds it until it is approved. The planner, reviewer, audit
+and Review responder use the job's own `GITHUB_TOKEN` instead, so their comments appear as
+`github-actions[bot]`.
 
 ### 2. Mint a subscription token
 
@@ -154,6 +156,10 @@ without a label, but only after a review that a maintainer did label.
   Review responder authenticate GitHub with the job's `GITHUB_TOKEN`, scoped by each job's
   `permissions:` block, and deny built-in reads of `.git/`. Only the implementer job
   grants `id-token: write`. A contract test holds this.
+  The implementer keeps the App token as a convenience, not because CI needs it: a pull
+  request opened with the job token gets its CI run too, held until it is approved. A
+  possible follow-up is for the implementer to drop the App token the way the Review
+  responder does, pushing with the job token and approving that one held run.
   Without the App token exchange, the action no longer skips a run whose workflow file
   differs from the default branch. That check was not a boundary here: anyone who can
   push a same-repository branch can already run an edited workflow with these secrets.
