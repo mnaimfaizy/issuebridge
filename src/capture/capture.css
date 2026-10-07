@@ -143,7 +143,12 @@ body {
   flex: 0 0 auto;
 }
 
-.ib-capture-body {
+/*
+ * Scoped to the compose child deliberately: a bare `.ib-capture-body` ties with
+ * the rule above on specificity and would only flex while it happens to come
+ * later in this file. Body must outrank it however the two are ordered.
+ */
+.ib-capture-compose > .ib-capture-body {
   flex: 1 1 auto;
 }
 

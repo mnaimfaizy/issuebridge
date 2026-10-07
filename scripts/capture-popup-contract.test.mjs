@@ -3,13 +3,15 @@
  * Asserts observable adapter contracts in source (not Fluent internals).
  */
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   CAPTURE_DEFAULT_SIZE,
+  CAPTURE_MIN_SIZE,
   CAPTURE_SIZE_STORAGE_KEY,
+  clampCaptureWindowSize,
   readCaptureWindowSize,
 } from "../src/capture/geometry.ts";
 
@@ -26,6 +28,15 @@ function readRoot(...parts) {
   const path = join(root, ...parts);
   assert.ok(existsSync(path), `expected ${path} to exist`);
   return readFileSync(path, "utf8");
+}
+
+/** Every TypeScript source file under `dir`, recursively. */
+function sourceFiles(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return sourceFiles(path);
+    return /\.tsx?$/.test(entry.name) ? [path] : [];
+  });
 }
 
 /**
@@ -349,8 +360,95 @@ describe("Capture popup (#39)", () => {
       readRoot("src-tauri", "capabilities", "default.json"),
     );
     assert.ok(
-      !defaults.permissions.includes("core:window:allow-set-size"),
+      !defaults.permissions.some((entry) => entry.endsWith(":allow-set-size")),
       "allow-set-size must not be granted to the main window",
+    );
+    // That scan sees single grants only: `permissions` also holds permission
+    // *sets*, which nothing expands until the Rust build resolves the ACL, so a
+    // set pulling set-size in would slip past it. Every set the main window is
+    // given is therefore named here — another one fails this until someone has
+    // checked what it expands to.
+    const vettedSets = [
+      "core:default",
+      "opener:default",
+      "global-shortcut:default",
+    ];
+    for (const permission of defaults.permissions) {
+      assert.ok(
+        /:(allow|deny)-/.test(permission) || vettedSets.includes(permission),
+        `\`${permission}\` is an unvetted permission set: check what it grants the main window before adding it to default.json`,
+      );
+    }
+    // What a vetted set expands to can change under a Tauri upgrade, and the
+    // resolved ACL is build output that is not in the repo, so the rest of the
+    // guard is behavioural: Capture is the only surface that resizes a window,
+    // so a widened grant elsewhere would still resize nothing.
+    const resizes = sourceFiles(src()).filter((file) =>
+      /\.setSize\(/.test(readFileSync(file, "utf8")),
+    );
+    assert.deepEqual(
+      resizes,
+      [src("capture", "CaptureApp.tsx")],
+      "only Capture may call setSize",
+    );
+  });
+
+  it("the display clamp trims a stored Capture size to what fits (#205)", () => {
+    const stored = { width: 900, height: 1000 };
+
+    // Nothing usable to fit against: the minimum is all that applies, and the
+    // stored size is left alone.
+    for (const area of [
+      undefined,
+      null,
+      { width: Number.NaN, height: 680 },
+      { width: 1280, height: Number.POSITIVE_INFINITY },
+      { width: 0, height: 680 },
+      { width: 1280, height: -680 },
+    ]) {
+      assert.deepEqual(clampCaptureWindowSize(stored, area), stored);
+      assert.deepEqual(
+        clampCaptureWindowSize({ width: 10, height: 10 }, area),
+        CAPTURE_MIN_SIZE,
+      );
+    }
+    // Fractions become whole pixels rather than reaching the window.
+    assert.deepEqual(clampCaptureWindowSize({ width: 599.4, height: 640.6 }), {
+      width: 599,
+      height: 641,
+    });
+
+    // A size stored on a bigger monitor is trimmed to this one. The clamped
+    // value is an inner size while a work area is outer space, so the frame the
+    // title bar and borders add comes off first — leaving it in puts the
+    // actions back under the taskbar, by exactly the height of the title bar.
+    const area = { width: 1280, height: 680 };
+    const frame = { width: 16, height: 31 };
+    assert.deepEqual(clampCaptureWindowSize(stored, area), {
+      width: 900,
+      height: 680,
+    });
+    assert.deepEqual(clampCaptureWindowSize(stored, area, frame), {
+      width: 900,
+      height: 649,
+    });
+    // A size that already fits is untouched.
+    const fits = { width: 460, height: 640 };
+    assert.deepEqual(clampCaptureWindowSize(fits, area, frame), fits);
+    // A frame that is negative, or larger than the display itself, is ignored
+    // rather than trusted.
+    assert.deepEqual(
+      clampCaptureWindowSize(stored, area, { width: -20, height: 10000 }),
+      { width: 900, height: 680 },
+    );
+
+    // A work area genuinely smaller than the minimum — a small display at a
+    // high scale factor — wins over the minimum: the compose region scrolls at
+    // that size and the hero and actions stay put, whereas keeping the minimum
+    // would hide the actions with no way left for the user to resize back.
+    assert.deepEqual(
+      clampCaptureWindowSize(stored, { width: 911, height: 480 }, frame),
+      { width: 895, height: 449 },
     );
   });
 
@@ -405,8 +503,19 @@ describe("Capture popup (#39)", () => {
     assert.match(compose, /min-height:\s*0/);
     assert.match(compose, /scrollbar-gutter:\s*stable/);
 
-    // Body takes the leftover height instead of a fixed floor at every size.
-    assert.match(rule(".ib-capture-body"), /flex:\s*1 1 auto/);
+    // Body takes the leftover height instead of a fixed floor at every size,
+    // and must win on specificity rather than on source order: a bare
+    // `.ib-capture-body` rule only ties with `.ib-capture-compose > *` above,
+    // so swapping the two would silently stop Body from flexing.
+    assert.match(rule(".ib-capture-compose > *"), /flex:\s*0 0 auto/);
+    const bodyFlex = css.match(/\n([^{}\n]*\.ib-capture-body)\s*\{([^}]*)\}/);
+    assert.ok(bodyFlex, "expected a rule for `.ib-capture-body`");
+    assert.match(bodyFlex[2], /flex:\s*1 1 auto/);
+    assert.match(
+      bodyFlex[1].trim(),
+      /^\.ib-capture-compose\s*>\s*\.ib-capture-body$/,
+      `the Body flex rule must outrank \`.ib-capture-compose > *\`, got \`${bodyFlex[1].trim()}\``,
+    );
     const popup = readSrc("capture", "CapturePopup.tsx");
     assert.match(popup, /className="ib-capture-body"/);
   });
