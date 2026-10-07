@@ -20,14 +20,21 @@ import { CapturePopup } from "./CapturePopup";
 import {
   type CaptureWindowSize,
   clampCaptureWindowSize,
+  isStorableCaptureSize,
   readCaptureWindowSize,
   writeCaptureWindowSize,
 } from "./geometry";
 
-/** The same window size, give or take the rounding a DPI round-trip adds. */
-function isSameSize(a: CaptureWindowSize, b: CaptureWindowSize): boolean {
-  return Math.abs(a.width - b.width) <= 1 && Math.abs(a.height - b.height) <= 1;
-}
+/**
+ * How long after `setSize` returns the restore still owns the window size.
+ *
+ * The `Resized` that `setSize` causes is emitted while the call is in flight
+ * and makes its own trip back to the webview, which can land after the reply,
+ * so the restore is not over when the `await` resolves. Erring long is the safe
+ * side: it only drops a resize the restore was about to override anyway,
+ * whereas ending too early stores the restore's own size as the user's.
+ */
+const RESTORE_SETTLE_MS = 250;
 
 export function CaptureApp() {
   const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
@@ -64,6 +71,7 @@ export function CaptureApp() {
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let settle: ReturnType<typeof setTimeout> | undefined;
     const win = getCurrentWindow();
 
     // Read the stored size before the awaits below. A `Resized` event arriving
@@ -71,10 +79,12 @@ export function CaptureApp() {
     // user grabbing an edge — would otherwise persist the size Capture opened
     // at over the stored one before it has been read, losing it for good.
     const stored = readCaptureWindowSize();
-    // Set while the restore's own resize is outstanding, and only when the
-    // display clamp trimmed the stored size: that trim is a fit for this
-    // monitor, not a decision the user made, so it must not be written back.
-    let trimmedTo: CaptureWindowSize | null = null;
+    // The restore owns the size until it has settled, and nothing is stored
+    // meanwhile. Armed before the first await, because the window is
+    // interactive from creation and the restore takes several IPC round-trips:
+    // every resize in that span is either the restore's own — a fit for this
+    // monitor, not a choice the user made — or one the restore then overrides.
+    let restoring = true;
 
     void (async () => {
       // Restore the size the user last resized Capture to, trimmed to this
@@ -106,18 +116,23 @@ export function CaptureApp() {
         // No window metrics: clamp against the work area alone.
       }
       const size = clampCaptureWindowSize(stored, workArea, frame);
-      trimmedTo = isSameSize(size, stored) ? null : size;
       try {
         await win.setSize(new LogicalSize(size.width, size.height));
       } catch {
         // Ignore when not running under Tauri.
-        trimmedTo = null;
+      } finally {
+        settle = setTimeout(() => {
+          restoring = false;
+        }, RESTORE_SETTLE_MS);
       }
     })();
 
     void (async () => {
       try {
         unlisten = await win.onResized(async ({ payload }) => {
+          // Taken before the await below, so provenance is read as of the
+          // event rather than as of whenever the scale factor comes back.
+          const duringRestore = restoring;
           let size = { width: payload.width, height: payload.height };
           try {
             const factor = await win.scaleFactor();
@@ -128,13 +143,7 @@ export function CaptureApp() {
           } catch {
             // No scale factor: the physical size is the best guess available.
           }
-          if (trimmedTo && isSameSize(size, trimmedTo)) {
-            trimmedTo = null;
-            // The restore's own resize, not the user's. Re-assert the stored
-            // size, in case an earlier event already overwrote it.
-            writeCaptureWindowSize(stored);
-            return;
-          }
+          if (!isStorableCaptureSize(size, duringRestore)) return;
           writeCaptureWindowSize(size);
         });
       } catch {
@@ -144,6 +153,7 @@ export function CaptureApp() {
 
     return () => {
       unlisten?.();
+      clearTimeout(settle);
     };
   }, []);
 

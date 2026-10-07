@@ -131,6 +131,34 @@ function fitToDisplay(
   return Math.max(min, Math.min(want, Math.round(area - frame)));
 }
 
+/**
+ * Whether a `Resized` payload is a size the user chose, and so worth storing.
+ *
+ * `duringRestore` is provenance, and it is the only thing that can separate the
+ * restore's own resize from the user's. Matching on size cannot: the restore's
+ * request is raised to `min_inner_size` before it lands, so the resize that
+ * comes back is not the size that was asked for, and a snap or a DPI change can
+ * repeat a size the restore already used. Provenance also cannot go stale —
+ * a `setSize` that lands on the current size emits no event at all, which left
+ * a size-matched guard armed for the rest of the window's life.
+ *
+ * Windows reports `{0, 0}` on minimise. Storing that floors to
+ * `CAPTURE_MIN_SIZE` and replaces whatever size the user had chosen, for good
+ * if Capture is minimised when the app quits.
+ */
+export function isStorableCaptureSize(
+  size: CaptureWindowSize,
+  duringRestore: boolean,
+): boolean {
+  if (duringRestore) return false;
+  return (
+    Number.isFinite(size.width) &&
+    Number.isFinite(size.height) &&
+    size.width > 0 &&
+    size.height > 0
+  );
+}
+
 export function writeCaptureWindowSize(size: CaptureWindowSize): void {
   try {
     localStorage.setItem(

@@ -12,6 +12,7 @@ import {
   CAPTURE_MIN_SIZE,
   CAPTURE_SIZE_STORAGE_KEY,
   clampCaptureWindowSize,
+  isStorableCaptureSize,
   readCaptureWindowSize,
 } from "../src/capture/geometry.ts";
 
@@ -451,6 +452,68 @@ describe("Capture popup (#39)", () => {
       clampCaptureWindowSize(stored, { width: 911, height: 480 }, frame),
       { width: 895, height: CAPTURE_MIN_SIZE.height },
     );
+  });
+
+  it("only the user's own resize reaches the stored Capture size (#205)", () => {
+    // Provenance decides, not the numbers. While the restore owns the size
+    // nothing is stored, whatever that size happens to be: the restore's
+    // request is raised to `min_inner_size` before it lands, so matching on the
+    // size asked for misses it, and a snap or a DPI change can repeat a size
+    // the restore already used, so matching lets those through instead.
+    for (const size of [
+      { width: 900, height: 1000 },
+      { width: 715, height: 560 },
+      CAPTURE_MIN_SIZE,
+      CAPTURE_DEFAULT_SIZE,
+    ]) {
+      assert.equal(
+        isStorableCaptureSize(size, true),
+        false,
+        `${size.width}x${size.height} must not be stored while the restore owns the size`,
+      );
+      assert.equal(
+        isStorableCaptureSize(size, false),
+        true,
+        `${size.width}x${size.height} is the user's resize and must be stored`,
+      );
+    }
+
+    // Windows reports {0, 0} on minimise, and writeCaptureWindowSize floors
+    // that to the minimum — so storing it replaces the size the user chose,
+    // for good if Capture is minimised when the app quits.
+    for (const size of [
+      { width: 0, height: 0 },
+      { width: 0, height: 640 },
+      { width: 460, height: 0 },
+      { width: -460, height: -640 },
+      { width: Number.NaN, height: 640 },
+    ]) {
+      assert.equal(isStorableCaptureSize(size, false), false);
+    }
+
+    const app = readSrc("capture", "CaptureApp.tsx");
+    // The resize handler stores nothing the guard rejects...
+    assert.match(app, /isStorableCaptureSize\(size, duringRestore\)/);
+    // ...and reads provenance as of the event, not after the awaited scale
+    // factor, so a restore settling mid-handler cannot let its own resize
+    // through.
+    assert.match(
+      app,
+      /const duringRestore = restoring;[\s\S]*?await win\.scaleFactor\(\)/,
+    );
+    // The gate is armed before the restore's first await, not once its
+    // `setSize` is issued: the window is interactive the whole way through, so
+    // the earlier round-trips are inside the restore too.
+    const armed = app.indexOf("let restoring = true");
+    const firstAwait = app.indexOf("await currentMonitor(");
+    assert.ok(armed !== -1, "expected a restore gate in CaptureApp");
+    assert.ok(
+      firstAwait !== -1 && armed < firstAwait,
+      "the restore gate must be armed before the restore's first await",
+    );
+    // It is released on a timer rather than on the `setSize` reply: the
+    // `Resized` that call causes makes its own trip back and can arrive after.
+    assert.match(app, /setTimeout\(\s*\(\)\s*=>\s*{\s*restoring = false;/);
   });
 
   it("the display clamp never asks for a size the window may not take (#205)", () => {
