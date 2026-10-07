@@ -322,6 +322,8 @@ describe("Capture popup (#39)", () => {
     const hideCapture = readBody(popup, "hideCapture");
     assert.match(hideCapture, /captureIdRef\.current \+= 1/);
     assert.match(hideCapture, /resetFieldsOnShowRef\.current = true/);
+    // The orphaned transcript must not leave the next Capture's PTT wedged.
+    assert.match(hideCapture, /pttBusyRef\.current = false/);
 
     const stopPtt = readBody(popup, "stopPtt");
     // Busy from release, not from transcription: no refocus window between.

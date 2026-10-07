@@ -153,6 +153,10 @@ export function CapturePopup() {
     await teardownAudio();
     // Next show should open a clean Capture form.
     captureIdRef.current += 1;
+    // The in-flight transcript now belongs to an ended Capture, so stopPtt()
+    // drops it. Release the busy flag with it, or the next Capture's PTT
+    // silently no-ops until the orphaned apply_ptt settles.
+    pttBusyRef.current = false;
     resetFieldsOnShowRef.current = true;
     try {
       // Hide only — do not focus the main window.
