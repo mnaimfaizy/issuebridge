@@ -29,11 +29,45 @@ npm run tauri dev
 # Preferred (matches release): point at your exchange Worker / cPanel PHP
 $env:ISSUEBRIDGE_OAUTH_EXCHANGE_URL = "https://oauth-exchange.example.workers.dev/"
 # Or local/dev only — never bake this into official NSIS builds:
-# $env:ISSUEBRIDGE_GITHUB_CLIENT_SECRET = "<secret from issuebridge-dev App / 1Password>"
+# $env:ISSUEBRIDGE_GITHUB_CLIENT_SECRET = "<secret from the issuebridge-dev App>"
 # optional; default client id is already set for issuebridge-dev
 # $env:ISSUEBRIDGE_GITHUB_CLIENT_ID = "Iv23li6Ao8URyrvbNZOq"
 npm run tauri dev
 ```
+
+#### Secrets from 1Password
+
+Instead of setting those variables by hand, keep the values in 1Password and let the
+1Password CLI hand them to `tauri dev`:
+
+```powershell
+npm run dev:op
+```
+
+That runs `op run --env-file=.env.op -- npm run tauri dev`. `.env.op` lists each variable
+with a *secret reference* — `op://vault/item/field`, a pointer, not a value. The CLI reads
+the values from 1Password when the command starts, gives them to that one process, and
+masks them in its output; no secret is written to disk. Local development only — CI and
+Release builds use GitHub Actions secrets.
+
+One-time setup:
+
+1. Install the CLI: `winget install 1password-cli`.
+2. In the 1Password app, turn on Windows Hello, then **Settings → Developer → Integrate
+   with 1Password CLI**.
+3. Store the values in a 1Password item — for example an item named `Issuebridge dev` with
+   a field for the exchange URL.
+4. Copy `.env.op.example` to `.env.op` and replace each placeholder with your item's
+   reference (the field's menu → **Copy Secret Reference**). `.env.op` is git-ignored: it
+   names your vault and item, which stay off this public repository.
+5. `npm run dev:op`, and approve the 1Password prompt.
+
+To run any other command the same way: `node scripts/run-with-1password.mjs <command>`.
+
+Two 1Password features that would be neater are not usable here yet: locally mounted
+`.env` files are Mac and Linux only, and reading a whole 1Password Environment by ID
+(`op run --environment`) is only in beta builds of the CLI — the stable 2.40.0 has no such
+flag.
 
 See [`services/oauth-exchange/README.md`](services/oauth-exchange/README.md) to deploy the exchange backend.
 Terminal should show `OAuth exchange ok`, then Install App → **Continue**.

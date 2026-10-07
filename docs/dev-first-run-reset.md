@@ -20,9 +20,13 @@ Path on this machine: `%LOCALAPPDATA%\Issuebridge\settings.json`.
 4. **Restart with OAuth exchange configured** (required for Sign in):
 
 ```powershell
+# With the 1Password setup from the README ("Secrets from 1Password"):
+npm run dev:op
+
+# Or by hand:
 $env:ISSUEBRIDGE_OAUTH_EXCHANGE_URL = "https://oauth-exchange.example.workers.dev/"
 # Or local/dev only:
-# $env:ISSUEBRIDGE_GITHUB_CLIENT_SECRET = "<secret from issuebridge-dev App / 1Password>"
+# $env:ISSUEBRIDGE_GITHUB_CLIENT_SECRET = "<secret from the issuebridge-dev App>"
 npm run tauri dev
 ```
 
