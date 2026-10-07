@@ -3,7 +3,11 @@ import {
   webDarkTheme,
   webLightTheme,
 } from "@fluentui/react-components";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import {
+  currentMonitor,
+  getCurrentWindow,
+  LogicalSize,
+} from "@tauri-apps/api/window";
 import { useEffect, useState } from "react";
 import {
   readSystemPrefersDark,
@@ -13,7 +17,12 @@ import {
   type ThemePreference,
 } from "../theme/preference";
 import { CapturePopup } from "./CapturePopup";
-import { readCaptureWindowSize, writeCaptureWindowSize } from "./geometry";
+import {
+  type CaptureWindowSize,
+  clampCaptureWindowSize,
+  readCaptureWindowSize,
+  writeCaptureWindowSize,
+} from "./geometry";
 
 export function CaptureApp() {
   const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
@@ -51,10 +60,28 @@ export function CaptureApp() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     const win = getCurrentWindow();
-    const size = readCaptureWindowSize();
-    void win.setSize(new LogicalSize(size.width, size.height)).catch(() => {
-      // Ignore when not running under Tauri.
-    });
+
+    void (async () => {
+      // Restore the size the user last resized Capture to, trimmed to this
+      // display so a size stored on a bigger monitor cannot open the popup
+      // with its actions past the bottom edge.
+      let workArea: CaptureWindowSize | null = null;
+      try {
+        const monitor = await currentMonitor();
+        if (monitor) {
+          const logical = monitor.workArea.size.toLogical(monitor.scaleFactor);
+          workArea = { width: logical.width, height: logical.height };
+        }
+      } catch {
+        // No monitor info: fall back to the minimum clamp alone.
+      }
+      const size = clampCaptureWindowSize(readCaptureWindowSize(), workArea);
+      try {
+        await win.setSize(new LogicalSize(size.width, size.height));
+      } catch {
+        // Ignore when not running under Tauri.
+      }
+    })();
 
     void (async () => {
       try {

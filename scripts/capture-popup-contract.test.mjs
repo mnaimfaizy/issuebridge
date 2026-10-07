@@ -256,8 +256,8 @@ describe("Capture popup (#39)", () => {
     assert.match(app, /resolveIsDark/);
     assert.match(app, /prefers-color-scheme|readSystemPrefersDark/);
     const rust = readRoot("src-tauri", "src", "adapters", "capture_window.rs");
-    assert.match(rust, /420\.0.*520\.0|inner_size\(420/);
-    assert.match(rust, /min_inner_size|360\.0.*420\.0/);
+    assert.match(rust, /\.inner_size\(/);
+    assert.match(rust, /\.min_inner_size\(/);
     assert.match(rust, /always_on_top\(true\)/);
     assert.match(rust, /prevent_close|hide\(\)/);
     const geometry = readSrc("capture", "geometry.ts");
@@ -265,6 +265,101 @@ describe("Capture popup (#39)", () => {
       geometry,
       /issuebridge\.captureWindowSize|CAPTURE.*SIZE|writeCapture|readCapture/,
     );
+  });
+
+  it("Rust owns the Capture size and geometry.ts mirrors it (#205)", () => {
+    const rust = readRoot("src-tauri", "src", "adapters", "capture_window.rs");
+    const geometry = readSrc("capture", "geometry.ts");
+    // Parsed from both sources rather than spelled out here, so the two cannot
+    // drift apart and this test cannot become the stale third copy.
+    const builder = (call) => {
+      const match = rust.match(
+        new RegExp(`\\.${call}\\((\\d+(?:\\.\\d+)?),\\s*(\\d+(?:\\.\\d+)?)\\)`),
+      );
+      assert.ok(match, `expected a \`.${call}(w, h)\` call`);
+      return { width: Number(match[1]), height: Number(match[2]) };
+    };
+    const constant = (name) => {
+      const match = geometry.match(
+        new RegExp(
+          `${name}[^=]*=\\s*{\\s*width:\\s*(\\d+),\\s*height:\\s*(\\d+),?\\s*}`,
+        ),
+      );
+      assert.ok(match, `expected a \`${name}\` constant`);
+      return { width: Number(match[1]), height: Number(match[2]) };
+    };
+
+    const defaultSize = builder("inner_size");
+    const minSize = builder("min_inner_size");
+    assert.deepEqual(constant("CAPTURE_DEFAULT_SIZE"), defaultSize);
+    assert.deepEqual(constant("CAPTURE_MIN_SIZE"), minSize);
+
+    // The default must hold the whole surface — hero, chips, repo field, Title,
+    // Body and the actions — which 420x520 did not; see #205.
+    assert.ok(
+      defaultSize.width >= 440 && defaultSize.height >= 620,
+      `Capture must open large enough for its content, got ${defaultSize.width}x${defaultSize.height}`,
+    );
+    assert.ok(
+      minSize.width <= defaultSize.width &&
+        minSize.height <= defaultSize.height,
+      "the minimum must not exceed the default",
+    );
+
+    // A stored size is trimmed to this display before it is applied.
+    const app = readSrc("capture", "CaptureApp.tsx");
+    assert.match(app, /clampCaptureWindowSize\(/);
+    assert.match(app, /currentMonitor\(/);
+    assert.match(app, /workArea/);
+    assert.match(geometry, /export function clampCaptureWindowSize/);
+
+    // setSize is only reachable with an explicit grant, scoped to Capture so
+    // the main window's ACL stays unchanged.
+    const capability = JSON.parse(
+      readRoot("src-tauri", "capabilities", "capture.json"),
+    );
+    assert.deepEqual(capability.windows, ["capture"]);
+    assert.ok(
+      capability.permissions.includes("core:window:allow-set-size"),
+      "the Capture capability must grant core:window:allow-set-size",
+    );
+    const defaults = JSON.parse(
+      readRoot("src-tauri", "capabilities", "default.json"),
+    );
+    assert.ok(
+      !defaults.permissions.includes("core:window:allow-set-size"),
+      "allow-set-size must not be granted to the main window",
+    );
+  });
+
+  it("the compose region scrolls, not the Capture shell (#205)", () => {
+    const css = readSrc("capture", "capture.css");
+    const rule = (selector) => {
+      const at = css.indexOf(`${selector} {`);
+      assert.ok(at !== -1, `expected a \`${selector}\` rule`);
+      const end = css.indexOf("}", at);
+      assert.ok(end !== -1, `unterminated \`${selector}\` rule`);
+      return css.slice(at, end);
+    };
+
+    // The shell is clamped to the window and never scrolls: scrolling it used
+    // to carry the hero and the repo controls out of view.
+    const shell = rule(".ib-capture");
+    assert.match(shell, /overflow:\s*hidden/);
+    assert.doesNotMatch(shell, /max-height:\s*100vh/);
+    assert.doesNotMatch(shell, /overflow:\s*auto/);
+    // Only the compose row may shrink, so hero and actions always stay visible.
+    assert.match(shell, /grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto/);
+
+    const compose = rule(".ib-capture-compose");
+    assert.match(compose, /overflow:\s*auto/);
+    assert.match(compose, /min-height:\s*0/);
+    assert.match(compose, /scrollbar-gutter:\s*stable/);
+
+    // Body takes the leftover height instead of a fixed floor at every size.
+    assert.match(rule(".ib-capture-body"), /flex:\s*1 1 auto/);
+    const popup = readSrc("capture", "CapturePopup.tsx");
+    assert.match(popup, /className="ib-capture-body"/);
   });
 
   it("readBody ignores braces in strings, templates and comments", () => {

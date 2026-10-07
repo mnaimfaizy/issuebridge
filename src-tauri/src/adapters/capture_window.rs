@@ -16,8 +16,13 @@ pub fn show_capture_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String>
     eprintln!("[issuebridge] creating Capture window (capture.html)");
     let window = WebviewWindowBuilder::new(app, "capture", WebviewUrl::App("capture.html".into()))
         .title("Capture")
-        .inner_size(420.0, 520.0)
-        .min_inner_size(360.0, 420.0)
+        // Default size fits the whole surface — hero, Testing-set chips, repo
+        // field, Title, Body and the Save Draft / Cancel footer — so the popup
+        // opens without a scrollbar. Below the minimum the compose region
+        // scrolls on its own and the hero and footer stay put (see capture.css).
+        // Mirrored by CAPTURE_DEFAULT_SIZE / CAPTURE_MIN_SIZE in src/capture/geometry.ts.
+        .inner_size(460.0, 640.0)
+        .min_inner_size(400.0, 560.0)
         .resizable(true)
         .always_on_top(true)
         .visible(true)
