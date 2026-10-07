@@ -18,9 +18,17 @@ pub fn show_capture_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String>
         .title("Capture")
         // Default size fits the whole surface — hero, Testing-set chips, repo
         // field, Title, Body and the Save Draft / Cancel footer — so the popup
-        // opens without a scrollbar. Below the minimum the compose region
+        // opens without a scrollbar. Below the default the compose region
         // scrolls on its own and the hero and footer stay put (see capture.css).
         // Mirrored by CAPTURE_DEFAULT_SIZE / CAPTURE_MIN_SIZE in src/capture/geometry.ts.
+        //
+        // `min_inner_size` is a hard floor, not a hint: Windows enforces it on
+        // the `SetWindowPos` behind `setSize`, so a smaller request is silently
+        // raised back to it. The display clamp in geometry.ts therefore never
+        // returns below CAPTURE_MIN_SIZE — a size the window cannot take would
+        // come back as a resize nobody asked for and be stored as the user's.
+        // Letting Capture get smaller than this on a short work area means
+        // lowering the floor here first, with the mirror kept in step.
         .inner_size(460.0, 640.0)
         .min_inner_size(400.0, 560.0)
         .resizable(true)

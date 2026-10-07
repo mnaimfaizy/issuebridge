@@ -443,12 +443,13 @@ describe("Capture popup (#39)", () => {
     );
 
     // A work area genuinely smaller than the minimum — a small display at a
-    // high scale factor — wins over the minimum: the compose region scrolls at
-    // that size and the hero and actions stay put, whereas keeping the minimum
-    // would hide the actions with no way left for the user to resize back.
+    // high scale factor — is trimmed only as far as the minimum. `min_inner_size`
+    // is enforced by Windows on the `SetWindowPos` behind `setSize`, so a smaller
+    // result could not reach the window: it would be raised back to the minimum
+    // and the resize that came back would look like one the user had made.
     assert.deepEqual(
       clampCaptureWindowSize(stored, { width: 911, height: 480 }, frame),
-      { width: 895, height: 449 },
+      { width: 895, height: CAPTURE_MIN_SIZE.height },
     );
   });
 

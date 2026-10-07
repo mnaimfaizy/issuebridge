@@ -70,12 +70,16 @@ export function readCaptureWindowSize(): CaptureWindowSize {
  * around the client area. Without subtracting it the window ends up a title bar
  * taller than the work area, which puts the actions back under the taskbar.
  *
- * Where the work area is genuinely smaller than `CAPTURE_MIN_SIZE` — a small
- * display at a high scale factor — fitting the display wins over the minimum:
- * the compose region scrolls at that size and the hero and actions stay put,
- * whereas honouring the minimum hides the actions off the bottom edge with no
- * way for the user to resize back. A missing or nonsensical work area (or
- * frame) leaves the size untouched.
+ * `CAPTURE_MIN_SIZE` is the floor even where the work area is genuinely smaller
+ * — a small display at a high scale factor. It mirrors `min_inner_size`, which
+ * Windows enforces on the `SetWindowPos` behind `setSize`, so a smaller result
+ * could never reach the window: it would be raised back to the minimum, and the
+ * resize that followed would not match what the caller asked for, which is how
+ * the restore's own resize ends up stored as if the user had chosen it. The
+ * overhang on a work area shorter than the minimum is not something this
+ * function can trim away — only a lower `min_inner_size` could.
+ *
+ * A missing or nonsensical work area (or frame) leaves the size untouched.
  */
 export function clampCaptureWindowSize(
   size: CaptureWindowSize,
@@ -94,21 +98,37 @@ export function clampCaptureWindowSize(
     return { width, height };
   }
   return {
-    width: fitToDisplay(width, workArea.width, frame?.width),
-    height: fitToDisplay(height, workArea.height, frame?.height),
+    width: fitToDisplay(
+      width,
+      workArea.width,
+      frame?.width,
+      CAPTURE_MIN_SIZE.width,
+    ),
+    height: fitToDisplay(
+      height,
+      workArea.height,
+      frame?.height,
+      CAPTURE_MIN_SIZE.height,
+    ),
   };
 }
 
 /**
  * The inner extent `want` trimmed to an outer `area`, less the `chrome` around
- * the client area. A chrome that is missing, negative or wider than the display
- * itself is ignored rather than trusted, and at least one pixel is left, so a
- * bogus measurement cannot clamp the popup out of existence.
+ * the client area, and never below `min`. A chrome that is missing, negative or
+ * wider than the display itself is ignored rather than trusted, and `min` keeps
+ * a bogus measurement — or a display smaller than the popup's own floor — from
+ * asking for a size the window is not allowed to take.
  */
-function fitToDisplay(want: number, area: number, chrome?: number): number {
+function fitToDisplay(
+  want: number,
+  area: number,
+  chrome: number | undefined,
+  min: number,
+): number {
   const frame =
     typeof chrome === "number" && chrome > 0 && chrome < area ? chrome : 0;
-  return Math.min(want, Math.max(1, Math.round(area - frame)));
+  return Math.max(min, Math.min(want, Math.round(area - frame)));
 }
 
 export function writeCaptureWindowSize(size: CaptureWindowSize): void {
