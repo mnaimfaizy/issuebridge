@@ -31,8 +31,15 @@ on:
   pull_request:
     types: [labeled]
 
+# One group per pull request, shared with claude-review-response.yml, so a
+# review and a response never overlap on the same PR. Runs for any other label
+# get a group of their own: a queued run evicts the one already waiting in its
+# group, and an unrelated label must not be able to evict a real review.
 concurrency:
-  group: claude-code-review-${{ github.event.pull_request.number }}
+  group: >-
+    ${{ github.event.label.name == 'agent:review'
+    && format('claude-code-review-{0}', github.event.pull_request.number)
+    || format('claude-code-review-idle-{0}', github.run_id) }}
   cancel-in-progress: false
 
 permissions:
@@ -44,6 +51,8 @@ jobs:
     if: github.event.label.name == 'agent:review'
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    outputs:
+      reviewed: ${{ steps.gate.outputs.proceed }}
     steps:
       - name: Gate
         id: gate
@@ -401,3 +410,60 @@ jobs:
           fi
 
           echo "Aggregated three-axis report is present on PR #${PR}."
+
+  # Auto mode only (CLAUDE_REVIEW_RESPONSE_MODE=auto): after a review that left
+  # findings, start the Review responder. A job of its own so that the token
+  # able to start workflows is never on the runner where the review agent read
+  # pull request code. A label would not work here — GitHub starts no run for
+  # a label applied with the job token — so the responder is dispatched.
+  handoff:
+    needs: review
+    if: >-
+      needs.review.outputs.reviewed == 'true' &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch &&
+      vars.CLAUDE_REVIEW_RESPONSE_ENABLED == 'true' &&
+      vars.CLAUDE_REVIEW_RESPONSE_MODE == 'auto'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Trusted code only: the decision script as the default branch has
+          # it. The job condition above holds the PR base to that branch.
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Hand off to the Review responder
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALLOWLIST: ${{ vars.AGENT_PIPELINE_ALLOWLIST }}
+          PR: ${{ github.event.pull_request.number }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          # Counts unresolved reviewer findings and the response rounds this
+          # pull request has already had; rounds are trusted by author and
+          # marker together, since anyone can comment on a public PR.
+          DECISION=$(node .github/review-response/review-response.mjs handoff --pr "$PR")
+          echo "Handoff decision: $DECISION"
+          case "$DECISION" in
+            dispatch)
+              # Named explicitly: a dispatch runs the workflow file of the ref
+              # it is given, and only the default branch's is trusted.
+              gh workflow run claude-review-response.yml \
+                --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH" -f pr="$PR"
+              ;;
+            capped)
+              gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" \
+                --body "Review response not started automatically: this pull request has already had the maximum number of automatic response rounds. The remaining findings need a maintainer — address them by hand, or apply \`agent:address-review\` to run another round."
+              ;;
+            none) ;;
+            *)
+              echo "Unexpected handoff decision." >&2
+              exit 1
+              ;;
+          esac
