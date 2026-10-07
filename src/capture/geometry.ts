@@ -19,6 +19,20 @@ export const CAPTURE_MIN_SIZE: CaptureWindowSize = {
   height: 560,
 };
 
+/**
+ * The size Capture opened at before #205.
+ *
+ * Restoring a stored size never worked back then — `setSize` was rejected by the
+ * ACL — so a stored value at or below this one is the window an install happened
+ * to get, not a size anyone chose. Honouring it now would reopen Capture too
+ * small for its own content, which is exactly what #205 reports, so it is
+ * dropped in favour of `CAPTURE_DEFAULT_SIZE`.
+ */
+const CAPTURE_PRE_RESTORE_SIZE: CaptureWindowSize = {
+  width: 420,
+  height: 520,
+};
+
 export function readCaptureWindowSize(): CaptureWindowSize {
   try {
     const raw = localStorage.getItem(CAPTURE_SIZE_STORAGE_KEY);
@@ -27,6 +41,12 @@ export function readCaptureWindowSize(): CaptureWindowSize {
     const width = Number(parsed.width);
     const height = Number(parsed.height);
     if (!Number.isFinite(width) || !Number.isFinite(height)) {
+      return { ...CAPTURE_DEFAULT_SIZE };
+    }
+    if (
+      width <= CAPTURE_PRE_RESTORE_SIZE.width &&
+      height <= CAPTURE_PRE_RESTORE_SIZE.height
+    ) {
       return { ...CAPTURE_DEFAULT_SIZE };
     }
     return {

@@ -7,6 +7,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  CAPTURE_DEFAULT_SIZE,
+  CAPTURE_SIZE_STORAGE_KEY,
+  readCaptureWindowSize,
+} from "../src/capture/geometry.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const src = (...parts) => join(root, "src", ...parts);
@@ -151,6 +156,23 @@ function skipLiteral(source, start) {
     }
   }
   assert.fail("unterminated literal");
+}
+
+/**
+ * `readCaptureWindowSize()` with `raw` as the whole of storage. The module reads
+ * the browser's `localStorage`, which Node has no ambient equivalent of, so one
+ * stands in for the call and is taken away again afterwards.
+ */
+function readStoredSize(raw) {
+  const previous = globalThis.localStorage;
+  globalThis.localStorage = {
+    getItem: (key) => (key === CAPTURE_SIZE_STORAGE_KEY ? raw : null),
+  };
+  try {
+    return readCaptureWindowSize();
+  } finally {
+    globalThis.localStorage = previous;
+  }
 }
 
 describe("Capture popup (#39)", () => {
@@ -329,6 +351,33 @@ describe("Capture popup (#39)", () => {
     assert.ok(
       !defaults.permissions.includes("core:window:allow-set-size"),
       "allow-set-size must not be granted to the main window",
+    );
+  });
+
+  it("a Capture size stored before #205 does not survive the upgrade (#205)", () => {
+    // Restoring a stored size never worked before #205, so an existing install
+    // holds the old 420x520 default: the window it happened to get, not a size
+    // anyone chose. Honouring it would reopen Capture smaller than the default
+    // this fix declares necessary, leaving the reporters of #205 without it.
+    assert.deepEqual(
+      readStoredSize('{"width":420,"height":520}'),
+      CAPTURE_DEFAULT_SIZE,
+    );
+    assert.deepEqual(
+      readStoredSize('{"width":380,"height":460}'),
+      CAPTURE_DEFAULT_SIZE,
+    );
+    // A size the user grew past that default is still theirs to keep.
+    assert.deepEqual(readStoredSize('{"width":900,"height":1000}'), {
+      width: 900,
+      height: 1000,
+    });
+    // Nothing stored, or nonsense stored, opens at the default.
+    assert.deepEqual(readStoredSize(null), CAPTURE_DEFAULT_SIZE);
+    assert.deepEqual(readStoredSize("{"), CAPTURE_DEFAULT_SIZE);
+    assert.deepEqual(
+      readStoredSize('{"width":"wide","height":640}'),
+      CAPTURE_DEFAULT_SIZE,
     );
   });
 
