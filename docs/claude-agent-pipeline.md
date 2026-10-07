@@ -101,6 +101,15 @@ when its commit was pushed by that round. A missing response file changes no thr
 anyone pushes to the branch while a round runs, or its commits fail the checks before the
 push, nothing is pushed and the summary says so.
 
+A round runs the responder as the default branch had it when the pull request's branch was
+last brought up to date. GitHub records a pull request's base commit at that point and does
+not move it as the default branch advances, and the workflow file a labelled run uses comes
+from the same merge. So after a change to the responder lands, update a pull request's
+branch before applying the label, or the round uses the older version. A pull request last
+updated before the responder existed stops at the start of the round, without touching any
+thread: update its branch and apply the label again. The same holds for `agent:review` and
+`agent:security-audit` on a pull request after their workflows change.
+
 ### Auto mode
 
 With `CLAUDE_REVIEW_RESPONSE_MODE=auto`, a review that leaves unresolved findings starts a
