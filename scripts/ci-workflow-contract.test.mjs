@@ -561,15 +561,20 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     );
   });
 
-  it("lets the Claude App open the PR so CI actually runs", () => {
+  it("lets the Claude App open the PR so CI starts without approval", () => {
     const implement = jobBlock(
       readWorkflow("claude-agent-pipeline.yml"),
       "implement",
     );
 
-    // GitHub raises no workflow runs for events authored by GITHUB_TOKEN. Passing
-    // github_token here would silently leave every agent PR without CI.
+    // Per GitHub's documentation, the CI run for a PR opened with GITHUB_TOKEN
+    // is created but held for approval (seen here only for a push), and nothing
+    // in this job approves it. Passing github_token here would leave every
+    // agent PR with CI waiting on a maintainer.
     assert.doesNotMatch(implement, /github_token:/);
+    // This job runs builds beside the App token: it must not also be able to
+    // approve runs.
+    assert.doesNotMatch(implement, /actions:/);
     assert.match(implement, /label_trigger:\s*"agent:implement"/);
     assert.match(implement, /track_progress:\s*true/);
   });
@@ -1275,8 +1280,9 @@ const JOB_TOKEN_AGENT_STEPS = [
 ];
 
 // The one agent step that keeps the Claude App token: it pushes and opens the
-// PR, and GitHub starts no CI for a PR opened with GITHUB_TOKEN. It already
-// runs npm and cargo, so it is a separate, already-accepted trust decision.
+// PR, and GitHub documents that the CI run of a PR opened with GITHUB_TOKEN is
+// held until it is approved, a step the App token avoids. It already runs npm
+// and cargo, so it is a separate, already-accepted trust decision.
 const APP_TOKEN_AGENT_STEP = {
   workflow: "claude-agent-pipeline.yml",
   job: "implement",

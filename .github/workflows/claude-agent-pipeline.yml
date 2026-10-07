@@ -16,11 +16,15 @@
 #          CLAUDE_PIPELINE_MODEL          (optional; default claude-opus-5)
 #
 # Why the implement job uses the action's tag mode rather than a `prompt`:
-# CI (.github/workflows/ci.yml) triggers on `pull_request` targeting main. GitHub does not
-# start workflow runs for events raised by GITHUB_TOKEN, so a PR opened with GITHUB_TOKEN
-# would get no CI. In tag mode the action pushes and opens the PR as the Claude GitHub App,
-# so CI fires normally. Do not add a `github_token:` input to that step. The planner is
-# the opposite case: it never pushes, so it passes the job token and holds no id-token.
+# CI (.github/workflows/ci.yml) triggers on `pull_request` targeting main. For a PR opened
+# or pushed with GITHUB_TOKEN, GitHub creates the CI run but holds it until it is approved.
+# This repository has seen that for a push: the Review responder's `publish` job approves
+# the run for the commit it pushed (docs/adr/0006-review-responder-holds-no-write-credential.md).
+# For an opened PR it rests on GitHub's documentation. In tag mode the action pushes and
+# opens the PR as the Claude GitHub App, so CI starts with no approval step. The App token
+# is that convenience, not the only way to get CI. Do not add a `github_token:` input to
+# that step: nothing in this job approves a held run. The planner is the opposite case: it
+# never pushes, so it passes the job token and holds no id-token.
 
 name: Claude agent pipeline
 
@@ -347,7 +351,8 @@ jobs:
 
       - name: Run implementer (Claude Code)
         # Tag mode: no `prompt` input. The action still reads the issue thread so
-        # it can open the PR as the Claude GitHub App (GITHUB_TOKEN PRs skip CI).
+        # it can open the PR as the Claude GitHub App (CI on a GITHUB_TOKEN PR is
+        # held for approval).
         # The spec is verified-plan.md, written above from the trusted comment
         # only — not whatever marker text appears in the comment stream.
         # The implementer contract below mirrors .github/agent-pipeline/implementer-instructions.md.
@@ -368,8 +373,8 @@ jobs:
           # gh is scoped to `pr create` / `pr view` deliberately. `Bash(gh:*)`
           # would also hand over `gh api`, i.e. merging, deleting branches, and
           # reading secrets - far beyond opening a draft PR. Because the action
-          # authenticates as the Claude GitHub App rather than GITHUB_TOKEN, a
-          # PR it opens does trigger ci.yml.
+          # authenticates as the Claude GitHub App rather than GITHUB_TOKEN, the
+          # ci.yml run for a PR it opens starts without waiting for approval.
           claude_args: |
             --model ${{ vars.CLAUDE_PIPELINE_MODEL || 'claude-opus-5' }}
             --max-turns 200
