@@ -322,23 +322,29 @@ describe("Claude security audit privilege contract", () => {
     // audit just as an expired one does. The permission has to be probed too.
     assert.match(
       gate,
-      /security-advisories\?state=draft/,
+      /security-advisories\?state=\$\{STATE\}/,
       "expected the Gate to probe advisory access, not just token liveness",
     );
+    // Only unpublished states prove access: a published advisory is public, so
+    // probing it would pass for a caller holding no credential at all. Closed
+    // is probed beside draft because a fully triaged backlog has no drafts
+    // left, and a drafts-only probe then refuses a working token.
+    assert.match(gate, /^\s*for STATE in draft closed; do$/m);
 
-    // The probe must read drafts, not merely reach the endpoint. This repository
-    // is public, so the advisories endpoint answers 200 with an empty list to a
-    // caller holding no credential at all; a check that accepted any 2xx would
-    // pass for precisely the mis-scoped token it exists to catch.
-    const zeroCheck = '"$DRAFTS" = "0"';
+    // The probe must read advisories, not merely reach the endpoint. This
+    // repository is public, so the advisories endpoint answers 200 with an empty
+    // list to a caller holding no credential at all; a check that accepted any
+    // 2xx would pass for precisely the mis-scoped token it exists to catch.
+    assert.match(gate, /VISIBLE=\$\(\(VISIBLE \+ COUNT\)\)/);
+    const zeroCheck = '"$VISIBLE" = "0"';
     assert.ok(
       gate.includes(zeroCheck),
-      "expected the Gate to test the draft count it read",
+      "expected the Gate to test the advisory count it read",
     );
     assert.match(
       gate.slice(gate.indexOf(zeroCheck), gate.indexOf(zeroCheck) + 400),
       /exit 1/,
-      "seeing zero draft advisories must fail the gate",
+      "seeing no unpublished advisories must fail the gate",
     );
 
     // The preflight is only worth having if it stops the job: reaching the agent
