@@ -1,0 +1,122 @@
+# TEMPORARY probe for #199 — removed before this PR is ready for review.
+#
+# Answers two questions the Review responder design depends on:
+#   1. Can the job token reply to and resolve a review thread, and with which
+#      permissions?
+#   2. Which actor does a run dispatched with the job token report?
+#
+# It only ever touches a review thread it creates itself on this branch's PR.
+name: Responder probe (temporary)
+
+on:
+  push:
+    branches: [chore/review-responder]
+    paths: [.github/workflows/responder-probe.yml]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  resolve-with-pr-write:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Create, reply to and resolve a probe thread
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          OWNER="${GITHUB_REPOSITORY%/*}"
+          NAME="${GITHUB_REPOSITORY#*/}"
+          PR=""
+          for _ in $(seq 1 24); do
+            PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REF_NAME" --json number --jq '.[0].number // empty')
+            [ -n "$PR" ] && break
+            sleep 5
+          done
+          test -n "$PR"
+          echo "PR: $PR"
+
+          CID=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/comments" \
+            -f body='Probe finding (temporary, #199).' \
+            -f commit_id="$GITHUB_SHA" \
+            -f path='.github/workflows/responder-probe.yml' \
+            -F line=1 -f side=RIGHT --jq .id)
+          echo "created review comment $CID"
+
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/comments/$CID/replies" \
+            -f body='Probe reply.' --jq '"reply posted: \(.id) by \(.user.login)"'
+
+          THREADS=$(gh api graphql \
+            -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100){nodes{id isResolved isOutdated comments(first:1){nodes{databaseId author{login __typename}}}}}}}}' \
+            -f o="$OWNER" -f r="$NAME" -F n="$PR")
+          echo "$THREADS" | jq -c '.data.repository.pullRequest.reviewThreads.nodes[]'
+          TID=$(echo "$THREADS" | jq -r --argjson cid "$CID" \
+            '.data.repository.pullRequest.reviewThreads.nodes[] | select(.comments.nodes[0].databaseId == $cid) | .id')
+          test -n "$TID"
+
+          gh api graphql \
+            -f query='mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{isResolved}}}' \
+            -f t="$TID"
+          echo "RESULT: resolved with pull-requests: write only"
+
+  resolve-with-contents-write:
+    needs: resolve-with-pr-write
+    if: failure() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+      contents: write
+    steps:
+      - name: Retry the resolve with contents write as well
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          OWNER="${GITHUB_REPOSITORY%/*}"
+          NAME="${GITHUB_REPOSITORY#*/}"
+          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REF_NAME" --json number --jq '.[0].number')
+          TID=$(gh api graphql \
+            -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{body}}}}}}}' \
+            -f o="$OWNER" -f r="$NAME" -F n="$PR" \
+            --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | select(.comments.nodes[0].body | startswith("Probe finding"))] | last | .id')
+          test -n "$TID"
+          gh api graphql \
+            -f query='mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{isResolved}}}' \
+            -f t="$TID"
+          echo "RESULT: resolved only with contents: write added"
+
+  dispatch-self:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch this workflow with the job token
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run responder-probe.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
+          echo "RESULT: dispatch accepted"
+
+  report-actor:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report who a dispatched run says it is
+        env:
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          SENDER: ${{ github.event.sender.login }}
+          SENDER_TYPE: ${{ github.event.sender.type }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          echo "RESULT: actor=$ACTOR triggering_actor=$TRIGGERING_ACTOR sender=$SENDER sender_type=$SENDER_TYPE"
+          echo "workflow_ref=$WORKFLOW_REF sha=$GITHUB_SHA ref=$GITHUB_REF"
