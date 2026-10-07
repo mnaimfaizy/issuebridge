@@ -148,32 +148,40 @@ jobs:
           #
           # The status code cannot carry this signal: this repository is public, so
           # the advisories endpoint answers 200 to callers with no credential at all.
-          # Draft advisories are the discriminator. They are invisible without
-          # Repository security advisories access, so an unauthorised caller gets
-          # 200 with an empty list where an authorised one sees every draft.
-          # (Verified 2026-09-07: unauthenticated ?state=draft returned 200 and zero
-          # drafts; an authorised token returned 8.) per_page=1 because only
-          # existence matters, and `length` keeps advisory content out of the log.
-          DRAFTS="$(GH_TOKEN="$ADVISORY_TOKEN" gh api \
-            "repos/${GITHUB_REPOSITORY}/security-advisories?state=draft&per_page=1" \
-            --jq 'length' 2>"$TOKEN_ERR" || true)"
-          if ! printf '%s' "${DRAFTS:-}" | grep -qxE '[0-9]+'; then
-            STATUS="$(grep -oE 'HTTP [0-9]{3}' "$TOKEN_ERR" | head -n 1 | grep -oE '[0-9]{3}' || true)"
-            rm -f "$TOKEN_ERR"
-            echo "COPILOT_GITHUB_TOKEN could not list draft advisories (HTTP ${STATUS:-unknown})."
-            exit 1
-          fi
+          # Unpublished advisories are the discriminator. Drafts and closed
+          # advisories are both invisible without Repository security advisories
+          # access, so an unauthorised caller gets 200 with an empty list where an
+          # authorised one sees them. Both states are probed: a backlog that has
+          # been fully triaged has no drafts left, only closed advisories, and
+          # probing drafts alone then refuses a working token.
+          # (Verified 2026-10-07: unauthenticated ?state=draft and ?state=closed
+          # each returned 200 and nothing; an authorised token saw the closed
+          # ones.) per_page=1 because only existence matters, and `length` keeps
+          # advisory content out of the log.
+          VISIBLE=0
+          for STATE in draft closed; do
+            COUNT="$(GH_TOKEN="$ADVISORY_TOKEN" gh api \
+              "repos/${GITHUB_REPOSITORY}/security-advisories?state=${STATE}&per_page=1" \
+              --jq 'length' 2>"$TOKEN_ERR" || true)"
+            if ! printf '%s' "${COUNT:-}" | grep -qxE '[0-9]+'; then
+              STATUS="$(grep -oE 'HTTP [0-9]{3}' "$TOKEN_ERR" | head -n 1 | grep -oE '[0-9]{3}' || true)"
+              rm -f "$TOKEN_ERR"
+              echo "COPILOT_GITHUB_TOKEN could not list ${STATE} advisories (HTTP ${STATUS:-unknown})."
+              exit 1
+            fi
+            VISIBLE=$((VISIBLE + COUNT))
+          done
           rm -f "$TOKEN_ERR"
-          if [ "$DRAFTS" = "0" ]; then
+          if [ "$VISIBLE" = "0" ]; then
             # Deliberately fatal, and deliberately ambiguous in the message: the API
             # cannot distinguish these two causes. Failing here is loud and fixed in
             # minutes; the alternative is discarding a finished audit at publish.
-            echo "COPILOT_GITHUB_TOKEN sees no draft advisories. Either it lacks"
-            echo "Repository security advisories access, or this repository genuinely"
-            echo "has none — every full audit files one, so an empty list is unusual."
+            echo "COPILOT_GITHUB_TOKEN sees no draft or closed advisories. Either it"
+            echo "lacks Repository security advisories access, or this repository has"
+            echo "never had one — every full audit files one, so that is unusual."
             exit 1
           fi
-          echo "Advisory PAT accepted (live, and can read draft advisories)."
+          echo "Advisory PAT accepted (live, and can read unpublished advisories)."
 
           echo "proceed=true" >> "$GITHUB_OUTPUT"
 
