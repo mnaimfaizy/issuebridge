@@ -4,6 +4,10 @@ All notable changes to Issuebridge are documented here. Release notes are user-f
 
 ## [Unreleased]
 
+### Fixed
+
+- The repository you pick in Capture now stays picked: switching between title and body, holding to dictate, or clicking back into the Capture window no longer resets it to the default repository. (#197)
+
 ## [0.4.0] - 2026-10-06
 
 ### Added

@@ -21,6 +21,12 @@ import {
   WAV_RATE,
 } from "./pttAudio";
 import {
+  defaultRepo,
+  parseRepo,
+  type RepoIdDto,
+  repoKey,
+} from "./repoSelection";
+import {
   mapMicError,
   parseVoiceKind,
   VOICE_MESSAGES,
@@ -28,7 +34,6 @@ import {
 } from "./voiceMessages";
 import "./capture.css";
 
-type RepoIdDto = { owner: string; name: string };
 type PttField = "title" | "body";
 type VoiceUi = "idle" | "recording" | "transcribing";
 
@@ -37,18 +42,10 @@ type VoiceStatus =
   | { kind: "soft"; message: string }
   | { kind: "error"; voiceKind: VoiceKind; message: string };
 
-function repoKey(repo: RepoIdDto): string {
-  return `${repo.owner}/${repo.name}`;
-}
-
-function parseRepo(value: string): RepoIdDto | null {
-  const parts = value.split("/");
-  if (parts.length !== 2) return null;
-  const owner = parts[0]?.trim() ?? "";
-  const name = parts[1]?.trim() ?? "";
-  if (!owner || !name) return null;
-  return { owner, name };
-}
+type LoadedRepos = {
+  testingSet: RepoIdDto[];
+  lastUsed: RepoIdDto | null;
+};
 
 export function CapturePopup() {
   const [testingSet, setTestingSet] = useState<RepoIdDto[]>([]);
@@ -70,6 +67,13 @@ export function CapturePopup() {
   const pttTargetRef = useRef<PttField>("body");
   const [voiceTarget, setVoiceTarget] = useState<PttField>("body");
   const resetFieldsOnShowRef = useRef(true);
+  // Advanced whenever a Capture ends, so a transcript that lands after Esc or
+  // Save is recognised as belonging to the earlier Capture and dropped.
+  const captureIdRef = useRef(0);
+  // Raised by the two user repo handlers, cleared when a Capture begins: a
+  // pick made while the opening reload is in flight is this Capture's own
+  // choice and outranks the default applied after that reload.
+  const repoPickedRef = useRef(false);
 
   const recordingRef = useRef(false);
   const pttBusyRef = useRef(false);
@@ -83,9 +87,11 @@ export function CapturePopup() {
   const activePointerIdRef = useRef<number | null>(null);
   const titleStateRef = useRef(title);
   const bodyStateRef = useRef(body);
+  const selectedRepoRef = useRef(selectedRepo);
 
   titleStateRef.current = title;
   bodyStateRef.current = body;
+  selectedRepoRef.current = selectedRepo;
 
   const clearVoiceStatus = useCallback(() => {
     setVoiceStatus({ kind: "none" });
@@ -152,6 +158,11 @@ export function CapturePopup() {
     setVoiceUi("idle");
     await teardownAudio();
     // Next show should open a clean Capture form.
+    captureIdRef.current += 1;
+    // The in-flight transcript now belongs to an ended Capture, so stopPtt()
+    // drops it. Release the busy flag with it, or the next Capture's PTT
+    // silently no-ops until the orphaned apply_ptt settles.
+    pttBusyRef.current = false;
     resetFieldsOnShowRef.current = true;
     try {
       // Hide only — do not focus the main window.
@@ -171,48 +182,107 @@ export function CapturePopup() {
     });
   }, []);
 
-  const bootstrap = useCallback(async () => {
+  // Reload the Testing set, visible repos and hotkey. Safe to repeat at any
+  // time: it never changes the target repo or anything being composed (#197).
+  const refresh = useCallback(async (): Promise<LoadedRepos | null> => {
     try {
-      const [testingRepos, visible, last, hotkey] = await Promise.all([
+      const [loadedTestingSet, visible, lastUsed, hotkey] = await Promise.all([
         invoke<RepoIdDto[]>("testing_set"),
         invoke<RepoIdDto[]>("app_visible_repos"),
         invoke<RepoIdDto | null>("last_used_repo"),
         invoke<string>("ptt_hotkey").catch(() => "Ctrl+Alt+Shift+V"),
       ]);
-      setTestingSet(testingRepos);
+      setTestingSet(loadedTestingSet);
       setVisibleRepos(visible);
-      const next = last ?? testingRepos[0] ?? null;
-      setSelectedRepo(next);
-      setRepoFilter(next ? `${next.owner}/${next.name}` : "");
       setPttHotkey(hotkey);
-      if (resetFieldsOnShowRef.current) {
-        setTitle("");
-        setBody("");
-        resetFieldsOnShowRef.current = false;
-      }
-      setSaveStatus(null);
-      clearVoiceStatus();
-      setVoiceUi("idle");
-      window.requestAnimationFrame(() => {
-        titleRef.current?.focus();
-      });
+      return { testingSet: loadedTestingSet, lastUsed };
     } catch (error) {
       setSaveStatus(String(error));
+      return null;
     }
-  }, [clearVoiceStatus]);
+  }, []);
+
+  // Adopt the default repo when this Capture has none. A refresh never
+  // *changes* the target repo (#197), but having none is a dead end: Save
+  // Draft refuses until something picks one, and only a new Capture applies
+  // the default — so a failed opening reload, or an empty Testing set that
+  // Settings has since filled, would never recover. Filling a null selection
+  // cannot overrule a pick, and a part-typed filter is left alone.
+  const adoptDefaultRepo = useCallback((repos: LoadedRepos) => {
+    if (selectedRepoRef.current) return;
+    const next = defaultRepo(repos.lastUsed, repos.testingSet);
+    if (!next) return;
+    setSelectedRepo(next);
+    setRepoFilter((current) => (current.trim() ? current : repoKey(next)));
+  }, []);
+
+  // Begin a new Capture: default repo, empty fields, caret in Title.
+  const startCapture = useCallback(async () => {
+    // Lowered before the reload, so a focus event arriving while it is in
+    // flight refreshes instead of starting a second Capture over typed text.
+    resetFieldsOnShowRef.current = false;
+    repoPickedRef.current = false;
+    setTitle("");
+    setBody("");
+    setSaveStatus(null);
+    clearVoiceStatus();
+    setVoiceUi("idle");
+    window.requestAnimationFrame(() => {
+      titleRef.current?.focus();
+    });
+    const repos = await refresh();
+    // The chips stay clickable while the reload is in flight; a pick made
+    // there is deliberate and must not be overwritten by the default.
+    if (repoPickedRef.current) return;
+    // A failed reload has no default to offer; never carry the previous
+    // Capture's pick into this one. The next refresh adopts one (#197).
+    const next = repos ? defaultRepo(repos.lastUsed, repos.testingSet) : null;
+    setSelectedRepo(next);
+    setRepoFilter(next ? repoKey(next) : "");
+  }, [clearVoiceStatus, refresh]);
 
   useEffect(() => {
-    void bootstrap();
     const onFocus = () => {
-      void bootstrap();
+      // Checked first: a transcript still in flight belongs to the Capture
+      // that hideCapture() ended, and stopPtt() drops it.
+      if (resetFieldsOnShowRef.current) {
+        void startCapture();
+        return;
+      }
+      // A refocus mid-hold must not perturb recorder-backed state.
+      if (recordingRef.current || pttBusyRef.current) return;
+      void refresh().then((repos) => {
+        if (repos) adoptDefaultRepo(repos);
+      });
     };
+    onFocus();
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [bootstrap]);
+  }, [adoptDefaultRepo, refresh, startCapture]);
+
+  // The window-X path is hidden by Rust, which the webview cannot observe;
+  // the event lets it end the Capture like Esc does, so the next show opens
+  // clean instead of keeping this one's status line and caret (#197).
+  useEffect(() => {
+    let unlistenHidden: (() => void) | undefined;
+    void listen("capture-hidden", () => {
+      void hideCapture();
+    }).then((fn) => {
+      unlistenHidden = fn;
+    });
+    return () => {
+      unlistenHidden?.();
+    };
+  }, [hideCapture]);
 
   const stopPtt = useCallback(async () => {
     if (!recordingRef.current) return;
     recordingRef.current = false;
+    // Busy from release until the transcript lands, so a refocus cannot slip
+    // in between the end of recording and the start of transcription.
+    pttBusyRef.current = true;
+    const captureId = captureIdRef.current;
+    const isCurrentCapture = () => captureIdRef.current === captureId;
     clearMaxHold();
     stopTimerUi();
     setVoiceUi("idle");
@@ -222,51 +292,57 @@ export function CapturePopup() {
     const chunks = pcmChunksRef.current;
     pcmChunksRef.current = [];
     const target = pttTargetRef.current;
-    await teardownAudio();
-    // Restore the snapshotted field as soon as hold ends (before transcription).
-    focusField(target);
-
-    if (elapsed < MIN_PTT_MS || chunks.length === 0) {
-      showVoiceKind("empty_transcript");
-      return;
-    }
-
-    pttBusyRef.current = true;
-    setVoiceUi("transcribing");
     try {
-      const merged = mergeFloat32(chunks);
-      const pcm16k = downsample(merged, sampleRate, WAV_RATE);
-      const wavBase64 = bytesToBase64(encodeWav(pcm16k, WAV_RATE));
-      const currentText =
-        target === "title" ? titleStateRef.current : bodyStateRef.current;
+      await teardownAudio();
+      if (!isCurrentCapture()) return;
+      // Restore the snapshotted field as soon as hold ends (before transcription).
+      focusField(target);
 
-      console.info("[issuebridge] PTT transcribing…", {
-        elapsedMs: elapsed,
-        samples: pcm16k.length,
-        target,
-      });
-
-      const result = await invoke<{ text: string }>("apply_ptt", {
-        input: {
-          text: currentText,
-          wavBase64,
-        },
-      });
-
-      if (target === "title") {
-        setTitle(result.text);
-      } else {
-        setBody(result.text);
+      if (elapsed < MIN_PTT_MS || chunks.length === 0) {
+        showVoiceKind("empty_transcript");
+        return;
       }
-      focusField(target);
-      clearVoiceStatus();
-      showVoiceSoft(
-        `Added to the ${target === "title" ? "title" : "body"}. Edit freely, then Save Draft.`,
-      );
-    } catch (error) {
-      console.error("[issuebridge] apply_ptt failed", error);
-      showVoiceKind(parseVoiceKind(error));
-      focusField(target);
+
+      setVoiceUi("transcribing");
+      try {
+        const merged = mergeFloat32(chunks);
+        const pcm16k = downsample(merged, sampleRate, WAV_RATE);
+        const wavBase64 = bytesToBase64(encodeWav(pcm16k, WAV_RATE));
+        const currentText =
+          target === "title" ? titleStateRef.current : bodyStateRef.current;
+
+        console.info("[issuebridge] PTT transcribing…", {
+          elapsedMs: elapsed,
+          samples: pcm16k.length,
+          target,
+        });
+
+        const result = await invoke<{ text: string }>("apply_ptt", {
+          input: {
+            text: currentText,
+            wavBase64,
+          },
+        });
+
+        // Esc or Save ended that Capture while Whisper ran; its transcript
+        // must not land in the new one.
+        if (!isCurrentCapture()) return;
+        if (target === "title") {
+          setTitle(result.text);
+        } else {
+          setBody(result.text);
+        }
+        focusField(target);
+        clearVoiceStatus();
+        showVoiceSoft(
+          `Added to the ${target === "title" ? "title" : "body"}. Edit freely, then Save Draft.`,
+        );
+      } catch (error) {
+        console.error("[issuebridge] apply_ptt failed", error);
+        if (!isCurrentCapture()) return;
+        showVoiceKind(parseVoiceKind(error));
+        focusField(target);
+      }
     } finally {
       pttBusyRef.current = false;
       setVoiceUi("idle");
@@ -408,14 +484,18 @@ export function CapturePopup() {
   }, [hideCapture, saveDraft]);
 
   function selectRepo(repo: RepoIdDto) {
+    repoPickedRef.current = true;
     setSelectedRepo(repo);
-    setRepoFilter(`${repo.owner}/${repo.name}`);
+    setRepoFilter(repoKey(repo));
   }
 
   function onRepoFilterChange(value: string) {
     setRepoFilter(value);
     const parsed = parseRepo(value);
-    if (parsed) setSelectedRepo(parsed);
+    if (parsed) {
+      repoPickedRef.current = true;
+      setSelectedRepo(parsed);
+    }
   }
 
   const beyondSet = visibleRepos.filter(
