@@ -36,8 +36,7 @@ function readRoot(...parts) {
 function readBody(source, name) {
   const declared = source.indexOf(`const ${name} = `);
   assert.ok(declared !== -1, `expected a \`const ${name}\` binding`);
-  const open = source.indexOf("{", declared);
-  assert.ok(open !== -1, `expected a body for \`${name}\``);
+  const open = findBodyBrace(source, declared, name);
   const { end, code } = scanCode(source, open + 1);
   // The binding ends here: `}, [deps])` for a hook callback, `};` otherwise.
   assert.match(
@@ -46,6 +45,24 @@ function readBody(source, name) {
     `the body of \`${name}\` was cut short`,
   );
   return `{${code}}`;
+}
+
+/**
+ * The `{` opening the body of the binding declared at `from`.
+ *
+ * Not simply the first `{` after the name: in TypeScript that is often a type
+ * annotation — `async (opts: { force: boolean }) => {` — and slicing that
+ * would return a body holding no code at all, so every "must not contain"
+ * assertion below would pass by default. A body brace follows `=>` or the
+ * closing `)` of a parameter list.
+ */
+function findBodyBrace(source, from, name) {
+  for (let i = from; i < source.length; i += 1) {
+    if (source[i] !== "{") continue;
+    const before = source.slice(from, i).trimEnd();
+    if (before.endsWith("=>") || before.endsWith(")")) return i;
+  }
+  assert.fail(`expected a function body for \`${name}\``);
 }
 
 /** Scan code from `from` up to its unmatched `}`; return that index and the code without comments. */
@@ -66,6 +83,10 @@ function scanCode(source, from) {
       const after = skipLiteral(source, i);
       code += source.slice(i, after);
       i = after;
+    } else if (ch === "/" && opensRegex(code)) {
+      const after = skipRegex(source, i);
+      code += source.slice(i, after);
+      i = after;
     } else {
       if (ch === "{") depth += 1;
       if (ch === "}") {
@@ -77,6 +98,44 @@ function scanCode(source, from) {
     }
   }
   assert.fail("unbalanced braces");
+}
+
+/**
+ * Whether the `/` following `code` opens a regex literal rather than dividing.
+ * Decided from the preceding code: after a value — identifier, `)`, `]`, digit
+ * — a `/` divides; after an operator, a keyword or nothing it opens a pattern.
+ * A quote or bracket inside an unrecognised regex would otherwise be read as a
+ * string opener and swallow the rest of the body.
+ */
+function opensRegex(code) {
+  const before = code.trimEnd();
+  if (before === "") return true;
+  if (!/[\w$)\]]$/.test(before)) return true;
+  return /\b(return|typeof|case|in|of|new|delete|void|await|yield|do|else)$/.test(
+    before,
+  );
+}
+
+/** The index just past the regex literal opening at `start`, flags included. */
+function skipRegex(source, start) {
+  let inClass = false;
+  for (let i = start + 1; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === "\\") {
+      i += 1;
+    } else if (ch === "[") {
+      inClass = true;
+    } else if (ch === "]") {
+      inClass = false;
+    } else if (ch === "\n") {
+      break;
+    } else if (ch === "/" && !inClass) {
+      let after = i + 1;
+      while (after < source.length && /[a-z]/.test(source[after])) after += 1;
+      return after;
+    }
+  }
+  assert.fail("unterminated regex literal");
 }
 
 /** The index just past the string or template literal opening at `start`. */
@@ -222,6 +281,21 @@ describe("Capture popup (#39)", () => {
     const body = readBody(source, "sample");
     assert.match(body, /return a \+ b;/);
     assert.ok(!body.includes("stray"), "comments are dropped from the slice");
+  });
+
+  it("readBody slices the body, not a type annotation, and skips regexes", () => {
+    const source = [
+      "const sample = useCallback(async (opts: { force: boolean }) => {",
+      "  const label = String(opts.force).replace(/['{]/g, '');",
+      "  return label;",
+      "}, []);",
+    ].join("\n");
+    const body = readBody(source, "sample");
+    assert.match(body, /return label;/);
+    assert.ok(
+      !body.includes("force: boolean"),
+      "a parameter type annotation is not the body",
+    );
   });
 
   it("regaining focus refreshes repos but keeps the picked repo, caret and voice state (#197)", () => {
