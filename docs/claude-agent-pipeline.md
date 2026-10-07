@@ -77,12 +77,14 @@ round** then runs:
    started, oldest first, at most 20. Outdated threads are included. The reviewer's
    summary comment is background only — a note with no thread is not acted on.
 2. The Review responder reaches a **verdict** on each **finding**: **fixed** (one commit per
-   finding, after running the checks that cover it) or **declined**, with a reason.
+   finding, after running the checks that cover it), **addressed** (the branch already
+   handles it, so nothing changed) or **declined**, with a reason.
 3. The agent cannot push. Its commits are handed to a separate job on a fresh runner, which
    checks them, pushes them, and starts CI for the pushed commit.
 4. That job then replies on every finding that has a verdict. A thread is resolved only when
-   its fix changed the file the finding is on; a fix made elsewhere, and every declined
-   finding, gets a reply and stays open for you. One summary comment lists every outcome.
+   its fix changed the file the finding is on; a fix made elsewhere, and every addressed
+   or declined finding, gets a reply and stays open for you. One summary comment lists
+   every outcome.
 
 To steer a finding before a round, reply on its thread: replies from logins on
 `AGENT_PIPELINE_ALLOWLIST` reach the responder as **maintainer guidance** for that finding.
@@ -219,7 +221,7 @@ lives in [`CONTEXT.md`](../CONTEXT.md).
 | **Review responder** | The agent that addresses a review. |
 | **Finding** | One unresolved review thread started by the reviewer. |
 | **Work list** | The findings one response round is given. |
-| **Verdict** | The responder's outcome for a finding: **fixed** or **declined**. |
+| **Verdict** | The responder's outcome for a finding: **fixed**, **addressed** (already handled on the branch) or **declined**. |
 | **Maintainer guidance** | A reply on a finding's thread from a login on the allowlist. |
 | **Response round** | One run of the Review responder on a pull request. |
 | **Handoff** | In auto mode, a finished review starting a response round. |
