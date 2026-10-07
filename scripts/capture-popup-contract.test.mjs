@@ -453,6 +453,48 @@ describe("Capture popup (#39)", () => {
     );
   });
 
+  it("the display clamp never asks for a size the window may not take (#205)", () => {
+    // `min_inner_size` is a floor Windows enforces, so a clamp result below it
+    // never reaches the window: it is raised back, and the resize that comes
+    // back then reads as one the user made. A case pinning a sub-minimum size
+    // would pass against the pure function and certify a branch the running
+    // app does not have, so the floor is asserted over the whole input space
+    // rather than one example at a time.
+    const areas = [
+      undefined,
+      null,
+      { width: 1, height: 1 },
+      { width: 320, height: 240 },
+      { width: 911, height: 480 },
+      { width: 1280, height: 680 },
+      { width: 3840, height: 2000 },
+    ];
+    const frames = [
+      undefined,
+      { width: 16, height: 31 },
+      { width: 2, height: 4000 },
+    ];
+    const wants = [
+      { width: 0, height: 0 },
+      { width: 10, height: 10 },
+      { width: 460, height: 640 },
+      { width: 900, height: 1000 },
+      { width: 9000, height: 9000 },
+    ];
+    for (const area of areas) {
+      for (const frame of frames) {
+        for (const want of wants) {
+          const got = clampCaptureWindowSize(want, area, frame);
+          assert.ok(
+            got.width >= CAPTURE_MIN_SIZE.width &&
+              got.height >= CAPTURE_MIN_SIZE.height,
+            `clamping ${want.width}x${want.height} to area ${JSON.stringify(area)} frame ${JSON.stringify(frame)} gave ${got.width}x${got.height}, under the ${CAPTURE_MIN_SIZE.width}x${CAPTURE_MIN_SIZE.height} floor the window enforces`,
+          );
+        }
+      }
+    }
+  });
+
   it("a Capture size stored before #205 does not survive the upgrade (#205)", () => {
     // Restoring a stored size never worked before #205, so an existing install
     // holds the old 420x520 default: the window it happened to get, not a size
