@@ -159,7 +159,11 @@ without a label, but only after a review that a maintainer did label.
   The implementer keeps the App token as a convenience, not because CI needs it: a pull
   request opened with the job token gets its CI run too, held until it is approved. A
   possible follow-up is for the implementer to drop the App token the way the Review
-  responder does, pushing with the job token and approving that one held run.
+  responder does. That means a separate job on a fresh runner that pushes with the job
+  token and approves that one held run, as `publish` does, because the implementer's own
+  job runs builds and should not hold `actions: write`. Confirm first that opening a pull
+  request with the job token creates a held run: this repository has only seen it for a
+  push.
   Without the App token exchange, the action no longer skips a run whose workflow file
   differs from the default branch. That check was not a boundary here: anyone who can
   push a same-repository branch can already run an edited workflow with these secrets.

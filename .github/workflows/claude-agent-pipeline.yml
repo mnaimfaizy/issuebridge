@@ -17,12 +17,14 @@
 #
 # Why the implement job uses the action's tag mode rather than a `prompt`:
 # CI (.github/workflows/ci.yml) triggers on `pull_request` targeting main. For a PR opened
-# or pushed with GITHUB_TOKEN, GitHub creates the CI run but holds it until it is approved
-# (the Review responder approves its own; see docs/adr/0006). In tag mode the action pushes
-# and opens the PR as the Claude GitHub App, so CI starts with no approval step. The App
-# token is that convenience, not the only way to get CI. Do not add a `github_token:` input
-# to that step: nothing in this job approves a held run. The planner is the opposite case:
-# it never pushes, so it passes the job token and holds no id-token.
+# or pushed with GITHUB_TOKEN, GitHub creates the CI run but holds it until it is approved.
+# This repository has seen that for a push: the Review responder's `publish` job approves
+# the run for the commit it pushed (docs/adr/0006-review-responder-holds-no-write-credential.md).
+# For an opened PR it rests on GitHub's documentation. In tag mode the action pushes and
+# opens the PR as the Claude GitHub App, so CI starts with no approval step. The App token
+# is that convenience, not the only way to get CI. Do not add a `github_token:` input to
+# that step: nothing in this job approves a held run. The planner is the opposite case: it
+# never pushes, so it passes the job token and holds no id-token.
 
 name: Claude agent pipeline
 
