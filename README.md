@@ -29,11 +29,46 @@ npm run tauri dev
 # Preferred (matches release): point at your exchange Worker / cPanel PHP
 $env:ISSUEBRIDGE_OAUTH_EXCHANGE_URL = "https://oauth-exchange.example.workers.dev/"
 # Or local/dev only — never bake this into official NSIS builds:
-# $env:ISSUEBRIDGE_GITHUB_CLIENT_SECRET = "<secret from issuebridge-dev App / 1Password>"
+# $env:ISSUEBRIDGE_GITHUB_CLIENT_SECRET = "<secret from the issuebridge-dev App>"
 # optional; default client id is already set for issuebridge-dev
 # $env:ISSUEBRIDGE_GITHUB_CLIENT_ID = "Iv23li6Ao8URyrvbNZOq"
 npm run tauri dev
 ```
+
+#### Secrets from 1Password
+
+Instead of setting those variables by hand, keep them in a
+[1Password Environment](https://www.1password.dev/environments/) and let the 1Password CLI
+hand them to `tauri dev`:
+
+```powershell
+npm run dev:op
+```
+
+That runs `op run --environment <id> -- npm run tauri dev`. The values reach that one
+process and are masked in its output; nothing is written to disk, so there is no `.env`
+file to leak. Local development only — CI and Release builds use GitHub Actions secrets.
+
+One-time setup:
+
+1. Install the CLI: `winget install 1password-cli`. Environments need version 2.33.0 or
+   later; `op run --help` should list `--environment`.
+2. In the 1Password app, turn on Windows Hello, then **Settings → Developer → Integrate
+   with 1Password CLI**.
+3. **Developer → View Environments → New environment**. Add `ISSUEBRIDGE_OAUTH_EXCHANGE_URL`
+   (and `ISSUEBRIDGE_GITHUB_CLIENT_SECRET` only if you use the local-secret path).
+4. **Manage environment → Copy environment ID**, and store it in a variable on your own
+   machine — it is not committed to this repository:
+
+   ```powershell
+   [Environment]::SetEnvironmentVariable("ISSUEBRIDGE_OP_ENVIRONMENT", "<environment id>", "User")
+   ```
+
+5. Open a new terminal so the variable is visible, then `npm run dev:op`.
+
+To run any other command the same way: `node scripts/run-with-1password.mjs <command>`.
+1Password's locally mounted `.env` files are not an option here: they are Mac and Linux
+only.
 
 See [`services/oauth-exchange/README.md`](services/oauth-exchange/README.md) to deploy the exchange backend.
 Terminal should show `OAuth exchange ok`, then Install App → **Continue**.
