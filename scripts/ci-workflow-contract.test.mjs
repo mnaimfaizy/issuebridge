@@ -882,6 +882,12 @@ describe("Claude review response contract", () => {
     const outputAt = gate.indexOf('echo "proceed=true"');
     assert.ok(killAt !== -1 && actorAt !== -1 && modeAt !== -1);
     assert.ok(killAt < actorAt && actorAt < outputAt && modeAt < outputAt);
+    // A dispatch runs the workflow file of whatever ref it names, and this
+    // run's commit becomes the trusted one, so the gate holds the ref itself
+    // rather than relying on every caller to name the default branch.
+    const refAt = gate.indexOf('"$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH"');
+    assert.ok(refAt !== -1 && refAt < outputAt);
+    assert.ok(refAt < gate.indexOf('PR="$DISPATCHED_PR"'));
     // Fail-safe: only the exact string `auto` enables a handoff.
     assert.doesNotMatch(gate, /MODE[^\n]*(?:==|=)\s*"?manual/);
     // The label path keeps the allowlist; forks and closed PRs are refused.

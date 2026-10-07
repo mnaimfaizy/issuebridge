@@ -110,6 +110,12 @@ jobs:
             if [ "${MODE:-}" != "auto" ]; then
               stop "CLAUDE_REVIEW_RESPONSE_MODE!=auto — handoff refused."
             fi
+            # A dispatch runs the workflow file of the ref it names, and this
+            # run's commit becomes the trusted one below. The handoff names
+            # the default branch; hold it to that here as well.
+            if [ -z "$DEFAULT_BRANCH" ] || [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+              stop "Dispatch on $GITHUB_REF refused — only the default branch."
+            fi
             PR="$DISPATCHED_PR"
           else
             PR="$LABELED_PR"

@@ -647,6 +647,11 @@ describe("Review responder round intake", () => {
       "a/.git ./config",
       "GIT~1/config",
       "tab\tname",
+      "src/NUL",
+      "docs/con.md",
+      "Aux.tar.gz",
+      "a/COM1/b.txt",
+      "lpt9. ",
     ]) {
       assert.ok(
         isUnportablePath(path),
@@ -657,9 +662,35 @@ describe("Review responder round intake", () => {
       "src/a.ts",
       ".github/review-response/x.mjs",
       "docs/git.md",
+      "src/console.ts",
+      "docs/null-handling.md",
+      "com10.txt",
+      "src/auxiliary.rs",
     ]) {
       assert.ok(!isUnportablePath(path), `${path} must be allowed`);
     }
+  });
+
+  it("a hostile file name cannot break out of the published text", () => {
+    const path = "src/a`b|c\nd.ts";
+    const summary = renderSummary({
+      rows: [{ path, line: 1, outcome: "declined" }],
+      notAttempted: [],
+      dropped: 0,
+      startHead: "b".repeat(40),
+      runUrl: "u",
+    });
+    const row = summary.split("\n").find((line) => line.includes("src/a"));
+    assert.equal(row, "| `src/a?b?c?d.ts`:1 | Declined, left open | — |");
+    assert.match(
+      renderReply({
+        outcome: "fixed-elsewhere",
+        path,
+        commit: "a".repeat(40),
+        reply: "r",
+      }),
+      /does not touch `src\/a\?b\?c\?d\.ts` —/,
+    );
   });
 });
 

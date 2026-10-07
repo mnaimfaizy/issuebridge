@@ -109,7 +109,13 @@ export function isUnportablePath(path) {
   if (/[\\:\u0000-\u001f\u007f]/.test(path)) return true;
   return path.split("/").some((segment) => {
     const folded = segment.toLowerCase().replace(/[. ]+$/, "");
-    return folded === ".git" || folded === "git~1";
+    // Windows reserves these names with any extension: `nul.txt` is `NUL`.
+    const stem = folded.split(".")[0];
+    return (
+      folded === ".git" ||
+      folded === "git~1" ||
+      /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(stem)
+    );
   });
 }
 
@@ -262,10 +268,19 @@ function publicText(text) {
   return bounded.replace(/@(?=[A-Za-z0-9])/g, "@​");
 }
 
+/**
+ * A file path as an inline code span. The path is the pull request author's to
+ * choose, so the characters that would end the span or the table cell around
+ * it are replaced rather than trusted.
+ */
+function codeSpan(path) {
+  return `\`${path.replace(/[`|\r\n]/g, "?")}\``;
+}
+
 const REPLY_HEADING = {
   fixed: (row) => `**Fixed** in ${row.commit}.`,
   "fixed-elsewhere": (row) =>
-    `**Reported fixed** in ${row.commit}, which does not touch \`${row.path}\` — left open for a maintainer to confirm.`,
+    `**Reported fixed** in ${row.commit}, which does not touch ${codeSpan(row.path)} — left open for a maintainer to confirm.`,
   declined: () => "**Declined** — left open for a maintainer.",
 };
 
@@ -316,7 +331,7 @@ export function renderSummary({
       "| --- | --- | --- |",
       ...rows.map(
         (row) =>
-          `| \`${row.path}\`${row.line ? `:${row.line}` : ""} | ${
+          `| ${codeSpan(row.path)}${row.line ? `:${row.line}` : ""} | ${
             OUTCOME_LABEL[row.outcome]
           } | ${row.commit ? row.commit.slice(0, 7) : "—"} |`,
       ),
