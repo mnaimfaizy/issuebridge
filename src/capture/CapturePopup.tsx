@@ -70,6 +70,10 @@ export function CapturePopup() {
   // Advanced whenever a Capture ends, so a transcript that lands after Esc or
   // Save is recognised as belonging to the earlier Capture and dropped.
   const captureIdRef = useRef(0);
+  // Raised by the two user repo handlers, cleared when a Capture begins: a
+  // pick made while the opening reload is in flight is this Capture's own
+  // choice and outranks the default applied after that reload.
+  const repoPickedRef = useRef(false);
 
   const recordingRef = useRef(false);
   const pttBusyRef = useRef(false);
@@ -83,9 +87,11 @@ export function CapturePopup() {
   const activePointerIdRef = useRef<number | null>(null);
   const titleStateRef = useRef(title);
   const bodyStateRef = useRef(body);
+  const selectedRepoRef = useRef(selectedRepo);
 
   titleStateRef.current = title;
   bodyStateRef.current = body;
+  selectedRepoRef.current = selectedRepo;
 
   const clearVoiceStatus = useCallback(() => {
     setVoiceStatus({ kind: "none" });
@@ -196,11 +202,26 @@ export function CapturePopup() {
     }
   }, []);
 
+  // Adopt the default repo when this Capture has none. A refresh never
+  // *changes* the target repo (#197), but having none is a dead end: Save
+  // Draft refuses until something picks one, and only a new Capture applies
+  // the default — so a failed opening reload, or an empty Testing set that
+  // Settings has since filled, would never recover. Filling a null selection
+  // cannot overrule a pick, and a part-typed filter is left alone.
+  const adoptDefaultRepo = useCallback((repos: LoadedRepos) => {
+    if (selectedRepoRef.current) return;
+    const next = defaultRepo(repos.lastUsed, repos.testingSet);
+    if (!next) return;
+    setSelectedRepo(next);
+    setRepoFilter((current) => (current.trim() ? current : repoKey(next)));
+  }, []);
+
   // Begin a new Capture: default repo, empty fields, caret in Title.
   const startCapture = useCallback(async () => {
     // Lowered before the reload, so a focus event arriving while it is in
     // flight refreshes instead of starting a second Capture over typed text.
     resetFieldsOnShowRef.current = false;
+    repoPickedRef.current = false;
     setTitle("");
     setBody("");
     setSaveStatus(null);
@@ -210,8 +231,11 @@ export function CapturePopup() {
       titleRef.current?.focus();
     });
     const repos = await refresh();
+    // The chips stay clickable while the reload is in flight; a pick made
+    // there is deliberate and must not be overwritten by the default.
+    if (repoPickedRef.current) return;
     // A failed reload has no default to offer; never carry the previous
-    // Capture's pick into this one.
+    // Capture's pick into this one. The next refresh adopts one (#197).
     const next = repos ? defaultRepo(repos.lastUsed, repos.testingSet) : null;
     setSelectedRepo(next);
     setRepoFilter(next ? repoKey(next) : "");
@@ -227,12 +251,14 @@ export function CapturePopup() {
       }
       // A refocus mid-hold must not perturb recorder-backed state.
       if (recordingRef.current || pttBusyRef.current) return;
-      void refresh();
+      void refresh().then((repos) => {
+        if (repos) adoptDefaultRepo(repos);
+      });
     };
     onFocus();
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [refresh, startCapture]);
+  }, [adoptDefaultRepo, refresh, startCapture]);
 
   const stopPtt = useCallback(async () => {
     if (!recordingRef.current) return;
@@ -443,6 +469,7 @@ export function CapturePopup() {
   }, [hideCapture, saveDraft]);
 
   function selectRepo(repo: RepoIdDto) {
+    repoPickedRef.current = true;
     setSelectedRepo(repo);
     setRepoFilter(repoKey(repo));
   }
@@ -450,7 +477,10 @@ export function CapturePopup() {
   function onRepoFilterChange(value: string) {
     setRepoFilter(value);
     const parsed = parseRepo(value);
-    if (parsed) setSelectedRepo(parsed);
+    if (parsed) {
+      repoPickedRef.current = true;
+      setSelectedRepo(parsed);
+    }
   }
 
   const beyondSet = visibleRepos.filter(

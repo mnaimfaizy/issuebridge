@@ -294,6 +294,19 @@ describe("Capture popup (#39)", () => {
     assert.match(startCapture, /setSelectedRepo\(next\)/);
     assert.match(startCapture, /setRepoFilter\(/);
 
+    // A pick made while that reload is in flight is the user's, not the
+    // previous Capture's, so the default must not land on top of it.
+    assert.match(startCapture, /repoPickedRef\.current = false/);
+    assert.match(startCapture, /if \(repoPickedRef\.current\) return/);
+
+    // Having no repo at all is a dead end — Save Draft refuses and only a new
+    // Capture applies the default — so a reload may fill a null selection.
+    // That is the one repo change a refocus is allowed to make.
+    const adopt = readBody(popup, "adoptDefaultRepo");
+    assert.match(adopt, /if \(selectedRepoRef\.current\) return/);
+    assert.match(adopt, /defaultRepo\(/);
+    assert.match(onFocus, /adoptDefaultRepo\(/);
+
     // Caret is only stolen by a new Capture, never by a plain refocus.
     assert.equal(
       popup.split("titleRef.current?.focus()").length - 1,
@@ -309,8 +322,8 @@ describe("Capture popup (#39)", () => {
     for (const setter of ["setSelectedRepo(", "setRepoFilter("]) {
       assert.equal(
         popup.split(setter).length - 1,
-        handlers.length + 1,
-        `${setter} belongs to startCapture plus the two user handlers`,
+        handlers.length + 2,
+        `${setter} belongs to startCapture and adoptDefaultRepo plus the two user handlers`,
       );
     }
   });
