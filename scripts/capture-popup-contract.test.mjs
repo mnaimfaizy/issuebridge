@@ -338,6 +338,12 @@ describe("Capture popup (#39)", () => {
     // The orphaned transcript must not leave the next Capture's PTT wedged.
     assert.match(hideCapture, /pttBusyRef\.current = false/);
 
+    // Closing the window with X ends the Capture too: Rust prevents the close,
+    // hides, and says so, because the webview cannot see that hide.
+    const rust = readRoot("src-tauri", "src", "adapters", "capture_window.rs");
+    assert.match(rust, /emit\(["']capture-hidden["']/);
+    assert.match(popup, /listen\(["']capture-hidden["']/);
+
     const stopPtt = readBody(popup, "stopPtt");
     // Busy from release, not from transcription: no refocus window between.
     const busyAt = stopPtt.indexOf("pttBusyRef.current = true");

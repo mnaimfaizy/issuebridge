@@ -260,6 +260,21 @@ export function CapturePopup() {
     return () => window.removeEventListener("focus", onFocus);
   }, [adoptDefaultRepo, refresh, startCapture]);
 
+  // The window-X path is hidden by Rust, which the webview cannot observe;
+  // the event lets it end the Capture like Esc does, so the next show opens
+  // clean instead of keeping this one's status line and caret (#197).
+  useEffect(() => {
+    let unlistenHidden: (() => void) | undefined;
+    void listen("capture-hidden", () => {
+      void hideCapture();
+    }).then((fn) => {
+      unlistenHidden = fn;
+    });
+    return () => {
+      unlistenHidden?.();
+    };
+  }, [hideCapture]);
+
   const stopPtt = useCallback(async () => {
     if (!recordingRef.current) return;
     recordingRef.current = false;

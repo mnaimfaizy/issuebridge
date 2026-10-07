@@ -4,7 +4,7 @@
 //! deadlock WebView2 and leave a frozen blank window. Prefer the async command path,
 //! or [`show_capture_window_detached`] from tray / hotkey handlers.
 
-use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
 pub fn show_capture_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("capture") {
@@ -34,6 +34,10 @@ pub fn show_capture_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String>
     window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
+            // Closing with X ends the Capture, same as Esc. The webview cannot
+            // see this hide, so tell it: without the event the next show keeps
+            // the ended Capture's fields, status line and caret.
+            let _ = window_for_close.emit("capture-hidden", ());
             let _ = window_for_close.hide();
         }
     });
