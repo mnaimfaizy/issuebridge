@@ -1,9 +1,7 @@
 # TEMPORARY probe for #199 — removed before this PR merges.
 #
-# A miniature of the token-free responder: an unprivileged job commits and
-# hands the commit over as a bundle; a second job on a fresh runner verifies
-# it, pushes it with the job token, and dispatches CI. Reports what GitHub
-# does with a job-token push and with dispatched CI on a pull request branch.
+# Can a workflow approve, with the job token, the pull_request run that GitHub
+# holds back after a job-token push?
 name: Responder probe (temporary)
 
 on:
@@ -14,75 +12,24 @@ on:
 permissions: {}
 
 jobs:
-  commit:
+  approve:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: read
-    outputs:
-      start: ${{ steps.make.outputs.start }}
-      bundle: ${{ steps.make.outputs.bundle }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Commit locally and bundle
-        id: make
-        run: |
-          set -euo pipefail
-          START=$(git rev-parse HEAD)
-          git config user.name "claude[bot]"
-          git config user.email "41898282+claude[bot]@users.noreply.github.com"
-          git commit -q --allow-empty -m "chore: probe commit for the review responder (#199)"
-          git bundle create "$RUNNER_TEMP/round.bundle" "$START..HEAD"
-          echo "bundle bytes: $(wc -c < "$RUNNER_TEMP/round.bundle")"
-          {
-            echo "start=$START"
-            echo "bundle=$(base64 -w0 "$RUNNER_TEMP/round.bundle")"
-          } >> "$GITHUB_OUTPUT"
-
-  push:
-    needs: commit
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
       actions: write
-      pull-requests: read
+      contents: read
     env:
       GH_TOKEN: ${{ github.token }}
-      START: ${{ needs.commit.outputs.start }}
-      BUNDLE: ${{ needs.commit.outputs.bundle }}
-      BRANCH: ${{ github.ref_name }}
+      HELD_RUN: "37572227645"
     steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Verify the bundle, push with the job token, dispatch CI
+      - name: Try to approve the held run with the job token
         run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$START"
-          printf '%s' "$BUNDLE" | base64 -d > "$RUNNER_TEMP/round.bundle"
-          git bundle verify "$RUNNER_TEMP/round.bundle"
-          git -c fetch.fsckObjects=true fetch --no-tags "$RUNNER_TEMP/round.bundle" HEAD
-          TIP=$(git rev-parse FETCH_HEAD)
-          git merge-base --is-ancestor "$START" "$TIP"
-          echo "RESULT: bundle fetched, tip=$TIP, commits=$(git rev-list --count "$START..$TIP")"
-
-          AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH" \
-            push origin "$TIP:refs/heads/$BRANCH"
-          echo "RESULT: pushed with the job token"
-
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
-          echo "RESULT: CI dispatched"
-
-          sleep 45
-          echo "RESULT: runs for $TIP"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$TIP" \
-            --jq '.workflow_runs[] | "  \(.name) event=\(.event) status=\(.status) conclusion=\(.conclusion) actor=\(.actor.login)"'
-          echo "RESULT: check runs for $TIP"
-          gh api "repos/$GITHUB_REPOSITORY/commits/$TIP/check-runs" \
-            --jq '.check_runs[] | "  \(.name) status=\(.status) app=\(.app.slug)"'
-          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --json number,headRefOid --jq '.[0] | "\(.number) head=\(.headRefOid)"')
-          echo "RESULT: PR $PR"
+          set -uo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$HELD_RUN" --jq '"before: status=\(.status) conclusion=\(.conclusion)"'
+          if gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$HELD_RUN/approve"; then
+            echo "RESULT: approve accepted for the job token"
+          else
+            echo "RESULT: approve refused for the job token"
+          fi
+          sleep 10
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$HELD_RUN" --jq '"after: status=\(.status) conclusion=\(.conclusion)"'
