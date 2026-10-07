@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   namedStep,
+  runBlock,
   stripShellComments,
   trackedSymlinkTarget,
   unreviewedEntries,
@@ -84,6 +85,30 @@ const REVIEWED_REVIEWER_TOOLS = new Set([
   "mcp__github_inline_comment__create_inline_comment",
 ]);
 const REVIEWED_IMPLEMENTER_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
+
+// The Review responder edits, builds and commits on a pull request branch. It
+// is the implementer's decision made again for a second job, so it carries its
+// own lists: the implementer's build and read-only git rules, plus the two
+// rules that let it commit. It holds no `gh` rule of any kind — replies and
+// thread resolution belong to the publish job — and no push rule, because the
+// workflow pushes after checking what the commits touch.
+const REVIEWED_RESPONDER_BASH_RULES = new Set([
+  "Bash(npm:*)",
+  "Bash(cargo:*)",
+  "Bash(git status:*)",
+  "Bash(git diff:*)",
+  "Bash(git log:*)",
+  "Bash(git add:*)",
+  "Bash(git commit:*)",
+]);
+const REVIEWED_RESPONDER_TOOLS = new Set([
+  "Read",
+  "Glob",
+  "Grep",
+  "Edit",
+  "Write",
+  "MultiEdit",
+]);
 
 /** Every `uses:` step in one workflow, with its ref and trailing version comment. */
 function actionUses(workflowName) {
@@ -818,11 +843,242 @@ describe("Claude code review contract", () => {
   });
 });
 
+describe("Claude review response contract", () => {
+  const responder = () =>
+    stripShellComments(readWorkflow("claude-review-response.yml"));
+  const reviewerWorkflow = () =>
+    stripShellComments(readWorkflow("claude-code-review.yml"));
+  const AGENT_STEP = "Run review responder (Claude Code)";
+
+  it("starts from the label or the reviewer's dispatch, never a fork-reachable trigger", () => {
+    const yml = responder();
+
+    assert.match(yml, /pull_request:\s*\n\s*types:\s*\[labeled\]/);
+    assert.match(yml, /^\s*workflow_dispatch:/m);
+    assert.doesNotMatch(yml, /^\s*pull_request_target:/m);
+    assert.doesNotMatch(yml, /^\s*workflow_run:/m);
+    assert.match(yml, /github\.event\.label\.name == 'agent:address-review'/);
+    assert.match(yml, /vars\.CLAUDE_REVIEW_RESPONSE_ENABLED/);
+    assert.match(yml, /vars\.AGENT_PIPELINE_ALLOWLIST/);
+    // No workflow-level grant: each job names what it holds.
+    assert.match(yml, /^permissions: \{\}$/m);
+  });
+
+  it("refuses a dispatch unless it is the reviewer's handoff in auto mode", () => {
+    const gate = runBlock(namedStep(jobBlock(responder(), "gate"), "Gate"));
+
+    // The kill switch is the first decision the gate makes.
+    const killAt = gate.search(/"\$\{ENABLED:-\}" != "true"/);
+    const actorAt = gate.indexOf('"$ACTOR" != "github-actions[bot]"');
+    const modeAt = gate.search(/"\$\{MODE:-\}" != "auto"/);
+    const outputAt = gate.indexOf('echo "proceed=true"');
+    assert.ok(killAt !== -1 && actorAt !== -1 && modeAt !== -1);
+    assert.ok(killAt < actorAt && actorAt < outputAt && modeAt < outputAt);
+    // Fail-safe: only the exact string `auto` enables a handoff.
+    assert.doesNotMatch(gate, /MODE[^\n]*(?:==|=)\s*"?manual/);
+    // The label path keeps the allowlist; forks and closed PRs are refused.
+    assert.match(gate, /"\$u_trim" = "\$ACTOR"/);
+    assert.match(gate, /\.head\.repo\.full_name\)" != "\$GITHUB_REPOSITORY"/);
+    assert.match(gate, /\.state\)" != "open"/);
+    // The PR number is the only caller-supplied value; it must be digits.
+    assert.match(gate, /"" \| \*\[!0-9\]\*\)/);
+  });
+
+  it("every responder allowlist entry is reviewed, and none is gh or push", () => {
+    const agent = namedStep(jobBlock(responder(), "respond"), AGENT_STEP);
+    const allowed = agent.match(/--allowedTools "([^"]*)"/)?.[1] ?? "";
+
+    assert.ok(allowed.length > 0, "expected an explicit tool allowlist");
+    assert.deepEqual(
+      unreviewedEntries(allowed, {
+        reviewedBash: REVIEWED_RESPONDER_BASH_RULES,
+        reviewedTools: REVIEWED_RESPONDER_TOOLS,
+      }),
+      [],
+      "responder allowlist has an entry no one has signed off on",
+    );
+    // Replies, resolution, merging and labels all go through gh; the agent
+    // holds none of it. Pushing is the workflow's, after it checks the commits.
+    assert.doesNotMatch(allowed, /Bash\(gh[ :)]/);
+    assert.doesNotMatch(allowed, /git push|git-push/);
+    assert.doesNotMatch(allowed, /mcp__/);
+  });
+
+  it("only the respond job holds an agent, and it is not handed the job token", () => {
+    const yml = responder();
+    const respond = jobBlock(yml, "respond");
+
+    for (const job of ["gate", "publish"]) {
+      const block = jobBlock(yml, job);
+      assert.doesNotMatch(block, /anthropics\/claude-code-action@/);
+      assert.doesNotMatch(block, /id-token:/);
+      assert.doesNotMatch(block, /CLAUDE_CODE_OAUTH_TOKEN/);
+    }
+    const agent = namedStep(respond, AGENT_STEP);
+    assert.doesNotMatch(agent, /github_token:/);
+    assert.doesNotMatch(agent, /track_progress:/);
+    assert.match(agent, /^\s+allowed_bots: github-actions\s*$/m);
+    // The job token in the agent's job can only read.
+    assert.match(respond, /contents: read/);
+    assert.match(respond, /pull-requests: read/);
+    assert.doesNotMatch(respond, /(?:contents|pull-requests|actions): write/);
+  });
+
+  it("never persists checkout credentials", () => {
+    const yml = responder();
+    const checkouts = yml.match(/uses: actions\/checkout@/g) ?? [];
+
+    assert.equal(checkouts.length, 2);
+    assert.equal(
+      (yml.match(/persist-credentials: false/g) ?? []).length,
+      checkouts.length,
+    );
+  });
+
+  it("stages the trusted script and extracts the work list before any PR code runs", () => {
+    const respond = jobBlock(responder(), "respond");
+    const stage = namedStep(
+      respond,
+      "Stage the trusted response script outside the agent workspace",
+    );
+    const stageShell = runBlock(stage);
+
+    // From the commit object, never the checked-out pull request tree.
+    assert.match(
+      stageShell,
+      /git show "\$TRUSTED_SHA:\.github\/review-response\/review-response\.mjs"/,
+    );
+    assert.match(stageShell, /test -n "\$TRUSTED_SHA"/);
+    assert.match(stageShell, /test -s "\$STAGED\/review-response\.mjs"/);
+    assert.doesNotMatch(stageShell, /\bcp\b/);
+    assert.match(stageShell, /"\$\(git rev-parse HEAD\)" != "\$HEAD_SHA"/);
+
+    const order = [
+      "- name: Stage the trusted response script outside the agent workspace",
+      "- name: Extract the work list",
+      "- uses: actions/setup-node@",
+      "- name: Install frontend deps",
+      `- name: ${AGENT_STEP}`,
+      "- name: Push the round's commits",
+      "- name: Collect the response file",
+    ].map((heading) => respond.indexOf(heading));
+    assert.ok(
+      order.every((at) => at !== -1),
+      "expected every responder step",
+    );
+    assert.deepEqual(
+      order,
+      [...order].sort((a, b) => a - b),
+      "trusted steps must run before the toolchain executes pull request code",
+    );
+
+    // Every step that touches the work list runs the staged copy.
+    const extract = runBlock(namedStep(respond, "Extract the work list"));
+    assert.match(
+      extract,
+      /SCRIPT="\$RUNNER_TEMP\/review-response\/review-response\.mjs"/,
+    );
+    assert.match(extract, /check-protected --instruction-only/);
+    assert.doesNotMatch(extract, /node \.github\//);
+  });
+
+  it("pushes only added commits that stay out of protected paths, never forced", () => {
+    const push = runBlock(
+      namedStep(jobBlock(responder(), "respond"), "Push the round's commits"),
+    );
+
+    assert.match(push, /git merge-base --is-ancestor "\$HEAD_SHA" HEAD/);
+    const checkAt = push.search(/review-response\.mjs" check-protected\s*$/m);
+    const pushAt = push.indexOf("git push origin");
+    assert.ok(checkAt !== -1 && pushAt !== -1 && checkAt < pushAt);
+    assert.match(push, /^git push origin "HEAD:refs\/heads\/\$HEAD_REF"$/m);
+    assert.doesNotMatch(push, /--force|-f\b|\+HEAD|\|\|/);
+    assert.match(push, /^set -euo pipefail$/m);
+  });
+
+  it("publishes from trusted code on a runner the agent never touched", () => {
+    const yml = responder();
+    const publish = jobBlock(yml, "publish");
+
+    assert.match(publish, /needs: \[gate, respond\]/);
+    // Resolving a review thread is refused without contents: write.
+    assert.match(publish, /contents: write/);
+    assert.match(publish, /pull-requests: write/);
+    assert.match(publish, /ref: \$\{\{ needs\.gate\.outputs\.trusted_sha \}\}/);
+    // No pull request ref is ever checked out here.
+    assert.doesNotMatch(publish, /head_ref/);
+    // The agent's response arrives as data, in the environment.
+    assert.match(
+      publish,
+      /RESPONSE: \$\{\{ needs\.respond\.outputs\.response \}\}/,
+    );
+    assert.match(
+      publish,
+      /node \.github\/review-response\/review-response\.mjs publish/,
+    );
+    // Third-party steps would run with contents: write.
+    assert.deepEqual(
+      [...publish.matchAll(/uses: (\S+)@/g)].map(([, action]) => action),
+      ["actions/checkout"],
+    );
+  });
+
+  it("only the handoff job can start workflows, and it names the default branch", () => {
+    const yml = reviewerWorkflow();
+    const handoff = jobBlock(yml, "handoff");
+    const review = jobBlock(yml, "review");
+
+    assert.equal((yml.match(/actions: write/g) ?? []).length, 1);
+    assert.match(handoff, /actions: write/);
+    assert.doesNotMatch(review, /actions:/);
+    assert.doesNotMatch(workflowPermissions(yml), /actions:/);
+    assert.doesNotMatch(handoff, /anthropics\/claude-code-action@/);
+    assert.doesNotMatch(handoff, /CLAUDE_CODE_OAUTH_TOKEN/);
+
+    // Only after a review that actually ran, and only in auto mode.
+    assert.match(handoff, /needs\.review\.outputs\.reviewed == 'true'/);
+    assert.match(handoff, /vars\.CLAUDE_REVIEW_RESPONSE_ENABLED == 'true'/);
+    assert.match(handoff, /vars\.CLAUDE_REVIEW_RESPONSE_MODE == 'auto'/);
+    assert.match(review, /reviewed: \$\{\{ steps\.gate\.outputs\.proceed \}\}/);
+
+    // The decision script comes from the PR base, not the PR.
+    assert.match(
+      handoff,
+      /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/,
+    );
+    assert.match(handoff, /persist-credentials: false/);
+    const shell = runBlock(
+      namedStep(handoff, "Hand off to the Review responder"),
+    );
+    assert.match(
+      shell,
+      /gh workflow run claude-review-response\.yml \\\n\s+--repo "\$GITHUB_REPOSITORY" --ref "\$DEFAULT_BRANCH" -f pr="\$PR"/,
+    );
+  });
+
+  it("review and response share one concurrency group per pull request", () => {
+    const shared =
+      "format('claude-code-review-{0}', github.event.pull_request.number";
+    for (const yml of [responder(), reviewerWorkflow()]) {
+      const concurrency = yml.slice(
+        yml.search(/^concurrency:/m),
+        yml.search(/^permissions:/m),
+      );
+      assert.ok(concurrency.includes(shared));
+      assert.match(concurrency, /cancel-in-progress: false/);
+      // A run for an unrelated label gets its own group, so it cannot evict
+      // a real round waiting in the shared one.
+      assert.match(concurrency, /-idle-\{0\}', github\.run_id\)/);
+    }
+  });
+});
+
 describe("Claude workflow supply-chain contract", () => {
   for (const workflowName of [
     "claude-security-audit.yml",
     "claude-agent-pipeline.yml",
     "claude-code-review.yml",
+    "claude-review-response.yml",
   ]) {
     it(`${workflowName} pins claude-code-action to a commit SHA`, () => {
       const yml = readWorkflow(workflowName);
@@ -874,14 +1130,23 @@ const JOB_TOKEN_AGENT_STEPS = [
   },
 ];
 
-// The one agent step that keeps the Claude App token: it pushes and opens the
-// PR, and GitHub starts no CI for a PR opened with GITHUB_TOKEN. It already
-// runs npm and cargo, so it is a separate, already-accepted trust decision.
-const APP_TOKEN_AGENT_STEP = {
-  workflow: "claude-agent-pipeline.yml",
-  job: "implement",
-  step: "Run implementer (Claude Code)",
-};
+// The agent steps that keep the Claude App token, because what they push must
+// start CI and GitHub starts none for a push or a PR made with GITHUB_TOKEN.
+// Both already run npm and cargo, so each is a separate, deliberately accepted
+// trust decision (docs/adr/0006-review-responder-app-token.md). A third has to
+// be added here by name.
+const APP_TOKEN_AGENT_STEPS = [
+  {
+    workflow: "claude-agent-pipeline.yml",
+    job: "implement",
+    step: "Run implementer (Claude Code)",
+  },
+  {
+    workflow: "claude-review-response.yml",
+    job: "respond",
+    step: "Run review responder (Claude Code)",
+  },
+];
 
 const AGENT_ACTION_USE = /uses: anthropics\/claude-code-action@/;
 
@@ -894,7 +1159,7 @@ describe("Claude agent credential contract", () => {
   );
 
   it("accounts for every claude-code-action step in every workflow", () => {
-    const expected = [...JOB_TOKEN_AGENT_STEPS, APP_TOKEN_AGENT_STEP];
+    const expected = [...JOB_TOKEN_AGENT_STEPS, ...APP_TOKEN_AGENT_STEPS];
     for (const [workflow, code] of workflows) {
       const listed = expected.filter((s) => s.workflow === workflow);
       assert.equal(
@@ -950,16 +1215,29 @@ describe("Claude agent credential contract", () => {
     });
   }
 
-  it("keeps the OIDC grant to the job that needs the Claude App token", () => {
-    const { workflow, job, step } = APP_TOKEN_AGENT_STEP;
-    const code = workflows.get(workflow);
+  it("keeps the OIDC grant to the jobs that need the Claude App token", () => {
+    for (const { workflow, job, step } of APP_TOKEN_AGENT_STEPS) {
+      const code = workflows.get(workflow);
 
-    assert.doesNotMatch(namedStep(code, step), /github_token:/);
-    assert.match(jobBlock(code, job), /id-token:\s*write/);
+      assert.doesNotMatch(namedStep(code, step), /github_token:/);
+      assert.match(jobBlock(code, job), /id-token:\s*write/);
+      // The grant sits on the job, never on the workflow, so no other job in
+      // the same file inherits it.
+      assert.doesNotMatch(workflowPermissions(code), /id-token:/);
+      assert.equal(
+        [...code.matchAll(/id-token:\s*write/g)].length,
+        1,
+        `only ${job} may grant id-token in ${workflow}`,
+      );
+    }
     const grants = [...workflows.values()].flatMap((yml) => [
       ...yml.matchAll(/id-token:\s*write/g),
     ]);
-    assert.equal(grants.length, 1, `only ${job} may grant id-token`);
+    assert.equal(
+      grants.length,
+      APP_TOKEN_AGENT_STEPS.length,
+      "id-token is granted only by the listed App-token jobs",
+    );
   });
 });
 
