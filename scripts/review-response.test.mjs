@@ -275,6 +275,64 @@ describe("Review responder publication plan", () => {
     );
   });
 
+  it("an already-addressed finding gets a reply and is never resolved", () => {
+    // Even naming a real commit of the round on the finding's own file: the
+    // verdict claims no change, so nothing it carries can resolve the thread.
+    const { rows } = planPublication(
+      workList,
+      [
+        {
+          thread_id: "T1",
+          verdict: "addressed",
+          reply: "handled",
+          commit: sha,
+        },
+      ],
+      commits,
+    );
+    assert.equal(rows[0].outcome, "addressed");
+    assert.equal(rows[0].commit, undefined);
+
+    const body = renderReply(rows[0]);
+    assert.match(body, /^\*\*Already addressed\*\* on the branch/);
+    assert.match(body, /left open for a maintainer to confirm/);
+
+    const summary = renderSummary({
+      rows,
+      notAttempted: [],
+      dropped: 0,
+      startHead: "b".repeat(40),
+      runUrl: "u",
+    });
+    assert.match(
+      summary,
+      /0 fixed and resolved, 1 left open with a reply, 2 left untouched/,
+    );
+    assert.match(summary, /\| Already addressed, left open \| — \|/);
+  });
+
+  it("the response file accepts the three verdicts and no other", () => {
+    for (const verdict of ["fixed", "addressed", "declined"]) {
+      assert.equal(
+        parseResponse(
+          JSON.stringify({
+            findings: [{ thread_id: "T1", verdict, reply: "r" }],
+          }),
+        )[0].verdict,
+        verdict,
+      );
+    }
+    assert.throws(
+      () =>
+        parseResponse(
+          JSON.stringify({
+            findings: [{ thread_id: "T1", verdict: "resolved", reply: "r" }],
+          }),
+        ),
+      /must be fixed, addressed or declined/,
+    );
+  });
+
   it("drops verdicts for threads that were not on the work list", () => {
     const { rows, dropped } = planPublication(
       workList,

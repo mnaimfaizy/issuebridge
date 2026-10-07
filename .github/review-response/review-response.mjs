@@ -170,6 +170,13 @@ export function buildWorkList(
   };
 }
 
+/**
+ * The verdicts an agent may give. `addressed` means the branch already handles
+ * the finding and the round changed nothing for it — a claim with no commit of
+ * the round's behind it, so like `declined` it is replied to and left open.
+ */
+const VERDICTS = new Set(["fixed", "addressed", "declined"]);
+
 /** The agent's response file. Throws on anything but the documented shape. */
 export function parseResponse(text) {
   let parsed;
@@ -188,8 +195,10 @@ export function parseResponse(text) {
         throw new Error(`findings[${index}].${key} must be a non-empty string`);
       }
     }
-    if (entry.verdict !== "fixed" && entry.verdict !== "declined") {
-      throw new Error(`findings[${index}].verdict must be fixed or declined`);
+    if (!VERDICTS.has(entry.verdict)) {
+      throw new Error(
+        `findings[${index}].verdict must be fixed, addressed or declined`,
+      );
     }
     if (entry.commit !== undefined && typeof entry.commit !== "string") {
       throw new Error(`findings[${index}].commit must be a string`);
@@ -208,7 +217,8 @@ export function parseResponse(text) {
  *
  * `roundCommits` maps the sha of every commit this round pushed to the paths
  * it touched — the commits the publish job itself received and pushed, never
- * "whatever is on the branch now". A "fixed" verdict has to name one of them.
+ * "whatever is on the branch now". A "fixed" verdict has to name one of them;
+ * "addressed" and "declined" claim no commit, so neither can resolve anything.
  * The thread is resolved only if that commit touches the file the finding is
  * on; a fix claimed in some other file is replied to and left open, so a
  * resolved thread always means something changed where the reviewer pointed.
@@ -229,8 +239,8 @@ export function planPublication(workList, response, roundCommits) {
     };
     const entry = verdicts.get(item.thread_id);
     if (!entry) return { ...base, outcome: "no-verdict" };
-    if (entry.verdict === "declined") {
-      return { ...base, outcome: "declined", reply: entry.reply };
+    if (entry.verdict !== "fixed") {
+      return { ...base, outcome: entry.verdict, reply: entry.reply };
     }
     const sha = resolveCommit(entry.commit, roundCommits);
     if (!sha) return { ...base, outcome: "unverified" };
@@ -257,7 +267,7 @@ function resolveCommit(claimed, roundCommits) {
 }
 
 /** Outcomes that get a reply on the thread. Only `fixed` is also resolved. */
-const REPLIED = new Set(["fixed", "fixed-elsewhere", "declined"]);
+const REPLIED = new Set(["fixed", "fixed-elsewhere", "addressed", "declined"]);
 
 /** Agent-written text, made safe to post: bounded, and unable to ping anyone. */
 function publicText(text) {
@@ -281,6 +291,8 @@ const REPLY_HEADING = {
   fixed: (row) => `**Fixed** in ${row.commit}.`,
   "fixed-elsewhere": (row) =>
     `**Reported fixed** in ${row.commit}, which does not touch ${codeSpan(row.path)} — left open for a maintainer to confirm.`,
+  addressed: () =>
+    "**Already addressed** on the branch — left open for a maintainer to confirm.",
   declined: () => "**Declined** — left open for a maintainer.",
 };
 
@@ -291,6 +303,7 @@ export function renderReply(row) {
 const OUTCOME_LABEL = {
   fixed: "Fixed, resolved",
   "fixed-elsewhere": "Reported fixed in another file, left open",
+  addressed: "Already addressed, left open",
   declined: "Declined, left open",
   unverified: "Claimed fixed, not verified — left untouched",
   "no-verdict": "No verdict — left untouched",
@@ -324,6 +337,7 @@ export function renderSummary({
     lines.push(
       `${count("fixed")} fixed and resolved, ${count(
         "fixed-elsewhere",
+        "addressed",
         "declined",
       )} left open with a reply, ${count("unverified", "no-verdict")} left untouched.`,
       "",
@@ -410,6 +424,9 @@ Your job is to address each finding in the work list below, and nothing else.
 For each finding, reach one verdict:
 
 - fixed — you changed the code so the finding no longer holds.
+- addressed — the branch already handles the finding, so you changed nothing.
+  Say which existing code or commit handles it. Use this, not declined, when
+  the finding was right and someone has since dealt with it.
 - declined — you did not change the code, and you can say why: the finding is
   wrong, out of scope for this pull request, a judgement call a maintainer
   should make, or it needs a file you may not change.
@@ -417,7 +434,8 @@ For each finding, reach one verdict:
 Rules:
 
 1. Verify before you fix. Read the code a finding points at; reviewers are
-   sometimes wrong. An outdated finding may already be handled — check.
+   sometimes wrong. An outdated finding may already be handled — check, and
+   answer "addressed" if it is.
 2. One commit per fixed finding. Stage only the files you changed for it, by
    path (\`git add <path>...\`), never \`git add -A\` or \`git add .\`. Commit
    messages follow .agents/skills/commit/SKILL.md. Never merge, rebase or
@@ -451,6 +469,11 @@ commit it. It is the only thing you report with — replies are posted for you:
     },
     {
       "thread_id": "<thread_id from the work list>",
+      "verdict": "addressed",
+      "reply": "<what on the branch already handles it>"
+    },
+    {
+      "thread_id": "<thread_id from the work list>",
       "verdict": "declined",
       "reply": "<why it is declined>"
     }
@@ -460,7 +483,7 @@ commit it. It is the only thing you report with — replies are posted for you:
 Replies are posted publicly on the review thread. Keep each to a short
 paragraph, say what changed rather than how hard it was, and never include
 tokens, environment values or file contents from outside the repository.
-Write the file even if you declined everything. A finding left out of it is
+Write the file even if you changed nothing. A finding left out of it is
 reported as having no verdict.
 
 <untrusted_review_findings>
