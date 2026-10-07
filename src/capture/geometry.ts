@@ -27,6 +27,10 @@ export const CAPTURE_MIN_SIZE: CaptureWindowSize = {
  * to get, not a size anyone chose. Honouring it now would reopen Capture too
  * small for its own content, which is exactly what #205 reports, so it is
  * dropped in favour of `CAPTURE_DEFAULT_SIZE`.
+ *
+ * Judged per dimension, because a pre-#205 resize was stored even though it was
+ * never applied: widening the cramped popup to see the clipped chips and leaving
+ * the height alone stores a width the user chose next to a height they did not.
  */
 const CAPTURE_PRE_RESTORE_SIZE: CaptureWindowSize = {
   width: 420,
@@ -43,19 +47,38 @@ export function readCaptureWindowSize(): CaptureWindowSize {
     if (!Number.isFinite(width) || !Number.isFinite(height)) {
       return { ...CAPTURE_DEFAULT_SIZE };
     }
-    if (
-      width <= CAPTURE_PRE_RESTORE_SIZE.width &&
-      height <= CAPTURE_PRE_RESTORE_SIZE.height
-    ) {
-      return { ...CAPTURE_DEFAULT_SIZE };
-    }
     return {
-      width: Math.max(CAPTURE_MIN_SIZE.width, Math.round(width)),
-      height: Math.max(CAPTURE_MIN_SIZE.height, Math.round(height)),
+      width: storedDimension(
+        width,
+        CAPTURE_PRE_RESTORE_SIZE.width,
+        CAPTURE_DEFAULT_SIZE.width,
+        CAPTURE_MIN_SIZE.width,
+      ),
+      height: storedDimension(
+        height,
+        CAPTURE_PRE_RESTORE_SIZE.height,
+        CAPTURE_DEFAULT_SIZE.height,
+        CAPTURE_MIN_SIZE.height,
+      ),
     };
   } catch {
     return { ...CAPTURE_DEFAULT_SIZE };
   }
+}
+
+/**
+ * One dimension of a stored size, or `fallback` where the stored value is at or
+ * below what Capture opened at before the restore worked and so cannot have been
+ * chosen. Never below `min`, the floor the window enforces.
+ */
+function storedDimension(
+  value: number,
+  preRestore: number,
+  fallback: number,
+  min: number,
+): number {
+  if (value <= preRestore) return fallback;
+  return Math.max(min, Math.round(value));
 }
 
 /**

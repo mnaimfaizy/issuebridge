@@ -576,6 +576,19 @@ describe("Capture popup (#39)", () => {
       width: 900,
       height: 1000,
     });
+    // Each dimension is judged on its own. A resize was stored before #205 even
+    // though it was never applied, so a user who widened the cramped popup to
+    // stop the chips clipping — and left the height at the old default — has
+    // chosen the width and not the height. Taking the pair as one would keep
+    // that 520 and reopen Capture shorter than #205 declares necessary.
+    assert.deepEqual(readStoredSize('{"width":600,"height":520}'), {
+      width: 600,
+      height: CAPTURE_DEFAULT_SIZE.height,
+    });
+    assert.deepEqual(readStoredSize('{"width":420,"height":900}'), {
+      width: CAPTURE_DEFAULT_SIZE.width,
+      height: 900,
+    });
     // Nothing stored, or nonsense stored, opens at the default.
     assert.deepEqual(readStoredSize(null), CAPTURE_DEFAULT_SIZE);
     assert.deepEqual(readStoredSize("{"), CAPTURE_DEFAULT_SIZE);
