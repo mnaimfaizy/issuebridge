@@ -24,6 +24,11 @@ import {
   writeCaptureWindowSize,
 } from "./geometry";
 
+/** The same window size, give or take the rounding a DPI round-trip adds. */
+function isSameSize(a: CaptureWindowSize, b: CaptureWindowSize): boolean {
+  return Math.abs(a.width - b.width) <= 1 && Math.abs(a.height - b.height) <= 1;
+}
+
 export function CaptureApp() {
   const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
     readThemePreference(),
@@ -61,6 +66,16 @@ export function CaptureApp() {
     let unlisten: (() => void) | undefined;
     const win = getCurrentWindow();
 
+    // Read the stored size before the awaits below. A `Resized` event arriving
+    // while the restore is still in flight — window show, a DPI change, the
+    // user grabbing an edge — would otherwise persist the size Capture opened
+    // at over the stored one before it has been read, losing it for good.
+    const stored = readCaptureWindowSize();
+    // Set while the restore's own resize is outstanding, and only when the
+    // display clamp trimmed the stored size: that trim is a fit for this
+    // monitor, not a decision the user made, so it must not be written back.
+    let trimmedTo: CaptureWindowSize | null = null;
+
     void (async () => {
       // Restore the size the user last resized Capture to, trimmed to this
       // display so a size stored on a bigger monitor cannot open the popup
@@ -75,29 +90,37 @@ export function CaptureApp() {
       } catch {
         // No monitor info: fall back to the minimum clamp alone.
       }
-      const size = clampCaptureWindowSize(readCaptureWindowSize(), workArea);
+      const size = clampCaptureWindowSize(stored, workArea);
+      trimmedTo = isSameSize(size, stored) ? null : size;
       try {
         await win.setSize(new LogicalSize(size.width, size.height));
       } catch {
         // Ignore when not running under Tauri.
+        trimmedTo = null;
       }
     })();
 
     void (async () => {
       try {
         unlisten = await win.onResized(async ({ payload }) => {
+          let size = { width: payload.width, height: payload.height };
           try {
             const factor = await win.scaleFactor();
-            writeCaptureWindowSize({
+            size = {
               width: payload.width / factor,
               height: payload.height / factor,
-            });
+            };
           } catch {
-            writeCaptureWindowSize({
-              width: payload.width,
-              height: payload.height,
-            });
+            // No scale factor: the physical size is the best guess available.
           }
+          if (trimmedTo && isSameSize(size, trimmedTo)) {
+            trimmedTo = null;
+            // The restore's own resize, not the user's. Re-assert the stored
+            // size, in case an earlier event already overwrote it.
+            writeCaptureWindowSize(stored);
+            return;
+          }
+          writeCaptureWindowSize(size);
         });
       } catch {
         // Ignore when not running under Tauri.
