@@ -17,10 +17,9 @@ subscription. Replaces the Copilot pipeline archived at
 ### 1. Install the Claude GitHub App
 
 Install [github.com/apps/claude](https://github.com/apps/claude) on this repository. The
-implementer and the Review responder authenticate as this App for git operations, which is
-what makes CI fire on what they push. The planner, reviewer, and audit use the job's own
-`GITHUB_TOKEN` instead, so their comments appear as `github-actions[bot]` — as do the
-responder's replies, which a separate job posts.
+implementer authenticates as this App for git operations, which is what makes CI fire on
+Claude's pull requests. The planner, reviewer, audit and Review responder use the job's own
+`GITHUB_TOKEN` instead, so their comments appear as `github-actions[bot]`.
 
 ### 2. Mint a subscription token
 
@@ -79,21 +78,26 @@ round** then runs:
    summary comment is background only — a note with no thread is not acted on.
 2. The Review responder reaches a **verdict** on each **finding**: **fixed** (one commit per
    finding, after running the checks that cover it) or **declined**, with a reason.
-3. The workflow pushes the commits as the Claude App, so CI runs on them.
-4. A separate job replies on every finding that has a verdict. Fixed threads are resolved;
-   declined threads stay open for you. One summary comment lists every outcome.
+3. The agent cannot push. Its commits are handed to a separate job on a fresh runner, which
+   checks them, pushes them, and starts CI for the pushed commit.
+4. That job then replies on every finding that has a verdict. A thread is resolved only when
+   its fix changed the file the finding is on; a fix made elsewhere, and every declined
+   finding, gets a reply and stays open for you. One summary comment lists every outcome.
 
 To steer a finding before a round, reply on its thread: replies from logins on
 `AGENT_PIPELINE_ALLOWLIST` reach the responder as **maintainer guidance** for that finding.
 Everyone else's replies are dropped.
 
-A round is refused on fork pull requests, and on pull requests that change agent
-instruction files (`CLAUDE.md`, `AGENTS.md`, `.claude/`, `.agents/skills/`,
-`.github/agent-runtime/`, `.mcp.json`) — address those reviews by hand. Findings that need
-a change under `.github/workflows` are declined: the App cannot push workflow files.
+A round is refused on fork pull requests, on pull requests that do not target the default
+branch, on Dependabot pull requests, and on pull requests that change agent instruction
+files (`CLAUDE.md`, `AGENTS.md`, `.claude/`, `.agents/skills/`, `.github/agent-runtime/`,
+`.mcp.json`) — address those reviews by hand. Findings that need a change under
+`.github/workflows` are declined: the job token cannot push workflow files.
 
 If a round fails partway, only what it can prove is published: a finding is resolved only
-when its commit is on the branch. A missing response file changes no thread.
+when its commit was pushed by that round. A missing response file changes no thread. If
+anyone pushes to the branch while a round runs, or its commits fail the checks before the
+push, nothing is pushed and the summary says so.
 
 ### Auto mode
 
@@ -135,13 +139,10 @@ without a label, but only after a review that a maintainer did label.
   inspection only. Full mode (scheduled/dispatch, trusted default-branch code) adds
   read-only git subcommands. Lockfile scanners run as workflow steps on `full` only. This is tighter than the archived Copilot
   config, which granted `shell(git:*)`, `shell(cargo:*)`, and `shell(npm:*)`.
-- **Only the implementer and the Review responder hold the Claude App token**, because
-  what they push must start CI
-  ([ADR 0006](./adr/0006-review-responder-app-token.md)). The planner, reviewer, and audit
-  read third-party text and never push, so they authenticate GitHub with the job's
-  `GITHUB_TOKEN`, scoped by each job's `permissions:` block, and deny built-in reads of
-  `.git/`. Only those two jobs grant `id-token: write`. A contract test names both and
-  fails on a third.
+- **Only the implementer holds the Claude App token.** The planner, reviewer, audit and
+  Review responder authenticate GitHub with the job's `GITHUB_TOKEN`, scoped by each job's
+  `permissions:` block, and deny built-in reads of `.git/`. Only the implementer job
+  grants `id-token: write`. A contract test holds this.
   Without the App token exchange, the action no longer skips a run whose workflow file
   differs from the default branch. That check was not a boundary here: anyone who can
   push a same-repository branch can already run an edited workflow with these secrets.
@@ -150,14 +151,27 @@ without a label, but only after a review that a maintainer did label.
   reason, comment. It also restores `AGENTS.md`, `CLAUDE.md`, `.claude/` and the
   code-review skill from the PR base, so a PR cannot rewrite the instructions reviewing
   it.
-- **The Review responder never speaks on GitHub itself.** It holds no `gh` rule: it edits,
-  builds and commits, and writes a response file. Because it runs `npm` and `cargo` on pull
-  request code, nothing on its runner is trusted afterwards. A separate `publish` job, on a
-  fresh runner with only trusted code checked out, re-reads the review threads, accepts
-  verdicts only for threads that were on the work list, confirms each "fixed" commit was
-  pushed this round and stays out of instruction and workflow paths, and only then replies
-  and resolves. The work list itself is extracted before any pull request code runs, from
-  threads started by the reviewer; of the replies, only maintainer guidance is kept.
+- **The Review responder's agent holds no write credential**
+  ([ADR 0006](./adr/0006-review-responder-holds-no-write-credential.md)). To verify a fix it
+  builds pull request code, so anything in its job is within reach of that pull request's
+  dependencies and build scripts. The job therefore gets a read-only token and no
+  `id-token` grant, installs dependencies with lifecycle scripts off, never saves a cache,
+  and runs the agent's commands with credentials scrubbed from their environment. It holds
+  no `gh` rule and no push rule: it edits, builds and commits locally, and its commits leave
+  the runner as a git bundle.
+- **A separate job pushes and speaks for it, and trusts nothing it produced.** `publish` runs
+  on a fresh runner with only default-branch code checked out. It fetches the bundle as
+  objects — never checking it out — and pushes it only if it is a straight line of ordinary
+  commits on the commit the round started from, with no merge, symlink or submodule, and
+  touching no instruction file, workflow file, or path unsafe to check out on Windows. It
+  then re-reads the review threads, accepts verdicts only for threads that were on the work
+  list, and resolves a thread only when a commit it pushed itself changes the file the
+  finding is on. The work list is extracted before any pull request code runs, from threads
+  started by the reviewer; of the replies, only maintainer guidance is kept.
+- **CI on a round's commits is started deliberately.** GitHub holds the `pull_request` runs
+  of a push made with the job token until someone approves them. `publish` approves one run:
+  the CI workflow's, for exactly the commit it pushed. Nothing else such a push may queue
+  is started.
 - **Only the handoff job can start a workflow.** Auto mode dispatches the responder from a
   job of its own in the reviewer workflow, the only one holding `actions: write`, so that
   permission is never on the runner where the review agent read pull request code. It names
@@ -234,6 +248,11 @@ team setup would use an API key or workload identity federation instead.
 - **A response round is only as good as its checks.** The responder runs the repository's
   own checks before committing, and threads are resolved on the push rather than on CI
   turning green. A red CI run after a round is yours to notice; reopen the thread.
+- **The subscription token sits beside pull request code during a round.** The agent step has
+  to hold it while it builds. Dependency install scripts are off and the agent's commands
+  run with a scrubbed environment in a sandbox, but the action describes that scrub as
+  best-effort. The token can only make model requests; re-run `claude setup-token` to
+  revoke it.
 - **The reviewer is identified by its account, not its content.** A finding is any
   unresolved thread started by `github-actions[bot]`, which every workflow in this
   repository posts as. That is the same boundary as the plan comment: anyone who can run a

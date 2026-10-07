@@ -2,18 +2,22 @@
 /**
  * Trusted half of the Review responder (docs/claude-agent-pipeline.md).
  *
- * The responder agent edits and commits; it never talks to GitHub. This script
- * does, in steps the agent cannot reach:
+ * The responder agent edits and commits locally. It holds no credential that
+ * can write to GitHub, so everything that does is here, in steps the agent
+ * cannot reach:
  *
  *   extract          the work list a response round is given
  *   brief            the agent's instructions, with the work list fenced
- *   check-protected  refuse a pull request, or a round's commits, by the paths touched
+ *   check-protected  refuse a pull request by the paths it changes
+ *   receive-round    validate the commits a round hands over, before the push
+ *   release-ci       start the CI run GitHub holds back after a job-token push
  *   publish          reply on each finding, resolve the fixed ones, summarise
  *   handoff          auto mode: should a finished review start a round?
  *
- * `publish` runs in a job of its own, on a runner the agent never touched. It
- * trusts nothing the agent wrote: it reads the threads from GitHub again, and
- * the agent's response is only a claim to check against them.
+ * Everything from `receive-round` on runs in a job of its own, on a runner the
+ * agent never touched. It trusts nothing the agent produced: the commits are
+ * checked before they are pushed, the threads are read from GitHub again, and
+ * the agent's response is only a claim to check against both.
  */
 
 import { execFileSync } from "node:child_process";
@@ -26,8 +30,14 @@ export const SUMMARY_MARKER = "<!-- agent-review-response -->";
 /** A response round takes at most this many findings, oldest first. */
 export const MAX_FINDINGS = 20;
 
+/** One commit per fixed finding, so a round never legitimately exceeds this. */
+export const MAX_ROUND_COMMITS = MAX_FINDINGS;
+
 /** Auto mode stops handing off once a pull request has had this many rounds. */
 export const MAX_AUTO_ROUNDS = 2;
+
+/** The only workflow whose held run a round may start. */
+export const CI_WORKFLOW_PATH = ".github/workflows/ci.yml";
 
 const MAX_REPLY_CHARS = 4000;
 
@@ -50,8 +60,9 @@ function isReviewer(author) {
  * Paths a response round neither runs on nor commits to.
  *
  * Instruction files steer the agent itself, so a pull request that changes one
- * is addressed by hand. Workflow files are refused in a commit because the
- * Claude GitHub App cannot push them: one such commit would sink the whole push.
+ * is addressed by hand, and a round may not commit to one. Workflow files are
+ * refused in a round's commits because the job token cannot push them: one such
+ * commit would sink the whole push.
  */
 const INSTRUCTION_FILES = new Set([
   "CLAUDE.md",
@@ -81,6 +92,25 @@ export function isInstructionPath(path) {
 
 export function isWorkflowPath(path) {
   return isUnder(path, WORKFLOW_DIR);
+}
+
+function isProtectedPath(path) {
+  return isInstructionPath(path) || isWorkflowPath(path);
+}
+
+/**
+ * Paths that are harmless in a Linux object store and dangerous in a checkout
+ * elsewhere. The round's commits land on a branch that Windows users clone, so
+ * a path only some filesystems can tell from `.git`, or that names a drive or
+ * an alternate stream, is refused before it is pushed.
+ */
+export function isUnportablePath(path) {
+  // Backslash, colon, or any control character anywhere in the path.
+  if (/[\\:\u0000-\u001f\u007f]/.test(path)) return true;
+  return path.split("/").some((segment) => {
+    const folded = segment.toLowerCase().replace(/[. ]+$/, "");
+    return folded === ".git" || folded === "git~1";
+  });
 }
 
 function isUnder(path, dir) {
@@ -136,7 +166,13 @@ export function buildWorkList(
 
 /** The agent's response file. Throws on anything but the documented shape. */
 export function parseResponse(text) {
-  const parsed = JSON.parse(text);
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // The parser's own message quotes the input, and this one is published.
+    throw new Error("response is not valid JSON");
+  }
   if (!Array.isArray(parsed?.findings)) {
     throw new Error("response has no findings array");
   }
@@ -164,13 +200,16 @@ export function parseResponse(text) {
 /**
  * What to do on GitHub for each finding, given what can be proven.
  *
- * `newCommits` maps the sha of every commit the round pushed to the paths it
- * touched. A "fixed" verdict counts only if it names one of them and that
- * commit keeps out of instruction and workflow paths; otherwise the thread is
- * left exactly as it was. A verdict for a thread that was not on the work list
- * is dropped, so the agent cannot resolve what it was not given.
+ * `roundCommits` maps the sha of every commit this round pushed to the paths
+ * it touched — the commits the publish job itself received and pushed, never
+ * "whatever is on the branch now". A "fixed" verdict has to name one of them.
+ * The thread is resolved only if that commit touches the file the finding is
+ * on; a fix claimed in some other file is replied to and left open, so a
+ * resolved thread always means something changed where the reviewer pointed.
+ * A verdict for a thread that was not on the work list is dropped, so the
+ * agent cannot resolve what it was not given.
  */
-export function planPublication(workList, response, newCommits) {
+export function planPublication(workList, response, roundCommits) {
   const verdicts = new Map();
   for (const entry of response) {
     if (!verdicts.has(entry.thread_id)) verdicts.set(entry.thread_id, entry);
@@ -187,26 +226,32 @@ export function planPublication(workList, response, newCommits) {
     if (entry.verdict === "declined") {
       return { ...base, outcome: "declined", reply: entry.reply };
     }
-    const sha = resolveCommit(entry.commit, newCommits);
+    const sha = resolveCommit(entry.commit, roundCommits);
     if (!sha) return { ...base, outcome: "unverified" };
-    const paths = newCommits.get(sha);
-    if (paths.some((path) => isInstructionPath(path) || isWorkflowPath(path))) {
-      return { ...base, outcome: "unverified" };
-    }
-    return { ...base, outcome: "fixed", reply: entry.reply, commit: sha };
+    const paths = roundCommits.get(sha);
+    if (paths.some(isProtectedPath)) return { ...base, outcome: "unverified" };
+    return {
+      ...base,
+      outcome: paths.includes(item.path) ? "fixed" : "fixed-elsewhere",
+      reply: entry.reply,
+      commit: sha,
+    };
   });
   const known = new Set(workList.items.map((item) => item.thread_id));
   const dropped = [...verdicts.keys()].filter((id) => !known.has(id)).length;
   return { rows, dropped };
 }
 
-function resolveCommit(claimed, newCommits) {
+function resolveCommit(claimed, roundCommits) {
   if (!claimed || !/^[0-9a-f]{7,40}$/.test(claimed)) return null;
-  const matches = [...newCommits.keys()].filter((sha) =>
+  const matches = [...roundCommits.keys()].filter((sha) =>
     sha.startsWith(claimed),
   );
   return matches.length === 1 ? matches[0] : null;
 }
+
+/** Outcomes that get a reply on the thread. Only `fixed` is also resolved. */
+const REPLIED = new Set(["fixed", "fixed-elsewhere", "declined"]);
 
 /** Agent-written text, made safe to post: bounded, and unable to ping anyone. */
 function publicText(text) {
@@ -217,16 +262,20 @@ function publicText(text) {
   return bounded.replace(/@(?=[A-Za-z0-9])/g, "@​");
 }
 
+const REPLY_HEADING = {
+  fixed: (row) => `**Fixed** in ${row.commit}.`,
+  "fixed-elsewhere": (row) =>
+    `**Reported fixed** in ${row.commit}, which does not touch \`${row.path}\` — left open for a maintainer to confirm.`,
+  declined: () => "**Declined** — left open for a maintainer.",
+};
+
 export function renderReply(row) {
-  const heading =
-    row.outcome === "fixed"
-      ? `**Fixed** in ${row.commit}.`
-      : "**Declined** — left open for a maintainer.";
-  return `${heading}\n\n${publicText(row.reply)}\n\n_— Review responder_`;
+  return `${REPLY_HEADING[row.outcome](row)}\n\n${publicText(row.reply)}\n\n_— Review responder_`;
 }
 
 const OUTCOME_LABEL = {
   fixed: "Fixed, resolved",
+  "fixed-elsewhere": "Reported fixed in another file, left open",
   declined: "Declined, left open",
   unverified: "Claimed fixed, not verified — left untouched",
   "no-verdict": "No verdict — left untouched",
@@ -244,6 +293,7 @@ export function renderSummary({
   startHead,
   endHead,
   runUrl,
+  notes = [],
   failure,
 }) {
   const lines = [SUMMARY_MARKER, "", "## Review response", ""];
@@ -254,12 +304,13 @@ export function renderSummary({
       "No review thread was changed.",
     );
   } else {
-    const count = (outcome) =>
-      rows.filter((row) => row.outcome === outcome).length;
+    const count = (...outcomes) =>
+      rows.filter((row) => outcomes.includes(row.outcome)).length;
     lines.push(
-      `${count("fixed")} fixed, ${count("declined")} declined, ${
-        count("unverified") + count("no-verdict")
-      } left untouched.`,
+      `${count("fixed")} fixed and resolved, ${count(
+        "fixed-elsewhere",
+        "declined",
+      )} left open with a reply, ${count("unverified", "no-verdict")} left untouched.`,
       "",
       "| Finding | Outcome | Commit |",
       "| --- | --- | --- |",
@@ -284,13 +335,16 @@ export function renderSummary({
     }
     lines.push(
       "",
-      "Declined findings stay open: resolve them or reply with guidance and apply the label again. Apply `agent:review` for a fresh review.",
+      "Open findings are yours: resolve them, or reply with guidance and apply the label again. Apply `agent:review` for a fresh review.",
     );
   }
+  for (const note of notes) lines.push("", note);
   lines.push(
     "",
     `Round ran against ${startHead.slice(0, 7)}${
-      endHead && endHead !== startHead ? `, pushed up to ${endHead.slice(0, 7)}` : ""
+      endHead && endHead !== startHead
+        ? `, pushed up to ${endHead.slice(0, 7)}`
+        : ", pushed nothing"
     }. [Run](${runUrl})`,
   );
   return lines.join("\n");
@@ -310,6 +364,25 @@ export function countResponseRounds(comments) {
 export function handoffDecision({ findings, rounds }) {
   if (findings === 0) return "none";
   return rounds >= MAX_AUTO_ROUNDS ? "capped" : "dispatch";
+}
+
+/**
+ * The CI run GitHub is holding for a commit this round pushed, if there is one.
+ *
+ * A push made with the job token creates its `pull_request` runs in an
+ * approval-required state. Only the CI workflow's run, for exactly the pushed
+ * commit, is ever started: nothing else the push may have queued is approved.
+ */
+export function pickHeldCiRun(runs, sha) {
+  return (
+    runs.find(
+      (run) =>
+        run.head_sha === sha &&
+        run.event === "pull_request" &&
+        run.path === CI_WORKFLOW_PATH &&
+        run.conclusion === "action_required",
+    ) ?? null
+  );
 }
 
 export function renderBrief(workList, { pr, headRef }) {
@@ -332,18 +405,22 @@ Rules:
    sometimes wrong. An outdated finding may already be handled — check.
 2. One commit per fixed finding. Stage only the files you changed for it, by
    path (\`git add <path>...\`), never \`git add -A\` or \`git add .\`. Commit
-   messages follow .agents/skills/commit/SKILL.md.
+   messages follow .agents/skills/commit/SKILL.md. Never merge, rebase or
+   amend: only add commits on top of the branch as you found it.
 3. Before each commit, run the checks that cover what you touched:
    \`npm run lint\`, \`npm run typecheck\`, the relevant \`npm run test:*\`
    script, and for Rust \`cargo fmt\`, \`cargo clippy\` and \`cargo test\`
    with \`--manifest-path src-tauri/Cargo.toml\`. Do not commit a fix whose
    checks fail; decline the finding and say what failed instead.
-4. Do not push. The workflow pushes your commits after you finish.
+4. You cannot push, and must not try. Your commits are collected and pushed
+   for you after you finish.
 5. You may not change files under .github/workflows, nor CLAUDE.md, AGENTS.md,
-   .claude/, .agents/skills/, .github/agent-runtime/ or .mcp.json. Decline a
-   finding that needs one, and say so.
+   .claude/, .agents/skills/, .github/agent-runtime/ or .mcp.json, and you may
+   not add symlinks or submodules. Decline a finding that needs one, and say
+   so. A single commit that breaks this rule discards every commit you made.
 6. Stay inside the finding. No refactors, renames or features beyond what
-   addressing it requires.
+   addressing it requires. A finding is resolved only when your commit changes
+   the file it is on; a fix made elsewhere is left for a maintainer to confirm.
 7. If a command is denied, do not retry it; note the limitation and move on.
 
 When you are done, write review-response.json in the repository root. Do not
@@ -385,7 +462,114 @@ ${JSON.stringify(workList, null, 2)}
 }
 
 // ---------------------------------------------------------------------------
-// GitHub access. Everything above is pure; everything below shells out to gh.
+// The round's commits. Local git only, in a clone the agent never touched.
+// ---------------------------------------------------------------------------
+
+function git(cwd, args) {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+/**
+ * Take in the commits a round hands over as a git bundle, and return the tip
+ * to push — or throw, in which case nothing is pushed.
+ *
+ * The bundle is untrusted: the agent's runner executed pull request code. It
+ * is fetched as objects only, never checked out, and accepted only if it is a
+ * straight line of at most MAX_ROUND_COMMITS non-merge commits on top of
+ * `start` that add no symlink or submodule and touch no protected path.
+ * Returns each accepted commit with the paths it touched, oldest first.
+ */
+export function receiveRound({ cwd, bundle, start }) {
+  if (!/^[0-9a-f]{40}$/.test(start)) throw new Error("start is not a sha");
+  git(cwd, ["cat-file", "-e", `${start}^{commit}`]);
+  if (!readFileSync(bundle).subarray(0, 16).toString().startsWith("# v2 git bundle\n")) {
+    throw new Error("not a version 2 git bundle");
+  }
+  // The bundle names its tip HEAD; the refspec is ours, so no ref name in the
+  // bundle is honoured. fsck on the way in, with the tree-entry checks that
+  // default to warnings raised to errors: a malformed object is refused here
+  // rather than discovered by whoever fetches the branch later.
+  git(cwd, [
+    "-c",
+    "fetch.fsckObjects=true",
+    "-c",
+    "transfer.fsckObjects=true",
+    ...["hasDotgit", "hasDot", "hasDotdot", "zeroPaddedFilemode"].flatMap(
+      (id) => ["-c", `fetch.fsck.${id}=error`],
+    ),
+    "fetch",
+    "--quiet",
+    "--no-tags",
+    "--no-recurse-submodules",
+    "--no-auto-maintenance",
+    "--no-write-fetch-head",
+    bundle,
+    "+HEAD:refs/review-response/round",
+  ]);
+  const tip = git(cwd, ["rev-parse", "refs/review-response/round"]).trim();
+  if (tip === start) throw new Error("the round holds no new commit");
+
+  // Every commit reachable from the tip and not from start, oldest first.
+  // Requiring each to have exactly one parent, and that parent to be the one
+  // before it, admits only a straight line: no merge can smuggle in history.
+  const lines = git(cwd, [
+    "rev-list",
+    "--reverse",
+    "--parents",
+    `${start}..${tip}`,
+  ])
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  if (lines.length === 0 || lines.length > MAX_ROUND_COMMITS) {
+    throw new Error(`the round holds ${lines.length} commits`);
+  }
+  let previous = start;
+  const commits = [];
+  for (const line of lines) {
+    const [sha, ...parents] = line.split(" ");
+    if (parents.length !== 1 || parents[0] !== previous) {
+      throw new Error("the round is not a straight line on top of its start");
+    }
+    // Raw, NUL-delimited, renames off: every path as git stores it, with the
+    // mode it ends up with.
+    const fields = git(cwd, [
+      "diff-tree",
+      "-r",
+      "-z",
+      "--no-renames",
+      "--no-commit-id",
+      "--root",
+      sha,
+    ]).split("\0");
+    const paths = [];
+    for (let at = 0; at + 1 < fields.length; at += 2) {
+      const mode = fields[at].split(" ")[1];
+      const path = fields[at + 1];
+      if (mode === "120000" || mode === "160000") {
+        throw new Error("the round adds a symlink or a submodule");
+      }
+      if (isProtectedPath(path)) {
+        throw new Error("the round touches a protected path");
+      }
+      if (isUnportablePath(path)) {
+        throw new Error("the round touches a path that is unsafe to check out");
+      }
+      paths.push(path);
+    }
+    commits.push({ sha, paths });
+    previous = sha;
+  }
+  return { tip, commits };
+}
+
+// ---------------------------------------------------------------------------
+// GitHub access. Everything below shells out to gh.
 // ---------------------------------------------------------------------------
 
 function gh(args, input) {
@@ -403,6 +587,9 @@ function repository() {
   return { owner, name, slug: `${owner}/${name}` };
 }
 
+const COMMENT_FIELDS =
+  "pageInfo { hasNextPage endCursor } nodes { databaseId body createdAt author { login __typename } }";
+
 const THREADS_QUERY = `
 query($owner: String!, $name: String!, $pr: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -411,36 +598,54 @@ query($owner: String!, $name: String!, $pr: Int!, $after: String) {
         pageInfo { hasNextPage endCursor }
         nodes {
           id isResolved isOutdated path line originalLine
-          comments(first: 50) {
-            nodes { databaseId body createdAt author { login __typename } }
-          }
+          comments(first: 100) { ${COMMENT_FIELDS} }
         }
       }
     }
   }
 }`;
 
+const THREAD_COMMENTS_QUERY = `
+query($thread: ID!, $after: String) {
+  node(id: $thread) {
+    ... on PullRequestReviewThread {
+      comments(first: 100, after: $after) { ${COMMENT_FIELDS} }
+    }
+  }
+}`;
+
+function graphql(query, variables) {
+  const args = ["api", "graphql", "-f", `query=${query}`];
+  for (const [key, value] of Object.entries(variables)) {
+    if (value === null || value === undefined) continue;
+    args.push(typeof value === "number" ? "-F" : "-f", `${key}=${value}`);
+  }
+  return JSON.parse(gh(args)).data;
+}
+
 function fetchThreads(pr) {
   const { owner, name } = repository();
   const threads = [];
   let after = null;
   do {
-    const args = [
-      "api",
-      "graphql",
-      "-f",
-      `query=${THREADS_QUERY}`,
-      "-f",
-      `owner=${owner}`,
-      "-f",
-      `name=${name}`,
-      "-F",
-      `pr=${pr}`,
-    ];
-    if (after) args.push("-f", `after=${after}`);
-    const page = JSON.parse(gh(args)).data.repository.pullRequest.reviewThreads;
+    const page = graphql(THREADS_QUERY, { owner, name, pr, after }).repository
+      .pullRequest.reviewThreads;
     for (const node of page.nodes) {
-      threads.push({ ...node, comments: node.comments.nodes });
+      // Every reply, not a first page of them: maintainer guidance must not be
+      // losable by burying it under other people's replies.
+      const comments = [...node.comments.nodes];
+      let cursor = node.comments.pageInfo.hasNextPage
+        ? node.comments.pageInfo.endCursor
+        : null;
+      while (cursor) {
+        const more = graphql(THREAD_COMMENTS_QUERY, {
+          thread: node.id,
+          after: cursor,
+        }).node.comments;
+        comments.push(...more.nodes);
+        cursor = more.pageInfo.hasNextPage ? more.pageInfo.endCursor : null;
+      }
+      threads.push({ ...node, comments });
     }
     after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
   } while (after);
@@ -462,38 +667,34 @@ function fetchIssueComments(pr) {
   ).flat();
 }
 
-/** sha → touched paths, for every commit pushed since the round began. */
-function fetchNewCommits(startHead, endHead) {
-  const { slug } = repository();
-  const commits = new Map();
-  if (!endHead || endHead === startHead) return commits;
-  const compare = JSON.parse(
-    gh(["api", `repos/${slug}/compare/${startHead}...${endHead}`]),
-  );
-  // "ahead" means the branch only gained commits; anything else was a rewrite.
-  if (compare.status !== "ahead") return commits;
-  for (const { sha } of compare.commits) {
-    const files = JSON.parse(
-      gh(["api", "--paginate", "--slurp", `repos/${slug}/commits/${sha}`]),
-    ).flatMap((page) => page.files ?? []);
-    commits.set(
-      sha,
-      files.flatMap((file) =>
-        file.previous_filename
-          ? [file.filename, file.previous_filename]
-          : [file.filename],
-      ),
-    );
-  }
-  return commits;
-}
-
 function postComment(pr, body) {
   const { slug } = repository();
   gh(["pr", "comment", String(pr), "--repo", slug, "--body-file", "-"], body);
 }
 
-function publish({ pr, startHead, runUrl }) {
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Start the held CI run for `sha`. Returns whether one was found. */
+function releaseCi(sha) {
+  const { slug } = repository();
+  // GitHub creates the held run a few seconds after the push.
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const runs = JSON.parse(
+      gh(["api", `repos/${slug}/actions/runs?head_sha=${sha}&per_page=100`]),
+    ).workflow_runs;
+    const held = pickHeldCiRun(runs, sha);
+    if (held) {
+      gh(["api", "-X", "POST", `repos/${slug}/actions/runs/${held.id}/approve`]);
+      return true;
+    }
+    sleep(5000);
+  }
+  return false;
+}
+
+function publish({ pr, startHead, roundFile, runUrl, notes }) {
   const { slug } = repository();
   const summary = (fields) =>
     postComment(
@@ -504,9 +705,19 @@ function publish({ pr, startHead, runUrl }) {
         dropped: 0,
         startHead,
         runUrl,
+        notes,
         ...fields,
       }),
     );
+
+  // What this job pushed, as it recorded it — never read back from the branch,
+  // where anyone may have pushed since.
+  const round = roundFile
+    ? JSON.parse(readFileSync(roundFile, "utf8"))
+    : { tip: startHead, commits: [] };
+  const roundCommits = new Map(
+    round.commits.map(({ sha, paths }) => [sha, paths]),
+  );
 
   let response;
   try {
@@ -514,20 +725,15 @@ function publish({ pr, startHead, runUrl }) {
     if (text.trim() === "") throw new Error("the agent wrote no response file");
     response = parseResponse(text);
   } catch (error) {
-    summary({ failure: `${error.message}.` });
+    summary({ failure: `${error.message}.`, endHead: round.tip });
     throw error;
   }
 
   const workList = fetchWorkList(pr);
-  const endHead = JSON.parse(gh(["api", `repos/${slug}/pulls/${pr}`])).head.sha;
-  const { rows, dropped } = planPublication(
-    workList,
-    response,
-    fetchNewCommits(startHead, endHead),
-  );
+  const { rows, dropped } = planPublication(workList, response, roundCommits);
 
   for (const row of rows) {
-    if (row.outcome !== "fixed" && row.outcome !== "declined") continue;
+    if (!REPLIED.has(row.outcome)) continue;
     gh(
       [
         "api",
@@ -549,21 +755,26 @@ function publish({ pr, startHead, runUrl }) {
     }
   }
 
-  summary({ rows, notAttempted: workList.not_attempted, dropped, endHead });
+  summary({
+    rows,
+    notAttempted: workList.not_attempted,
+    dropped,
+    endHead: round.tip,
+  });
   const count = (outcome) =>
     rows.filter((row) => row.outcome === outcome).length;
   console.log(
-    `fixed=${count("fixed")} declined=${count("declined")} unverified=${count(
-      "unverified",
-    )} no-verdict=${count("no-verdict")} dropped=${dropped}`,
+    Object.keys(OUTCOME_LABEL)
+      .map((outcome) => `${outcome}=${count(outcome)}`)
+      .join(" ") + ` dropped=${dropped}`,
   );
 }
 
-function option(args, name) {
+function option(args, name, { optional = false } = {}) {
   const at = args.indexOf(`--${name}`);
   const value = at === -1 ? undefined : args[at + 1];
-  if (!value) throw new Error(`missing --${name}`);
-  return value;
+  if (!value && !optional) throw new Error(`missing --${name}`);
+  return value || null;
 }
 
 function prNumber(args) {
@@ -581,7 +792,9 @@ function main([command, ...args]) {
       break;
     }
     case "brief": {
-      const workList = JSON.parse(readFileSync(option(args, "work-list"), "utf8"));
+      const workList = JSON.parse(
+        readFileSync(option(args, "work-list"), "utf8"),
+      );
       writeFileSync(
         option(args, "out"),
         renderBrief(workList, {
@@ -593,28 +806,43 @@ function main([command, ...args]) {
     }
     case "check-protected": {
       // NUL-delimited paths on stdin, as `git diff --name-only -z` prints them.
-      // A pull request may change workflow files and still get a round; only
-      // the round's own commits may not, so that half is optional.
-      const instructionOnly = args.includes("--instruction-only");
+      // Asks only about instruction files: a pull request may change workflow
+      // files and still get a round.
       const refused = readFileSync(0, "utf8")
         .split("\0")
         .filter(Boolean)
-        .filter(
-          (path) =>
-            isInstructionPath(path) ||
-            (!instructionOnly && isWorkflowPath(path)),
-        );
+        .filter(isInstructionPath);
       if (refused.length > 0) {
         console.error(`refused paths:\n${refused.join("\n")}`);
         process.exitCode = 1;
       }
       break;
     }
+    case "receive-round": {
+      const round = receiveRound({
+        cwd: process.cwd(),
+        bundle: option(args, "bundle"),
+        start: option(args, "start"),
+      });
+      writeFileSync(option(args, "out"), JSON.stringify(round));
+      console.log(`tip=${round.tip} commits=${round.commits.length}`);
+      break;
+    }
+    case "release-ci": {
+      const started = releaseCi(option(args, "sha"));
+      console.log(started ? "started" : "not-found");
+      break;
+    }
     case "publish":
       publish({
         pr: prNumber(args),
         startHead: option(args, "start-head"),
+        roundFile: option(args, "round", { optional: true }),
         runUrl: option(args, "run-url"),
+        notes: (process.env.ROUND_NOTES ?? "")
+          .split("\n")
+          .map((note) => note.trim())
+          .filter(Boolean),
       });
       break;
     case "handoff": {

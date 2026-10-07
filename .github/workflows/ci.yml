@@ -11,10 +11,6 @@ on:
   push:
     branches:
       - main
-  # The Review responder pushes with the job token, and GitHub starts no
-  # pull_request run for such a push, so its publish job dispatches CI on the
-  # pull request branch instead (docs/claude-agent-pipeline.md).
-  workflow_dispatch:
 
 permissions:
   contents: read

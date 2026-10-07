@@ -7,17 +7,25 @@
  */
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import {
   buildWorkList,
   countResponseRounds,
   handoffDecision,
   isInstructionPath,
+  isUnportablePath,
   isWorkflowPath,
   MAX_AUTO_ROUNDS,
   MAX_FINDINGS,
+  MAX_ROUND_COMMITS,
   parseResponse,
+  pickHeldCiRun,
   planPublication,
+  receiveRound,
   renderBrief,
   renderReply,
   renderSummary,
@@ -330,7 +338,10 @@ describe("Review responder published text", () => {
     });
     assert.ok(summary.startsWith(`${SUMMARY_MARKER}\n`));
     assert.ok(!summary.includes("AGENT TEXT"));
-    assert.match(summary, /1 fixed, 1 declined, 0 left untouched/);
+    assert.match(
+      summary,
+      /1 fixed and resolved, 1 left open with a reply, 0 left untouched/,
+    );
     assert.match(summary, /not attempted/);
     assert.match(summary, /were ignored/);
   });
@@ -358,7 +369,7 @@ describe("Review responder published text", () => {
     assert.ok(open !== -1 && close > open);
     assert.ok(brief.indexOf('"thread_id": "T1"') > open);
     assert.ok(brief.indexOf('"thread_id": "T1"') < close);
-    assert.match(brief, /Do not push/);
+    assert.match(brief, /You cannot push/);
     assert.match(brief, /never `git add -A`/);
   });
 });
@@ -396,5 +407,284 @@ describe("Review responder auto handoff", () => {
       "capped",
     );
     assert.equal(handoffDecision({ findings: 0, rounds: 9 }), "none");
+  });
+});
+
+describe("Review responder verdicts are bound to the finding", () => {
+  const sha = "c".repeat(40);
+  const workList = buildWorkList([thread("T1")]);
+  const plan = (paths) =>
+    planPublication(
+      workList,
+      [{ thread_id: "T1", verdict: "fixed", reply: "r", commit: sha }],
+      new Map([[sha, paths]]),
+    ).rows[0];
+
+  it("resolves only when the commit changes the file the finding is on", () => {
+    assert.equal(plan(["src/a.ts"]).outcome, "fixed");
+    assert.equal(plan(["src/b.ts", "src/a.ts"]).outcome, "fixed");
+  });
+
+  it("leaves a fix made in another file open, with a reply", () => {
+    const row = plan(["src/unrelated.ts"]);
+    assert.equal(row.outcome, "fixed-elsewhere");
+    const body = renderReply(row);
+    assert.match(body, /^\*\*Reported fixed\*\*/);
+    assert.match(body, /does not touch `src\/a\.ts`/);
+    assert.match(body, /left open/);
+  });
+
+  it("one real commit cannot be named for every thread", () => {
+    const list = buildWorkList([
+      thread("T1"),
+      thread("T2", { path: "src/b.ts" }),
+      thread("T3", { path: "src/c.ts" }),
+    ]);
+    const { rows } = planPublication(
+      list,
+      list.items.map((item) => ({
+        thread_id: item.thread_id,
+        verdict: "fixed",
+        reply: "r",
+        commit: sha,
+      })),
+      new Map([[sha, ["src/a.ts"]]]),
+    );
+    assert.deepEqual(
+      rows.map((row) => row.outcome),
+      ["fixed", "fixed-elsewhere", "fixed-elsewhere"],
+    );
+  });
+
+  it("a parse failure does not quote the response", () => {
+    assert.throws(() => parseResponse("SECRET-LOOKING not json"), {
+      message: "response is not valid JSON",
+    });
+  });
+});
+
+describe("Review responder round intake", () => {
+  const run = (cwd, ...args) =>
+    execFileSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@example.test",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@example.test",
+      },
+    }).trim();
+
+  /**
+   * A trusted clone parked at `start`, and an agent-side clone to commit in.
+   * `round(build)` runs `build` in the agent clone and hands the trusted
+   * clone a bundle of whatever it committed, as the workflow does.
+   */
+  function scratch() {
+    const root = mkdtempSync(join(tmpdir(), "review-response-"));
+    const origin = join(root, "origin");
+    mkdirSync(origin);
+    run(origin, "init", "-q", "-b", "main");
+    run(origin, "config", "core.autocrlf", "false");
+    writeFileSync(join(origin, "a.txt"), "one\n");
+    run(origin, "add", "a.txt");
+    run(origin, "commit", "-q", "-m", "start");
+    const start = run(origin, "rev-parse", "HEAD");
+    const trusted = join(root, "trusted");
+    const agent = join(root, "agent");
+    run(root, "clone", "-q", origin, trusted);
+    run(root, "clone", "-q", origin, agent);
+    run(agent, "config", "core.autocrlf", "false");
+    const commit = (file, content, message = "fix") => {
+      mkdirSync(dirname(join(agent, file)), { recursive: true });
+      writeFileSync(join(agent, file), content);
+      run(agent, "add", "--", file);
+      run(agent, "commit", "-q", "-m", message);
+      return run(agent, "rev-parse", "HEAD");
+    };
+    const receive = (range = `${start}..HEAD`) => {
+      const bundle = join(root, "round.bundle");
+      run(agent, "bundle", "create", "-q", bundle, range);
+      return receiveRound({ cwd: trusted, bundle, start });
+    };
+    return { root, start, trusted, agent, commit, receive, run };
+  }
+
+  it("accepts a straight line of commits and reports what each touched", (t) => {
+    const s = scratch();
+    t.after(() => rmSync(s.root, { recursive: true, force: true }));
+    const first = s.commit("a.txt", "two\n");
+    const second = s.commit("src/b.txt", "new\n");
+
+    const round = s.receive();
+    assert.equal(round.tip, second);
+    assert.deepEqual(round.commits, [
+      { sha: first, paths: ["a.txt"] },
+      { sha: second, paths: ["src/b.txt"] },
+    ]);
+    // Objects only: the trusted clone's checkout is untouched.
+    assert.equal(s.run(s.trusted, "rev-parse", "HEAD"), s.start);
+    assert.equal(s.run(s.trusted, "status", "--porcelain"), "");
+  });
+
+  it("refuses a round that touches an instruction or workflow path", (t) => {
+    for (const file of [
+      "CLAUDE.md",
+      ".claude/settings.json",
+      ".agents/skills/x/SKILL.md",
+      ".github/workflows/ci.yml",
+      "docs/CLAUDE.md",
+    ]) {
+      const s = scratch();
+      t.after(() => rmSync(s.root, { recursive: true, force: true }));
+      s.commit("a.txt", "two\n");
+      s.commit(file, "x\n");
+      s.commit("a.txt", "three\n");
+      assert.throws(() => s.receive(), /protected path/, file);
+    }
+  });
+
+  it("refuses a protected path even when a later commit removes it again", (t) => {
+    const s = scratch();
+    t.after(() => rmSync(s.root, { recursive: true, force: true }));
+    s.commit("CLAUDE.md", "x\n");
+    s.run(s.agent, "rm", "-q", "CLAUDE.md");
+    s.run(s.agent, "commit", "-q", "-m", "remove");
+    // The net diff is empty; the history still carries the file.
+    assert.equal(s.run(s.agent, "diff", "--name-only", s.start, "HEAD"), "");
+    assert.throws(() => s.receive(), /protected path/);
+  });
+
+  it("refuses symlinks and submodules", (t) => {
+    const link = scratch();
+    t.after(() => rmSync(link.root, { recursive: true, force: true }));
+    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], {
+      cwd: link.agent,
+      input: "a.txt",
+      encoding: "utf8",
+    }).trim();
+    link.run(
+      link.agent,
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `120000,${blob},link`,
+    );
+    link.run(link.agent, "commit", "-q", "-m", "link");
+    assert.throws(() => link.receive(), /symlink or a submodule/);
+
+    const sub = scratch();
+    t.after(() => rmSync(sub.root, { recursive: true, force: true }));
+    sub.run(
+      sub.agent,
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `160000,${sub.start},vendor`,
+    );
+    sub.run(sub.agent, "commit", "-q", "-m", "gitlink");
+    assert.throws(() => sub.receive(), /symlink or a submodule/);
+  });
+
+  it("refuses a merge, and history that does not sit on the start", (t) => {
+    const merge = scratch();
+    t.after(() => rmSync(merge.root, { recursive: true, force: true }));
+    merge.run(merge.agent, "checkout", "-q", "-b", "side");
+    merge.commit("side.txt", "s\n");
+    merge.run(merge.agent, "checkout", "-q", "main");
+    merge.commit("a.txt", "two\n");
+    merge.run(merge.agent, "merge", "-q", "--no-ff", "-m", "merge", "side");
+    assert.throws(() => merge.receive(), /straight line/);
+
+    const rewrite = scratch();
+    t.after(() => rmSync(rewrite.root, { recursive: true, force: true }));
+    writeFileSync(join(rewrite.agent, "a.txt"), "rewritten\n");
+    rewrite.run(
+      rewrite.agent,
+      "commit",
+      "-q",
+      "-a",
+      "--amend",
+      "-m",
+      "amended start",
+    );
+    // An amended start shares no history with the real one. Bundled whole, it
+    // arrives as a root commit: a line of one, but not on top of the start.
+    assert.throws(() => rewrite.receive("HEAD"), /straight line/);
+  });
+
+  it("refuses an empty round, an oversized one, and a non-bundle", (t) => {
+    const empty = scratch();
+    t.after(() => rmSync(empty.root, { recursive: true, force: true }));
+    const junk = join(empty.root, "junk.bundle");
+    writeFileSync(junk, "not a bundle\n");
+    assert.throws(
+      () =>
+        receiveRound({ cwd: empty.trusted, bundle: junk, start: empty.start }),
+      /not a version 2 git bundle/,
+    );
+    assert.throws(
+      () => receiveRound({ cwd: empty.trusted, bundle: junk, start: "HEAD" }),
+      /start is not a sha/,
+    );
+
+    const many = scratch();
+    t.after(() => rmSync(many.root, { recursive: true, force: true }));
+    for (let i = 0; i <= MAX_ROUND_COMMITS; i += 1) {
+      many.commit("a.txt", `${i}\n`);
+    }
+    assert.throws(() => many.receive(), /commits/);
+  });
+
+  it("refuses paths that are unsafe to check out elsewhere", () => {
+    for (const path of [
+      "src\\evil.ts",
+      "C:/x.txt",
+      "a/.GIT/config",
+      "a/.git ./config",
+      "GIT~1/config",
+      "tab\tname",
+    ]) {
+      assert.ok(
+        isUnportablePath(path),
+        `${JSON.stringify(path)} must be refused`,
+      );
+    }
+    for (const path of [
+      "src/a.ts",
+      ".github/review-response/x.mjs",
+      "docs/git.md",
+    ]) {
+      assert.ok(!isUnportablePath(path), `${path} must be allowed`);
+    }
+  });
+});
+
+describe("Review responder CI release", () => {
+  const sha = "d".repeat(40);
+  const held = {
+    id: 1,
+    head_sha: sha,
+    event: "pull_request",
+    path: ".github/workflows/ci.yml",
+    conclusion: "action_required",
+  };
+
+  it("starts only the CI run held for the commit the round pushed", () => {
+    assert.equal(pickHeldCiRun([held], sha)?.id, 1);
+    for (const other of [
+      { ...held, head_sha: "e".repeat(40) },
+      { ...held, event: "workflow_dispatch" },
+      { ...held, path: ".github/workflows/release-windows.yml" },
+      { ...held, path: ".github/workflows/claude-code-review.yml" },
+      { ...held, conclusion: "success" },
+      { ...held, conclusion: null },
+    ]) {
+      assert.equal(pickHeldCiRun([other], sha), null, JSON.stringify(other));
+    }
+    assert.equal(pickHeldCiRun([], sha), null);
   });
 });
