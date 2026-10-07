@@ -140,10 +140,21 @@ export function CaptureApp() {
           } catch {
             // No scale factor: the physical size is the best guess available.
           }
+          // Maximising reports the whole work area. Storing that reopens an
+          // always-on-top Capture over the application under test, so a
+          // maximise is a window state rather than a size, like the minimise
+          // the `{0, 0}` payload comes from.
+          let maximized = false;
+          try {
+            maximized = await win.isMaximized();
+          } catch {
+            // No window state: judge the resize on the rest, as before.
+          }
           if (
             !isStorableCaptureSize(size, {
               duringRestore,
               restoreSize: requested,
+              maximized,
             })
           ) {
             return;

@@ -154,12 +154,14 @@ function fitToDisplay(
   return Math.max(min, Math.min(want, Math.round(area - frame)));
 }
 
-/** What the restore was doing when a `Resized` arrived. */
+/** What the window was doing when a `Resized` arrived. */
 export type CaptureResizeContext = {
   /** Whether the restore still owned the window size as of the event. */
   duringRestore: boolean;
   /** The inner size the restore asked the window for, once it has asked. */
   restoreSize?: CaptureWindowSize | null;
+  /** Whether the window is maximised, which is a state and not a size. */
+  maximized?: boolean;
 };
 
 /**
@@ -184,18 +186,34 @@ export type CaptureResizeContext = {
  * is the size the stored value already clamps to; on a larger monitor they keep
  * the bigger size they had. That is the safe direction.
  *
- * Windows reports `{0, 0}` on minimise. Storing that floors to
+ * `maximized` is the third thing a resize can be: a window-state transition.
+ * Maximising reports the whole work area, and Capture is `always_on_top`, so
+ * reopening at that size blankets the application the user is testing — the one
+ * thing a popup for capturing issues *while* testing must not do, and nothing
+ * un-maximises it on open. It is the mirror of the `{0, 0}` Windows reports on
+ * minimise, which `isValidCaptureSize` rejects: that one floors to
  * `CAPTURE_MIN_SIZE` and replaces whatever size the user had chosen, for good
- * if Capture is minimised when the app quits.
+ * if Capture is minimised when the app quits. Un-maximising reports the size
+ * the window had before, which is the user's and is stored as usual.
  */
 export function isStorableCaptureSize(
   size: CaptureWindowSize,
   context: CaptureResizeContext,
 ): boolean {
   if (context.duringRestore) return false;
+  if (context.maximized) return false;
   if (context.restoreSize && isSameCaptureSize(size, context.restoreSize)) {
     return false;
   }
+  return isValidCaptureSize(size);
+}
+
+/**
+ * Whether a `Resized` payload is a usable window size at all, as opposed to the
+ * `{0, 0}` Windows reports on minimise or a measurement that came back broken.
+ * Provenance is a separate question — see `isStorableCaptureSize`.
+ */
+export function isValidCaptureSize(size: CaptureWindowSize): boolean {
   return (
     Number.isFinite(size.width) &&
     Number.isFinite(size.height) &&

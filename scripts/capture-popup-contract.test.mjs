@@ -13,6 +13,7 @@ import {
   CAPTURE_SIZE_STORAGE_KEY,
   clampCaptureWindowSize,
   isStorableCaptureSize,
+  isValidCaptureSize,
   readCaptureWindowSize,
 } from "../src/capture/geometry.ts";
 
@@ -529,7 +530,31 @@ describe("Capture popup (#39)", () => {
         isStorableCaptureSize(size, { duringRestore: false }),
         false,
       );
+      // That half is payload validation, and answers on its own.
+      assert.equal(isValidCaptureSize(size), false);
     }
+    assert.equal(isValidCaptureSize(CAPTURE_DEFAULT_SIZE), true);
+
+    // Maximising is the mirror of minimising: a window-state transition, not a
+    // size anyone picked. Windows reports the whole work area for it, and
+    // Capture is always_on_top with nothing to un-maximise it on open, so
+    // storing it reopens the popup over the application under test.
+    const maximised = { width: 1920, height: 1017 };
+    assert.equal(
+      isStorableCaptureSize(maximised, {
+        duringRestore: false,
+        maximized: true,
+      }),
+      false,
+    );
+    // The same extent dragged to by hand is the user's, and is stored.
+    assert.equal(
+      isStorableCaptureSize(maximised, {
+        duringRestore: false,
+        maximized: false,
+      }),
+      true,
+    );
 
     // #205's own regression, replayed in the order the window delivers the
     // events: a 1200x900 stored on a bigger monitor, trimmed to 1200x707 by a
@@ -564,7 +589,10 @@ describe("Capture popup (#39)", () => {
     const app = readSrc("capture", "CaptureApp.tsx");
     // The resize handler stores nothing the guard rejects...
     assert.match(app, /isStorableCaptureSize\(size, {/);
-    assert.match(app, /duringRestore,\s*restoreSize: requested,/);
+    assert.match(app, /duringRestore,\s*restoreSize: requested,\s*maximized,/);
+    // ...including a maximise, which it asks the window about rather than
+    // guessing from the numbers.
+    assert.match(app, /await win\.isMaximized\(\)/);
     // ...and reads both as of the event, not after the awaited scale factor, so
     // a restore settling mid-handler cannot let its own resize through.
     assert.match(
