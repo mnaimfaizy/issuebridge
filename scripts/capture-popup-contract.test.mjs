@@ -624,6 +624,16 @@ describe("Capture popup (#39)", () => {
       app,
       /setTimeout\(\s*\(\)\s*=>\s*{\s*restoring = false;/,
     );
+    // `onResized` resolves after an await, so a cleanup running before it
+    // settles has no handle to call: the listener would outlive the effect with
+    // its own gate already down, and store the next run's restore size as the
+    // user's. Unsubscribed on arrival instead, as the shell does (App.tsx).
+    assert.match(app, /let cancelled = false;/);
+    assert.match(app, /if \(cancelled\) {\s*subscription\(\);\s*return;/);
+    assert.match(
+      app,
+      /return \(\) => {\s*cancelled = true;\s*unlisten\?\.\(\);/,
+    );
   });
 
   it("the display clamp never asks for a size the window may not take (#205)", () => {

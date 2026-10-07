@@ -59,6 +59,12 @@ export function CaptureApp() {
   }, []);
 
   useEffect(() => {
+    // `onResized` resolves asynchronously, so a cleanup that runs before it
+    // settles finds no unsubscribe to call and leaks a listener that outlives
+    // the effect — with its own `restoring` already down, so it stores the next
+    // run's restore size as the user's. Fast Refresh under `tauri dev` is what
+    // reaches this; the shell handles the same hazard the same way (App.tsx).
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     const win = getCurrentWindow();
 
@@ -125,7 +131,7 @@ export function CaptureApp() {
 
     void (async () => {
       try {
-        unlisten = await win.onResized(async ({ payload }) => {
+        const subscription = await win.onResized(async ({ payload }) => {
           // Taken before the await below, so provenance is read as of the
           // event rather than as of whenever the scale factor comes back.
           const duringRestore = restoring;
@@ -161,12 +167,19 @@ export function CaptureApp() {
           }
           writeCaptureWindowSize(size);
         });
+        // The effect is already over: unsubscribe on arrival instead.
+        if (cancelled) {
+          subscription();
+          return;
+        }
+        unlisten = subscription;
       } catch {
         // Ignore when not running under Tauri.
       }
     })();
 
     return () => {
+      cancelled = true;
       unlisten?.();
     };
   }, []);
