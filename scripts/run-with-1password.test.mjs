@@ -9,34 +9,42 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { ENVIRONMENT_VARIABLE, planRun } from "./run-with-1password.mjs";
+import {
+  planRun,
+  REFERENCES_FILE,
+  TEMPLATE_FILE,
+} from "./run-with-1password.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const ID = "abcdefghij0123456789klmnop";
 const command = ["npm", "run", "tauri", "dev"];
+const present = () => true;
+const absent = () => false;
 
 describe("1Password development wrapper", () => {
-  it("runs the command under the Environment named on this machine", () => {
-    assert.deepEqual(
-      planRun({
-        env: { [ENVIRONMENT_VARIABLE]: ID },
-        platform: "linux",
-        command,
-      }),
-      { file: "op", args: ["run", "--environment", ID, "--", ...command] },
-    );
+  it("runs the command with the developer's own references file", () => {
+    const plan = planRun({
+      root: "/repo",
+      platform: "linux",
+      command,
+      exists: present,
+    });
+    assert.equal(plan.file, "op");
+    assert.deepEqual(plan.args, [
+      "run",
+      `--env-file=${join("/repo", REFERENCES_FILE)}`,
+      "--",
+      ...command,
+    ]);
   });
 
   it("starts the command through a shell on Windows, where npm is a .cmd shim", () => {
     const { args } = planRun({
-      env: { [ENVIRONMENT_VARIABLE]: ` ${ID}\r\n` },
+      root: "C:\\repo",
       platform: "win32",
       command,
+      exists: present,
     });
-    assert.deepEqual(args, [
-      "run",
-      "--environment",
-      ID,
+    assert.deepEqual(args.slice(2), [
       "--",
       "cmd.exe",
       "/d",
@@ -46,67 +54,61 @@ describe("1Password development wrapper", () => {
     ]);
   });
 
-  it("explains how to set the variable when it is missing", () => {
-    for (const env of [{}, { [ENVIRONMENT_VARIABLE]: "   " }]) {
-      assert.throws(
-        () => planRun({ env, platform: "win32", command }),
-        (error) =>
-          error.message.includes(`${ENVIRONMENT_VARIABLE} is not set`) &&
-          error.message.includes("Copy environment ID"),
-      );
-    }
-  });
-
-  it("refuses a value that is not an ID, so it can never be read as a flag", () => {
-    for (const value of [
-      "--no-masking",
-      "-x",
-      "id with space",
-      "a/b",
-      "op://x/y",
-    ]) {
-      assert.throws(
-        () =>
-          planRun({
-            env: { [ENVIRONMENT_VARIABLE]: value },
-            platform: "linux",
-            command,
-          }),
-        /does not look like a 1Password Environment ID/,
-        value,
-      );
-    }
+  it("explains how to create the references file when it is missing", () => {
+    assert.throws(
+      () => planRun({ root, platform: "win32", command, exists: absent }),
+      (error) =>
+        error.message.includes(`${REFERENCES_FILE} not found`) &&
+        error.message.includes(TEMPLATE_FILE) &&
+        error.message.includes("Copy Secret Reference"),
+    );
   });
 
   it("refuses to run with no command", () => {
     assert.throws(
-      () =>
-        planRun({
-          env: { [ENVIRONMENT_VARIABLE]: ID },
-          platform: "linux",
-          command: [],
-        }),
+      () => planRun({ root, platform: "linux", command: [], exists: present }),
       /No command given/,
     );
   });
 
-  it("commits no Environment ID, and ignores plaintext env files", () => {
+  it("commits the template and nothing that names a real vault", () => {
     const tracked = execFileSync("git", ["ls-files", "-z"], {
       cwd: root,
       encoding: "utf8",
     })
       .split("\0")
       .filter(Boolean);
-    // No env file is tracked: the values live in 1Password, not in the tree.
+    // The template is the only env file in the tree: each developer's own
+    // references, and any plaintext env file, stay out of it.
     assert.deepEqual(
       tracked.filter((path) => /(^|\/)\.env(\.|$)/.test(path)),
-      [],
+      [TEMPLATE_FILE],
     );
     const ignored = readFileSync(join(root, ".gitignore"), "utf8");
     assert.match(ignored, /^\.env$/m);
     assert.match(ignored, /^\.env\.\*$/m);
+    assert.match(ignored, /^!\.env\.op\.example$/m);
 
-    // The npm script names the wrapper and carries no ID of its own.
+    // Every assignment in the template is a placeholder secret reference or a
+    // comment: it can be committed because it holds no value and names no
+    // real vault.
+    const template = readFileSync(join(root, TEMPLATE_FILE), "utf8");
+    const assignments = template
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^#\s?/, ""))
+      .filter((line) => /^[A-Z_]+=/.test(line));
+    assert.ok(
+      assignments.length > 0,
+      "expected the template to list variables",
+    );
+    for (const line of assignments) {
+      assert.match(
+        line,
+        /^ISSUEBRIDGE_[A-Z_]+="op:\/\/<vault>\/<item>\/<field>"$/,
+        `${line} must be a placeholder secret reference`,
+      );
+    }
+
     const scripts = JSON.parse(
       readFileSync(join(root, "package.json"), "utf8"),
     ).scripts;
@@ -114,16 +116,5 @@ describe("1Password development wrapper", () => {
       scripts["dev:op"],
       "node scripts/run-with-1password.mjs npm run tauri dev",
     );
-    for (const file of [
-      "README.md",
-      "package.json",
-      "docs/dev-first-run-reset.md",
-    ]) {
-      assert.doesNotMatch(
-        readFileSync(join(root, file), "utf8"),
-        /--environment [a-z0-9]{20,}/,
-        `${file} must not carry an Environment ID`,
-      );
-    }
   });
 });

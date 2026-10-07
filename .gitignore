@@ -32,10 +32,12 @@ src-tauri/binaries/llama-cli-x86_64-pc-windows-msvc.exe
 # GGUF models stay out of git / NSIS — download-on-demand or ISSUEBRIDGE_REWRITE_GGUF
 *.gguf
 
-# Plaintext env files — never commit. Local secrets come from 1Password
-# (npm run dev:op), so nothing needs to be written here.
+# Env files — never commit. Local secrets come from 1Password (npm run
+# dev:op): `.env.op` holds each developer's own secret references, and only
+# its placeholder template is tracked.
 .env
 .env.*
+!.env.op.example
 
 # Local scratch (security reports, experiments — never commit)
 .scratch/
