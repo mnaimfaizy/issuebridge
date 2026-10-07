@@ -25,17 +25,6 @@ import {
   writeCaptureWindowSize,
 } from "./geometry";
 
-/**
- * How long after `setSize` returns the restore still owns the window size.
- *
- * The `Resized` that `setSize` causes is emitted while the call is in flight
- * and makes its own trip back to the webview, which can land after the reply,
- * so the restore is not over when the `await` resolves. Erring long is the safe
- * side: it only drops a resize the restore was about to override anyway,
- * whereas ending too early stores the restore's own size as the user's.
- */
-const RESTORE_SETTLE_MS = 250;
-
 export function CaptureApp() {
   const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
     readThemePreference(),
@@ -71,7 +60,6 @@ export function CaptureApp() {
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    let settle: ReturnType<typeof setTimeout> | undefined;
     const win = getCurrentWindow();
 
     // Read the stored size before the awaits below. A `Resized` event arriving
@@ -85,6 +73,10 @@ export function CaptureApp() {
     // every resize in that span is either the restore's own — a fit for this
     // monitor, not a choice the user made — or one the restore then overrides.
     let restoring = true;
+    // The size the restore asks the window for. The `Resized` that `setSize`
+    // causes makes its own trip back to the webview and can land after the call
+    // has resolved, so the gate above cannot be what recognises it; this size is.
+    let restoreSize: CaptureWindowSize | null = null;
 
     void (async () => {
       // Restore the size the user last resized Capture to, trimmed to this
@@ -116,14 +108,18 @@ export function CaptureApp() {
         // No window metrics: clamp against the work area alone.
       }
       const size = clampCaptureWindowSize(stored, workArea, frame);
+      // Recorded before the call, so a `Resized` arriving while it is in flight
+      // is already recognisable as the restore's own.
+      restoreSize = size;
       try {
         await win.setSize(new LogicalSize(size.width, size.height));
       } catch {
         // Ignore when not running under Tauri.
       } finally {
-        settle = setTimeout(() => {
-          restoring = false;
-        }, RESTORE_SETTLE_MS);
+        // The restore has asked for everything it is going to ask for, so the
+        // user owns the size again. Anything still on its way back from this
+        // call is caught by `restoreSize` rather than by waiting out a clock.
+        restoring = false;
       }
     })();
 
@@ -133,6 +129,7 @@ export function CaptureApp() {
           // Taken before the await below, so provenance is read as of the
           // event rather than as of whenever the scale factor comes back.
           const duringRestore = restoring;
+          const requested = restoreSize;
           let size = { width: payload.width, height: payload.height };
           try {
             const factor = await win.scaleFactor();
@@ -143,7 +140,14 @@ export function CaptureApp() {
           } catch {
             // No scale factor: the physical size is the best guess available.
           }
-          if (!isStorableCaptureSize(size, duringRestore)) return;
+          if (
+            !isStorableCaptureSize(size, {
+              duringRestore,
+              restoreSize: requested,
+            })
+          ) {
+            return;
+          }
           writeCaptureWindowSize(size);
         });
       } catch {
@@ -153,7 +157,6 @@ export function CaptureApp() {
 
     return () => {
       unlisten?.();
-      clearTimeout(settle);
     };
   }, []);
 

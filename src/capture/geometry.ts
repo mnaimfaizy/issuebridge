@@ -154,16 +154,35 @@ function fitToDisplay(
   return Math.max(min, Math.min(want, Math.round(area - frame)));
 }
 
+/** What the restore was doing when a `Resized` arrived. */
+export type CaptureResizeContext = {
+  /** Whether the restore still owned the window size as of the event. */
+  duringRestore: boolean;
+  /** The inner size the restore asked the window for, once it has asked. */
+  restoreSize?: CaptureWindowSize | null;
+};
+
 /**
  * Whether a `Resized` payload is a size the user chose, and so worth storing.
  *
- * `duringRestore` is provenance, and it is the only thing that can separate the
- * restore's own resize from the user's. Matching on size cannot: the restore's
- * request is raised to `min_inner_size` before it lands, so the resize that
- * comes back is not the size that was asked for, and a snap or a DPI change can
- * repeat a size the restore already used. Provenance also cannot go stale —
- * a `setSize` that lands on the current size emits no event at all, which left
- * a size-matched guard armed for the rest of the window's life.
+ * Two things separate the restore's own resize from the user's, and neither is a
+ * clock. `duringRestore` covers the span the restore owns the size: the window
+ * is interactive from creation and the restore takes several IPC round-trips, so
+ * every resize in it is either the restore's own — a fit for this monitor, not a
+ * choice the user made — or one the restore then overrides. `restoreSize` covers
+ * what follows: the `Resized` that `setSize` causes makes its own trip back to
+ * the webview and can land after the call has resolved, with nothing but the
+ * size left to recognise it by. Storing it would replace the stored size with
+ * the display clamp's trim, silently and for good — the next open clamps the
+ * trimmed value again, so the size the user chose never comes back.
+ *
+ * Matching on `restoreSize` is not the size-matched guard this replaced: that
+ * one armed itself until a match arrived, and a `setSize` landing on the current
+ * size emits no event at all, so it stayed armed for the window's life. This is
+ * a standing rule with no state to go stale. Its cost is a resize the user makes
+ * to within a pixel of the size the restore just gave them, which on this display
+ * is the size the stored value already clamps to; on a larger monitor they keep
+ * the bigger size they had. That is the safe direction.
  *
  * Windows reports `{0, 0}` on minimise. Storing that floors to
  * `CAPTURE_MIN_SIZE` and replaces whatever size the user had chosen, for good
@@ -171,15 +190,32 @@ function fitToDisplay(
  */
 export function isStorableCaptureSize(
   size: CaptureWindowSize,
-  duringRestore: boolean,
+  context: CaptureResizeContext,
 ): boolean {
-  if (duringRestore) return false;
+  if (context.duringRestore) return false;
+  if (context.restoreSize && isSameCaptureSize(size, context.restoreSize)) {
+    return false;
+  }
   return (
     Number.isFinite(size.width) &&
     Number.isFinite(size.height) &&
     size.width > 0 &&
     size.height > 0
   );
+}
+
+/**
+ * Whether two sizes are the same window size, give or take a pixel.
+ *
+ * A `Resized` payload is physical and divided by the scale factor to compare, so
+ * a size the window took exactly can come back a fraction off at a non-integer
+ * scale factor. A pixel of slack keeps that rounding from reading as a resize.
+ */
+function isSameCaptureSize(
+  a: CaptureWindowSize,
+  b: CaptureWindowSize,
+): boolean {
+  return Math.abs(a.width - b.width) <= 1 && Math.abs(a.height - b.height) <= 1;
 }
 
 export function writeCaptureWindowSize(size: CaptureWindowSize): void {
