@@ -18,9 +18,10 @@ subscription. Replaces the Copilot pipeline archived at
 
 Install [github.com/apps/claude](https://github.com/apps/claude) on this repository. The
 implementer authenticates as this App for git operations, so CI on Claude's pull requests
-starts without an approval step: for a pull request opened or pushed with `GITHUB_TOKEN`,
-GitHub creates the CI run but holds it until it is approved. The planner, reviewer, audit
-and Review responder use the job's own `GITHUB_TOKEN` instead, so their comments appear as
+starts without an approval step. With `GITHUB_TOKEN`, GitHub creates the CI run but holds
+it until it is approved: this repository has seen that for a push to a pull request, and
+for opening one it rests on GitHub's documentation. The planner, reviewer, audit and
+Review responder use the job's own `GITHUB_TOKEN` instead, so their comments appear as
 `github-actions[bot]`.
 
 ### 2. Mint a subscription token
