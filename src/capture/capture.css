@@ -1,7 +1,8 @@
 html,
 body {
   margin: 0;
-  min-height: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 .ib-capture-root {
@@ -9,7 +10,8 @@ body {
   --ib-content: var(--colorNeutralBackground1);
   --ib-border: var(--colorNeutralStroke2);
   --ib-muted: var(--colorNeutralForeground3);
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   color: var(--colorNeutralForeground1);
   background: var(--ib-shell);
   box-sizing: border-box;
@@ -20,21 +22,26 @@ body {
   background: var(--ib-shell);
 }
 
+/*
+ * Rows: hero, compose, actions, save status. Only the compose row may shrink
+ * (`minmax(0, 1fr)`), so the hero and the Save Draft / Cancel actions stay
+ * visible at any window size and the shell itself never scrolls — the compose
+ * region does. A save status gets its own row instead of overflowing the shell.
+ */
 .ib-capture {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   width: 100%;
-  min-height: 100vh;
-  max-height: 100vh;
-  overflow: auto;
+  height: 100%;
+  overflow: hidden;
   box-sizing: border-box;
   background: var(--ib-content);
 }
 
 .ib-capture-hero {
   display: grid;
-  gap: 14px;
-  padding: 16px 14px 14px;
+  gap: 12px;
+  padding: 14px 14px 12px;
   border-bottom: 1px solid var(--ib-border);
   background: var(--ib-shell);
 }
@@ -109,20 +116,44 @@ body {
   color: var(--ib-muted);
 }
 
+/*
+ * The one scrolling region. When the window is smaller than the content the
+ * chips, repo field, Title and Body scroll here and the hero and the actions
+ * stay put — scrolling the shell instead used to carry the repo controls out of
+ * view. The reserved gutter keeps an appearing scrollbar from re-flowing chips.
+ */
 .ib-capture-compose {
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+  min-height: 0;
   margin: 12px 14px;
   padding: 12px;
   border: 1px solid var(--ib-border);
   border-radius: var(--borderRadiusLarge, 8px);
   background: var(--ib-shell);
   box-shadow: var(--shadow4);
+  box-sizing: border-box;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+/* Chips, repo field and Title keep their natural height; only Body flexes. */
+.ib-capture-compose > * {
+  flex: 0 0 auto;
+}
+
+/*
+ * Scoped to the compose child deliberately: a bare `.ib-capture-body` ties with
+ * the rule above on specificity and would only flex while it happens to come
+ * later in this file. Body must outrank it however the two are ordered.
+ */
+.ib-capture-compose > .ib-capture-body {
+  flex: 1 1 auto;
 }
 
 .ib-capture-compose textarea {
-  min-height: 110px;
+  min-height: 92px;
 }
 
 .ib-capture-chips {
@@ -219,6 +250,7 @@ body {
   font-size: 11px;
 }
 
+/* Row 4 of the shell grid: a save error never pushes the actions off-screen. */
 .ib-capture-save-status {
   margin: 0;
   padding: 0 14px 14px;

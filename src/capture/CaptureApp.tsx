@@ -3,7 +3,11 @@ import {
   webDarkTheme,
   webLightTheme,
 } from "@fluentui/react-components";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import {
+  currentMonitor,
+  getCurrentWindow,
+  LogicalSize,
+} from "@tauri-apps/api/window";
 import { useEffect, useState } from "react";
 import {
   readSystemPrefersDark,
@@ -13,7 +17,13 @@ import {
   type ThemePreference,
 } from "../theme/preference";
 import { CapturePopup } from "./CapturePopup";
-import { readCaptureWindowSize, writeCaptureWindowSize } from "./geometry";
+import {
+  type CaptureWindowSize,
+  clampCaptureWindowSize,
+  isStorableCaptureSize,
+  readCaptureWindowSize,
+  writeCaptureWindowSize,
+} from "./geometry";
 
 export function CaptureApp() {
   const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
@@ -49,35 +59,127 @@ export function CaptureApp() {
   }, []);
 
   useEffect(() => {
+    // `onResized` resolves asynchronously, so a cleanup that runs before it
+    // settles finds no unsubscribe to call and leaks a listener that outlives
+    // the effect — with its own `restoring` already down, so it stores the next
+    // run's restore size as the user's. Fast Refresh under `tauri dev` is what
+    // reaches this; the shell handles the same hazard the same way (App.tsx).
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     const win = getCurrentWindow();
-    const size = readCaptureWindowSize();
-    void win.setSize(new LogicalSize(size.width, size.height)).catch(() => {
-      // Ignore when not running under Tauri.
-    });
+
+    // Read the stored size before the awaits below. A `Resized` event arriving
+    // while the restore is still in flight — window show, a DPI change, the
+    // user grabbing an edge — would otherwise persist the size Capture opened
+    // at over the stored one before it has been read, losing it for good.
+    const stored = readCaptureWindowSize();
+    // The restore owns the size until it has settled, and nothing is stored
+    // meanwhile. Armed before the first await, because the window is
+    // interactive from creation and the restore takes several IPC round-trips:
+    // every resize in that span is either the restore's own — a fit for this
+    // monitor, not a choice the user made — or one the restore then overrides.
+    let restoring = true;
+    // The size the restore asks the window for. The `Resized` that `setSize`
+    // causes makes its own trip back to the webview and can land after the call
+    // has resolved, so the gate above cannot be what recognises it; this size is.
+    let restoreSize: CaptureWindowSize | null = null;
+
+    void (async () => {
+      // Restore the size the user last resized Capture to, trimmed to this
+      // display so a size stored on a bigger monitor cannot open the popup
+      // with its actions past the bottom edge.
+      let workArea: CaptureWindowSize | null = null;
+      try {
+        const monitor = await currentMonitor();
+        if (monitor) {
+          const logical = monitor.workArea.size.toLogical(monitor.scaleFactor);
+          workArea = { width: logical.width, height: logical.height };
+        }
+      } catch {
+        // No monitor info: fall back to the minimum clamp alone.
+      }
+      // What the title bar and borders add around the client area. The size
+      // below is an inner size and the work area is outer space, so without
+      // this the window lands a title bar taller than the work area.
+      let frame: CaptureWindowSize | null = null;
+      try {
+        const factor = await win.scaleFactor();
+        const outer = (await win.outerSize()).toLogical(factor);
+        const inner = (await win.innerSize()).toLogical(factor);
+        frame = {
+          width: outer.width - inner.width,
+          height: outer.height - inner.height,
+        };
+      } catch {
+        // No window metrics: clamp against the work area alone.
+      }
+      const size = clampCaptureWindowSize(stored, workArea, frame);
+      // Recorded before the call, so a `Resized` arriving while it is in flight
+      // is already recognisable as the restore's own.
+      restoreSize = size;
+      try {
+        await win.setSize(new LogicalSize(size.width, size.height));
+      } catch {
+        // Ignore when not running under Tauri.
+      } finally {
+        // The restore has asked for everything it is going to ask for, so the
+        // user owns the size again. Anything still on its way back from this
+        // call is caught by `restoreSize` rather than by waiting out a clock.
+        restoring = false;
+      }
+    })();
 
     void (async () => {
       try {
-        unlisten = await win.onResized(async ({ payload }) => {
+        const subscription = await win.onResized(async ({ payload }) => {
+          // Taken before the await below, so provenance is read as of the
+          // event rather than as of whenever the scale factor comes back.
+          const duringRestore = restoring;
+          const requested = restoreSize;
+          let size = { width: payload.width, height: payload.height };
           try {
             const factor = await win.scaleFactor();
-            writeCaptureWindowSize({
+            size = {
               width: payload.width / factor,
               height: payload.height / factor,
-            });
+            };
           } catch {
-            writeCaptureWindowSize({
-              width: payload.width,
-              height: payload.height,
-            });
+            // No scale factor: the physical size is the best guess available.
           }
+          // Maximising reports the whole work area. Storing that reopens an
+          // always-on-top Capture over the application under test, so a
+          // maximise is a window state rather than a size, like the minimise
+          // the `{0, 0}` payload comes from.
+          let maximized = false;
+          try {
+            maximized = await win.isMaximized();
+          } catch {
+            // No window state: judge the resize on the rest, as before.
+          }
+          if (
+            !isStorableCaptureSize(size, {
+              duringRestore,
+              restoreSize: requested,
+              maximized,
+            })
+          ) {
+            return;
+          }
+          writeCaptureWindowSize(size);
         });
+        // The effect is already over: unsubscribe on arrival instead.
+        if (cancelled) {
+          subscription();
+          return;
+        }
+        unlisten = subscription;
       } catch {
         // Ignore when not running under Tauri.
       }
     })();
 
     return () => {
+      cancelled = true;
       unlisten?.();
     };
   }, []);

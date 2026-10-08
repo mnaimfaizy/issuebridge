@@ -661,6 +661,7 @@ export function CapturePopup() {
           onChange={(_, data) => setTitle(data.value)}
         />
         <Textarea
+          className="ib-capture-body"
           value={body}
           placeholder="What happened?"
           resize="vertical"
