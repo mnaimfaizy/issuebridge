@@ -71,7 +71,7 @@ The **security-finding-triage** skill updates rows after stress-check.
 | `cpanel-exchange-secret-in-web-root` | Shared-hosting OAuth exchange keeps its client-secret file inside the web root | `services/oauth-exchange/cpanel/exchange.php` | medium | untriaged | open | GHSA-xvq5-xgpv-34j9 | 2026-10-26 |
 | `audit-pr-base-not-default-branch-trust-root` | Audit workflow takes its trusted runtime from the pull request base, whatever branch that is | `.github/workflows/claude-security-audit.yml` | medium | untriaged | open | GHSA-xvq5-xgpv-34j9 | 2026-10-26 |
 | `implement-job-saves-shared-build-cache` | Implementer job saves the shared build cache after an agent session | `.github/workflows/claude-agent-pipeline.yml` | medium | untriaged | open | GHSA-xvq5-xgpv-34j9 | 2026-10-26 |
-| `webpki-emsign-distrusted-intermediates` | Shipped TLS root bundle carries a published distrust advisory | `src-tauri/Cargo.lock` | high | untriaged | open | GHSA-qjfg-cj55-r52v | 2026-10-26 |
+| `webpki-emsign-distrusted-intermediates` | Shipped TLS root bundle carries a published distrust advisory | `src-tauri/Cargo.lock` | high | confirmed | open | GHSA-qjfg-cj55-r52v | 2026-10-26 |
 | `review-agent-git-output-arbitrary-write` | Reviewer git grant admits a write outside the workspace | `.github/workflows/claude-code-review.yml` | medium | untriaged | open | GHSA-qjfg-cj55-r52v | 2026-10-26 |
 
 ## Remediation notes
@@ -141,6 +141,8 @@ The **security-finding-triage** skill updates rows after stress-check.
   - `review-agent-git-output-arbitrary-write` — same shape as `full-mode-git-output-arbitrary-write` (fixed) at a sibling workflow: distinct site or incomplete fix.
   - `implement-job-saves-shared-build-cache` — adjacent to `responder-oidc-grant-spans-pr-dependency-scripts` (fixed), whose fix stopped that job saving a cache.
   - `webpki-emsign-distrusted-intermediates` and `oauth-loopback-reflected-html` — `shipped-product` if confirmed. `cpanel-exchange-secret-in-web-root` concerns a self-hosted exchange option, not the installer; bucket to be decided at triage.
+
+- `webpki-emsign-distrusted-intermediates`: **confirmed 2026-10-26** (high, `shipped-product`) — the shipped binary's only HTTPS stack is `reqwest` with `rustls-tls`, which verifies against the bundled `webpki-roots` trust store rather than the Windows certificate store; no client adds roots or pins. The lockfile resolves `webpki-roots` 1.0.9 and `rustls-webpki` 0.103.15, inside the ranges of RUSTSEC-2026-0381 and RUSTSEC-2026-0382 (alias CVE-2026-111943; patched in 1.0.10 and 0.103.16), and the locked trust store still lists the root those advisories remove. Evidence: a lockfile version-floor check fails on `main` at `02e7c86` and passes on a copy with the patched versions. Distinct from `rustls-tls13-encryption-level-advisory` (rejected: a protocol-conformance defect, not a trust decision). No Dependabot alert covers it yet. Fix is a lockfile update; users get it only through a Release.
 
 ## How to update
 
