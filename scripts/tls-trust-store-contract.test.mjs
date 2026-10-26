@@ -43,7 +43,8 @@ function parseCrateVersion(version) {
 function compareCrateVersions(a, b) {
   const pa = parseCrateVersion(a);
   const pb = parseCrateVersion(b);
-  for (let i = 0; i < 4; i++) if (pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
+  for (let i = 0; i < 4; i++)
+    if (pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
   return 0;
 }
 
@@ -65,19 +66,27 @@ const usesRustlsTls = /^reqwest = \{[^\n]*"rustls-tls"/m.test(manifest);
 
 describe("shipped TLS trust store", () => {
   it("reqwest still verifies through rustls, which these ranges govern", () => {
-    assert.ok(usesRustlsTls, "reqwest no longer enables rustls-tls; revisit this contract");
+    assert.ok(
+      usesRustlsTls,
+      "reqwest no longer enables rustls-tls; revisit this contract",
+    );
   });
 
   for (const [name, ranges] of Object.entries(AFFECTED)) {
     it(`${name} resolves outside every distrust advisory range`, () => {
       const versions = lockedVersions(name);
       // While rustls-tls is on, both crates must be found, so a parse miss cannot pass.
-      if (usesRustlsTls) assert.ok(versions.length > 0, `${name} not found in Cargo.lock`);
+      if (usesRustlsTls)
+        assert.ok(versions.length > 0, `${name} not found in Cargo.lock`);
       for (const version of versions) {
         for (const [from, to] of ranges) {
           const affected =
-            compareCrateVersions(version, from) >= 0 && compareCrateVersions(version, to) < 0;
-          assert.ok(!affected, `${name} ${version} is inside affected range [${from}, ${to})`);
+            compareCrateVersions(version, from) >= 0 &&
+            compareCrateVersions(version, to) < 0;
+          assert.ok(
+            !affected,
+            `${name} ${version} is inside affected range [${from}, ${to})`,
+          );
         }
       }
     });
