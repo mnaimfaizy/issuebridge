@@ -100,12 +100,17 @@ pub fn wait_for_authorization_code(
                 let request = String::from_utf8_lossy(&buf[..n]);
                 let (code, state, error) = parse_callback_request(&request)?;
 
+                // This branch runs before the state check, so any page can reach
+                // it: never echo the `error` value. A known OAuth error code is
+                // named, from our own list, so a misconfigured App stays visible.
                 if let Some(err) = error {
-                    let _ = write_html_response(
-                        &mut stream,
-                        400,
-                        &format!("Sign-in failed ({err}). You can close this tab."),
+                    let known = known_oauth_error(&err);
+                    crate::diag_warn!(
+                        "oauth",
+                        "sign-in callback reported an error: {}",
+                        known.unwrap_or("unrecognised code")
                     );
+                    let _ = write_html_response(&mut stream, 400, &denied_message(known));
                     return Err(OAuthLoopbackError::Denied);
                 }
 
@@ -164,17 +169,175 @@ fn write_html_response(stream: &mut impl Write, status: u16, message: &str) -> s
         200 => "OK",
         _ => "Bad Request",
     };
-    let body = format!("<!doctype html><html><body><p>{message}</p></body></html>");
+    let body = format!(
+        "<!doctype html><html><body><p>{}</p></body></html>",
+        escape_html(message)
+    );
+    // The page is plain text: no script, no framing, no type sniffing, no caching.
     let response = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Security-Policy: default-src 'none'\r\nX-Frame-Options: DENY\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     stream.write_all(response.as_bytes())?;
     stream.flush()
 }
 
+/// OAuth error codes the callback may name: RFC 6749's authorization-endpoint
+/// codes plus the two GitHub documents for this flow. Anything else is shown
+/// generically, so request input never reaches the page.
+const KNOWN_OAUTH_ERRORS: &[&str] = &[
+    "access_denied",
+    "invalid_request",
+    "unauthorized_client",
+    "unsupported_response_type",
+    "invalid_scope",
+    "server_error",
+    "temporarily_unavailable",
+    "redirect_uri_mismatch",
+    "application_suspended",
+];
+
+/// The list's own copy of `error` when it is a known code, never the input.
+fn known_oauth_error(error: &str) -> Option<&'static str> {
+    KNOWN_OAUTH_ERRORS
+        .iter()
+        .copied()
+        .find(|code| *code == error)
+}
+
+fn denied_message(known: Option<&str>) -> String {
+    match known {
+        Some(code) => format!(
+            "Sign-in was cancelled or failed ({code}). You can close this tab and try again from Issuebridge."
+        ),
+        None => "Sign-in was cancelled or failed. You can close this tab and try again from Issuebridge."
+            .to_string(),
+    }
+}
+
+/// Escape text for an HTML element body. Every current caller passes fixed
+/// text; this is a safeguard so a future caller passing request-derived text
+/// cannot turn it into markup.
+fn escape_html(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
 fn random_url_safe(byte_len: usize) -> String {
     let mut bytes = vec![0u8; byte_len];
     rand::thread_rng().fill(bytes.as_mut_slice());
     URL_SAFE_NO_PAD.encode(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpStream;
+
+    /// Send one raw request to a test listener and return the full response.
+    fn callback_round_trip(request_target: &str) -> (Result<String, OAuthLoopbackError>, String) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let request = format!("GET {request_target} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+        let client = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(addr).unwrap();
+            stream.write_all(request.as_bytes()).unwrap();
+            let mut response = String::new();
+            let _ = stream.read_to_string(&mut response);
+            response
+        });
+        let result =
+            wait_for_authorization_code(&listener, "expected-state", Duration::from_secs(5));
+        (result, client.join().unwrap())
+    }
+
+    #[test]
+    fn denied_callback_does_not_reflect_its_error_value() {
+        // The error branch runs before the state check, so any page can reach it.
+        let (result, response) =
+            callback_round_trip("/oauth/callback?error=%3Cb%3Eprobe%3C%2Fb%3E");
+        assert!(matches!(result, Err(OAuthLoopbackError::Denied)));
+        assert!(
+            !response.contains("probe"),
+            "error value reflected: {response}"
+        );
+        assert!(!response.contains("<b>"), "markup reflected: {response}");
+    }
+
+    #[test]
+    fn callback_pages_forbid_script_framing_and_sniffing() {
+        for target in [
+            "/oauth/callback?error=access_denied",
+            "/oauth/callback?code=c&state=wrong",
+            "/oauth/callback?code=c&state=expected-state",
+        ] {
+            let (_, response) = callback_round_trip(target);
+            let head = response
+                .split("\r\n\r\n")
+                .next()
+                .unwrap()
+                .to_ascii_lowercase();
+            for header in [
+                "content-security-policy: default-src 'none'",
+                "x-frame-options: deny",
+                "x-content-type-options: nosniff",
+                "referrer-policy: no-referrer",
+                "cache-control: no-store",
+            ] {
+                assert!(head.contains(header), "{target} lacks {header}: {head}");
+            }
+        }
+    }
+
+    #[test]
+    fn denied_callback_names_a_known_oauth_error_code() {
+        // A misconfigured App stays diagnosable: a listed code is named.
+        let (result, response) = callback_round_trip("/oauth/callback?error=redirect_uri_mismatch");
+        assert!(matches!(result, Err(OAuthLoopbackError::Denied)));
+        assert!(response.contains("(redirect_uri_mismatch)"), "{response}");
+    }
+
+    #[test]
+    fn denied_callback_does_not_name_an_unlisted_code() {
+        // Lookalike or unlisted values fall back to the generic text.
+        for value in ["access_denied_x", "made_up_code", "ACCESS_DENIED"] {
+            let (_, response) = callback_round_trip(&format!("/oauth/callback?error={value}"));
+            assert!(!response.contains(value), "{value} reflected: {response}");
+            assert!(
+                response.contains("Sign-in was cancelled or failed. You can"),
+                "{response}"
+            );
+        }
+    }
+
+    #[test]
+    fn response_writer_escapes_markup() {
+        let mut out = Vec::new();
+        write_html_response(&mut out, 400, "a <b>&\"'</b>").unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("a &lt;b&gt;&amp;&quot;&#39;&lt;/b&gt;"),
+            "{text}"
+        );
+        assert!(!text.contains("<b>"));
+    }
+
+    #[test]
+    fn successful_callback_still_returns_the_code() {
+        let (result, response) =
+            callback_round_trip("/oauth/callback?code=abc&state=expected-state");
+        assert_eq!(result.unwrap(), "abc");
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+    }
 }
