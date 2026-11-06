@@ -168,6 +168,12 @@ without a label, but only after a review that a maintainer did label.
   Without the App token exchange, the action no longer skips a run whose workflow file
   differs from the default branch. That check was not a boundary here: anyone who can
   push a same-repository branch can already run an edited workflow with these secrets.
+- **No agent job saves a cache another job restores.** The implementer and the Review
+  responder build after their agent session, and the implementer's run takes the default
+  branch as its ref, so a cache either one saved would be restored by CI and by later agent
+  runs holding other credentials. Both restore the Cargo cache only and save no npm cache;
+  CI, which runs no agent session, is the only writer. A contract test holds both jobs to
+  this.
 - **The reviewer cannot modify or run what it reviews.** `claude-code-review.yml` checks
   out untrusted PR code, so it is granted no `Edit`/`Write` and no `npm`/`cargo` — read,
   reason, comment. It also restores `AGENTS.md`, `CLAUDE.md`, `.claude/` and the
