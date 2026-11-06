@@ -248,10 +248,9 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
   });
 
   it("grants the agent no git rule, whose --output flag writes outside the workspace", () => {
-    // A `Bash(git …:*)` rule is a prefix match with no flag analysis, so it
-    // admits `git log --output=<path>` / `git diff --output=<path>`, an
-    // arbitrary-file write a later credentialed step reads. Full mode audits the
-    // tree, not a diff, so it needs no git.
+    // Why a git grant is a write primitive: see GIT_RULE. Here a later
+    // credentialed step reads the written file. Full mode audits the tree, not
+    // a diff, so it needs no git.
     const { prTools, resolvedFull } = toolAllowlists(yml);
     for (const [mode, tools] of [
       ["pr", prTools],

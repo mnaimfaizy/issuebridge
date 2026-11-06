@@ -35,8 +35,9 @@ function jobBlock(yml, name) {
 
 // Bash rules are command-prefix rules, not path rules: `Bash(rg:*)` permits that
 // binary with any argument, including absolute paths anywhere the runner user
-// can read. The planner and reviewer jobs both hold a channel that publishes
-// agent-authored text publicly, so their Bash rules are reviewed one by one.
+// can read. The reviewer holds a channel that publishes agent-authored text
+// publicly, so its Bash rules are reviewed one by one. (The planner holds the
+// same channel and no Bash rule at all; its check passes an empty set.)
 //
 // This list is a record of deliberate trust decisions, NOT a set of commands
 // proven unable to read an arbitrary path - `gh pr comment --body-file <path>`
@@ -49,7 +50,7 @@ function jobBlock(yml, name) {
 // test). The implementer and responder below keep their git rules: they commit
 // and push, so writing is their job, and their channel is a branch, not a
 // public comment.
-const REVIEWED_BASH_RULES = new Set([
+const REVIEWED_REVIEWER_BASH_RULES = new Set([
   "Bash(gh pr diff:*)",
   "Bash(gh pr view:*)",
   "Bash(gh pr comment:*)",
@@ -657,7 +658,7 @@ describe("Claude code review contract", () => {
     // text, other tools by name — not only the Bash family.
     assert.deepEqual(
       unreviewedEntries(allowed, {
-        reviewedBash: REVIEWED_BASH_RULES,
+        reviewedBash: REVIEWED_REVIEWER_BASH_RULES,
         reviewedTools: REVIEWED_REVIEWER_TOOLS,
       }),
       [],
@@ -668,16 +669,13 @@ describe("Claude code review contract", () => {
   });
 
   it("grants the reviewer no git rule, whose --output flag writes outside the workspace", () => {
-    // A `Bash(git …:*)` rule is a prefix match with no flag analysis, so it
-    // admits `git log --output=<path>` / `git diff --output=<path>`: a write to
-    // any path the runner user can reach, with content from the branch under
-    // review, in a job that grants no write. The brief carries the diff instead.
+    // Why a git grant is a write primitive: see GIT_RULE. This job grants no
+    // write, and its brief carries the diff instead.
     const review = jobBlock(readWorkflow("claude-code-review.yml"), "review");
     const allowed = review.match(/--allowedTools "([^"]*)"/)?.[1] ?? "";
     assert.ok(allowed.length > 0, "expected an explicit tool allowlist");
-    // GIT_RULE also refuses a path-qualified binary (`Bash(/usr/bin/git …)`).
     assert.doesNotMatch(allowed, GIT_RULE);
-    for (const rule of REVIEWED_BASH_RULES) {
+    for (const rule of REVIEWED_REVIEWER_BASH_RULES) {
       assert.doesNotMatch(rule, GIT_RULE, `${rule} must not be reviewed`);
     }
   });
@@ -709,6 +707,25 @@ describe("Claude code review contract", () => {
       "the paths must be removed before either is written",
     );
     assert.match(brief, /\[ ! -s "\$DIFF" \]/, "an empty diff must fail here");
+    // The skill orders git; this sentence is what turns the agent and its
+    // review axes to the pre-computed diff instead.
+    assert.match(
+      brief,
+      /This session has no git\./,
+      "the brief must tell the agent the session has no git",
+    );
+    assert.match(
+      brief,
+      /pass that[^\n]*\n[^\n]*path to each review axis/,
+      "the brief must hand the diff path to the review axes",
+    );
+    // A commit subject is PR-author text: it must not be able to close the
+    // fence around it, so the fence token is renamed in the printed list.
+    assert.match(
+      brief,
+      /printf '%s\\n' "\$\{COMMITS\/\/untrusted_commits\/untrusted-commits\}"/,
+      "the commit list must be printed with its fence token neutralized",
+    );
     // The raw text is the stricter input for a negative assertion.
     assert.doesNotMatch(
       raw,
@@ -727,12 +744,22 @@ describe("Claude code review contract", () => {
     // source rather than by the key it is assigned to. Comments are stripped so
     // a commented-out pin cannot pass and a comment cannot add a phantom step;
     // the match ignores case because GitHub context lookups do.
-    const steps = stripShellComments(yml)
-      .split(/^(?= {6}- [A-Za-z_-]+:)/m)
-      .slice(1);
-    const holding = steps.filter((step) =>
-      /secrets\.GITHUB_TOKEN|github\.token\b/i.test(step),
+    // Job headers are split out too, so a token set in a workflow- or job-level
+    // `env:` (inherited by every step, including ones with no pin) is caught
+    // rather than dropped or credited to the step above it.
+    const token = /secrets\.GITHUB_TOKEN|github\.token\b/i;
+    const chunks = stripShellComments(yml).split(
+      /^(?= {6}- [A-Za-z_-]+:| {2}[A-Za-z0-9_-]+:\s*$)/m,
     );
+    const isStep = (chunk) => /^ {6}- /.test(chunk);
+    for (const header of chunks.filter((chunk) => !isStep(chunk))) {
+      assert.doesNotMatch(
+        header,
+        token,
+        "a workflow- or job-level token is inherited by every step; pin it per step instead",
+      );
+    }
+    const holding = chunks.filter(isStep).filter((step) => token.test(step));
     const heading = (step) =>
       step.match(/^\s*-?\s*name:\s*(.+)$/m)?.[1] ?? step.split("\n")[0].trim();
     assert.deepEqual(
