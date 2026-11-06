@@ -565,6 +565,26 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     );
   });
 
+  it("saves no cache from the implementer, whose agent session builds", () => {
+    const implement = stripShellComments(
+      jobBlock(readWorkflow("claude-agent-pipeline.yml"), "implement"),
+    );
+
+    // The run's ref is the default branch, so a cache saved here, after an
+    // agent session fed issue-derived text has built, would be restored by CI
+    // and by the Review responder, which hold other credentials. Restore only,
+    // as the responder does.
+    assert.doesNotMatch(implement, /uses: actions\/cache@/);
+    assert.match(implement, /uses: actions\/cache\/restore@/);
+    const setupNode = implement.indexOf("uses: actions/setup-node@");
+    assert.ok(setupNode !== -1, "expected the implementer's setup-node step");
+    assert.doesNotMatch(
+      implement.slice(setupNode, implement.indexOf("- name:", setupNode)),
+      /cache:/,
+      "setup-node must not save a package cache from the implementer",
+    );
+  });
+
   it("lets the Claude App open the PR so CI starts without approval", () => {
     const implement = jobBlock(
       readWorkflow("claude-agent-pipeline.yml"),

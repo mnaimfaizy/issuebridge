@@ -287,10 +287,14 @@ jobs:
       # toolchain, so every npm/cargo call is denied and the session burns its
       # turn budget retrying. This replaces what the archived
       # copilot-setup-steps.yml used to provide for the Copilot cloud agent.
+      #
+      # No dependency cache is ever saved from this job, as for the Review
+      # responder. The run's ref is the default branch, so a cache saved here,
+      # after an agent session fed issue-derived text has built, would be
+      # restored by CI and by the responder, which hold other credentials.
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-          cache: npm
 
       - name: Install frontend deps
         run: npm ci
@@ -318,7 +322,8 @@ jobs:
           components: clippy, rustfmt
 
       - name: Cache Cargo
-        uses: actions/cache@v6
+        # Restore only — see the note above on why this job never saves one.
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.cargo/bin/
