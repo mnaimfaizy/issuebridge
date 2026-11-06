@@ -43,9 +43,17 @@ Workers Free plan is fine for Sign-in traffic.
 
 ## cPanel PHP (alternative)
 
-1. Upload [`cpanel/exchange.php`](cpanel/exchange.php) to a HTTPS site you control.
-2. Place [`cpanel/config.example.php`](cpanel/config.example.php) beside it as `config.php` (outside public HTML if you can) with real `client_id` / `client_secret`.
+Needs PHP 8.0+ with cURL.
+
+1. Upload [`cpanel/exchange.php`](cpanel/exchange.php) and [`cpanel/.htaccess`](cpanel/.htaccess) to a HTTPS site you control.
+2. Copy [`cpanel/config.example.php`](cpanel/config.example.php), fill in the real `client_id` / `client_secret`, and save it **outside the served web root** — never in the same folder as `exchange.php`. Either:
+   - name it `issuebridge-oauth-config.php` and put it in the folder **above** `exchange.php` (outside the web root when `exchange.php` sits at the top of `public_html`), or
+   - put it anywhere outside the web root and set the environment variable `ISSUEBRIDGE_OAUTH_CONFIG` to its absolute path.
+
+   The exchange answers `server_misconfigured` until it finds one. A `config.php` beside `exchange.php` still loads for older deployments, but is deprecated: move it.
 3. Point `ISSUEBRIDGE_OAUTH_EXCHANGE_URL` at that PHP URL.
+
+The `.htaccess` (Apache 2.4) refuses to serve any config file, backup or editor copy that ends up beside `exchange.php`, as defence in depth. It is not a substitute for keeping the config outside the web root.
 
 No app code changes when switching hosts — only the URL.
 

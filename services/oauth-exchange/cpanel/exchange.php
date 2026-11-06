@@ -3,7 +3,14 @@
  * Issuebridge OAuth code exchange (cPanel / shared hosting).
  * Same JSON contract as the Cloudflare Worker — point ISSUEBRIDGE_OAUTH_EXCHANGE_URL here.
  *
- * Place config.php beside this file (see config.example.php). Prefer a path outside the web root.
+ * The config file holds the GitHub App client secret, so keep it OUTSIDE the
+ * served web root (see config.example.php). Resolution order:
+ *   1. ISSUEBRIDGE_OAUTH_CONFIG — an absolute path, set in the host's environment;
+ *   2. issuebridge-oauth-config.php in the directory ABOVE this script, which is
+ *      outside the web root when this script sits at the top of public_html;
+ *   3. config.php beside this script — legacy only, logged as deprecated, and
+ *      refused over HTTP by the shipped .htaccess on Apache hosts.
+ * When none is readable the exchange fails closed with `server_misconfigured`.
  */
 
 declare(strict_types=1);
@@ -24,8 +31,36 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-$configPath = __DIR__ . '/config.php';
-if (!is_readable($configPath)) {
+/**
+ * The secret-bearing config file to load, or null when none is usable.
+ * An explicit ISSUEBRIDGE_OAUTH_CONFIG must be absolute and readable; it never
+ * falls through to another location, so a typo fails closed rather than
+ * silently picking up a file inside the web root.
+ */
+function issuebridge_config_path(): ?string
+{
+    $explicit = getenv('ISSUEBRIDGE_OAUTH_CONFIG');
+    if (is_string($explicit) && $explicit !== '') {
+        $absolute = str_starts_with($explicit, '/') || preg_match('/^[A-Za-z]:[\\\\\/]/', $explicit) === 1;
+        return $absolute && is_file($explicit) && is_readable($explicit) ? $explicit : null;
+    }
+
+    $outsideWebRoot = dirname(__DIR__) . '/issuebridge-oauth-config.php';
+    if (is_file($outsideWebRoot) && is_readable($outsideWebRoot)) {
+        return $outsideWebRoot;
+    }
+
+    $legacy = __DIR__ . '/config.php';
+    if (is_file($legacy) && is_readable($legacy)) {
+        error_log('issuebridge-oauth-exchange: config.php beside exchange.php is deprecated; move it outside the web root (see README).');
+        return $legacy;
+    }
+
+    return null;
+}
+
+$configPath = issuebridge_config_path();
+if ($configPath === null) {
     http_response_code(500);
     echo json_encode(['error' => 'server_misconfigured']);
     exit;

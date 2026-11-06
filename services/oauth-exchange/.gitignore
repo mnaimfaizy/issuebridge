@@ -5,3 +5,4 @@ dist/
 cpanel/config.php
 .env
 .dev.vars
+issuebridge-oauth-config.php

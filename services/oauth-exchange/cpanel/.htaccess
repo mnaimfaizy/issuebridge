@@ -1,0 +1,11 @@
+# Defence in depth for the Issuebridge OAuth exchange on Apache hosts.
+# The config file holds the GitHub App client secret and belongs OUTSIDE the
+# web root (see exchange.php and the README). If a copy ever sits in this
+# directory, refuse to serve it, and any backup or editor copy of it, so a PHP
+# handler failure cannot turn the secret into a plain download.
+<FilesMatch "(?i)(^config|-config|\.example)\.php|(^config|-config).*\.(bak|old|orig|save|swp|txt)$|~$">
+    Require all denied
+</FilesMatch>
+
+# Nothing here is meant to be browsed.
+Options -Indexes
