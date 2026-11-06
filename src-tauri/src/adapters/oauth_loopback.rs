@@ -101,13 +101,16 @@ pub fn wait_for_authorization_code(
                 let (code, state, error) = parse_callback_request(&request)?;
 
                 // This branch runs before the state check, so any page can reach
-                // it: answer with fixed text and never echo the `error` value.
-                if error.is_some() {
-                    let _ = write_html_response(
-                        &mut stream,
-                        400,
-                        "Sign-in was cancelled or failed. You can close this tab and try again from Issuebridge.",
+                // it: never echo the `error` value. A known OAuth error code is
+                // named, from our own list, so a misconfigured App stays visible.
+                if let Some(err) = error {
+                    let known = known_oauth_error(&err);
+                    crate::diag_warn!(
+                        "oauth",
+                        "sign-in callback reported an error: {}",
+                        known.unwrap_or("unrecognised code")
                     );
+                    let _ = write_html_response(&mut stream, 400, &denied_message(known));
                     return Err(OAuthLoopbackError::Denied);
                 }
 
@@ -179,7 +182,42 @@ fn write_html_response(stream: &mut impl Write, status: u16, message: &str) -> s
     stream.flush()
 }
 
-/// Escape text for an HTML element body, so no message can become markup.
+/// OAuth error codes the callback may name: RFC 6749's authorization-endpoint
+/// codes plus the two GitHub documents for this flow. Anything else is shown
+/// generically, so request input never reaches the page.
+const KNOWN_OAUTH_ERRORS: &[&str] = &[
+    "access_denied",
+    "invalid_request",
+    "unauthorized_client",
+    "unsupported_response_type",
+    "invalid_scope",
+    "server_error",
+    "temporarily_unavailable",
+    "redirect_uri_mismatch",
+    "application_suspended",
+];
+
+/// The list's own copy of `error` when it is a known code, never the input.
+fn known_oauth_error(error: &str) -> Option<&'static str> {
+    KNOWN_OAUTH_ERRORS
+        .iter()
+        .copied()
+        .find(|code| *code == error)
+}
+
+fn denied_message(known: Option<&str>) -> String {
+    match known {
+        Some(code) => format!(
+            "Sign-in was cancelled or failed ({code}). You can close this tab and try again from Issuebridge."
+        ),
+        None => "Sign-in was cancelled or failed. You can close this tab and try again from Issuebridge."
+            .to_string(),
+    }
+}
+
+/// Escape text for an HTML element body. Every current caller passes fixed
+/// text; this is a safeguard so a future caller passing request-derived text
+/// cannot turn it into markup.
 fn escape_html(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for ch in text.chars() {
@@ -250,14 +288,35 @@ mod tests {
                 .next()
                 .unwrap()
                 .to_ascii_lowercase();
+            for header in [
+                "content-security-policy: default-src 'none'",
+                "x-frame-options: deny",
+                "x-content-type-options: nosniff",
+                "referrer-policy: no-referrer",
+                "cache-control: no-store",
+            ] {
+                assert!(head.contains(header), "{target} lacks {header}: {head}");
+            }
+        }
+    }
+
+    #[test]
+    fn denied_callback_names_a_known_oauth_error_code() {
+        // A misconfigured App stays diagnosable: a listed code is named.
+        let (result, response) = callback_round_trip("/oauth/callback?error=redirect_uri_mismatch");
+        assert!(matches!(result, Err(OAuthLoopbackError::Denied)));
+        assert!(response.contains("(redirect_uri_mismatch)"), "{response}");
+    }
+
+    #[test]
+    fn denied_callback_does_not_name_an_unlisted_code() {
+        // Lookalike or unlisted values fall back to the generic text.
+        for value in ["access_denied_x", "made_up_code", "ACCESS_DENIED"] {
+            let (_, response) = callback_round_trip(&format!("/oauth/callback?error={value}"));
+            assert!(!response.contains(value), "{value} reflected: {response}");
             assert!(
-                head.contains("content-security-policy: default-src 'none'"),
-                "{target}: {head}"
-            );
-            assert!(head.contains("x-frame-options: deny"), "{target}: {head}");
-            assert!(
-                head.contains("x-content-type-options: nosniff"),
-                "{target}: {head}"
+                response.contains("Sign-in was cancelled or failed. You can"),
+                "{response}"
             );
         }
     }
