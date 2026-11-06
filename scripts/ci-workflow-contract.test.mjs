@@ -114,6 +114,43 @@ const REVIEWED_RESPONDER_TOOLS = new Set([
   "MultiEdit",
 ]);
 
+// A cache action that saves: the save-and-restore action, its save-only half,
+// and Swatinem/rust-cache, which saves in its post step. Quoted or spaced refs
+// match too. Only `actions/cache/restore` never saves.
+const CACHE_SAVING_ACTION =
+  /^\s*(?:-\s+)?uses:\s*["']?(?:actions\/cache(?:\/save)?|Swatinem\/rust-cache)@/m;
+
+/**
+ * Hold an agent job to restore-only caches. Its run's ref can be the default
+ * branch, so a cache it saved after its agent session had built would be
+ * restored by later jobs that hold other credentials. Checked on
+ * comment-stripped text, over every setup-node step rather than the first.
+ */
+function assertRestoreOnlyCaches(job, label) {
+  const code = stripShellComments(job);
+  assert.doesNotMatch(
+    code,
+    CACHE_SAVING_ACTION,
+    `${label} must not use a cache action that saves`,
+  );
+  assert.match(
+    code,
+    /uses:\s*["']?actions\/cache\/restore@/,
+    `${label} must restore its dependency cache`,
+  );
+  const setupNodeSteps = code
+    .split(/^(?= {6}- [A-Za-z_-]+:)/m)
+    .filter((step) => /uses:\s*["']?actions\/setup-node@/.test(step));
+  assert.ok(setupNodeSteps.length > 0, `expected ${label}'s setup-node step`);
+  for (const step of setupNodeSteps) {
+    assert.doesNotMatch(
+      step,
+      /^\s+cache:/m,
+      `${label}'s setup-node must not save a package cache`,
+    );
+  }
+}
+
 /** Every `uses:` step in one workflow, with its ref and trailing version comment. */
 function actionUses(workflowName) {
   const yml = readWorkflow(workflowName);
@@ -566,22 +603,13 @@ describe("Claude agent pipeline trust-boundary contract", () => {
   });
 
   it("saves no cache from the implementer, whose agent session builds", () => {
-    const implement = stripShellComments(
-      jobBlock(readWorkflow("claude-agent-pipeline.yml"), "implement"),
-    );
-
     // The run's ref is the default branch, so a cache saved here, after an
-    // agent session fed issue-derived text has built, would be restored by CI
-    // and by the Review responder, which hold other credentials. Restore only,
-    // as the responder does.
-    assert.doesNotMatch(implement, /uses: actions\/cache@/);
-    assert.match(implement, /uses: actions\/cache\/restore@/);
-    const setupNode = implement.indexOf("uses: actions/setup-node@");
-    assert.ok(setupNode !== -1, "expected the implementer's setup-node step");
-    assert.doesNotMatch(
-      implement.slice(setupNode, implement.indexOf("- name:", setupNode)),
-      /cache:/,
-      "setup-node must not save a package cache from the implementer",
+    // agent session fed issue-derived text has built, would be restored by CI,
+    // the Review responder and the next implementer run. Restore only, as the
+    // responder does.
+    assertRestoreOnlyCaches(
+      jobBlock(readWorkflow("claude-agent-pipeline.yml"), "implement"),
+      "the implementer",
     );
   });
 
@@ -1153,14 +1181,7 @@ describe("Claude review response contract", () => {
     assert.doesNotMatch(respond, /npm (?:ci|install)(?! --ignore-scripts)/);
     // On a dispatch this job's ref is the default branch: a cache saved here,
     // after building pull request code, would be restored by builds on main.
-    assert.doesNotMatch(respond, /uses: actions\/cache@/);
-    assert.match(respond, /uses: actions\/cache\/restore@/);
-    const setupNode = respond.indexOf("uses: actions/setup-node@");
-    assert.ok(setupNode !== -1);
-    assert.doesNotMatch(
-      respond.slice(setupNode, respond.indexOf("- name:", setupNode)),
-      /cache:/,
-    );
+    assertRestoreOnlyCaches(respond, "the responder");
   });
 
   it("never persists checkout credentials", () => {
