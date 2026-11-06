@@ -1,7 +1,9 @@
 <?php
 /**
- * Copy to config.php beside exchange.php (do not commit real secrets).
- * Prefer storing this file outside the public web root and adjusting the require path.
+ * Example config for exchange.php. Never commit a copy holding the real secret.
+ *
+ * Save the real file OUTSIDE the served web root. Where exchange.php looks for
+ * it is listed in the header of exchange.php and in the README.
  */
 return [
     'client_id' => 'Iv23li6Ao8URyrvbNZOq',

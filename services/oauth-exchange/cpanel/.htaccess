@@ -1,0 +1,13 @@
+# Defence in depth for the Issuebridge OAuth exchange on Apache 2.4 hosts.
+# The config file belongs outside the web root (see the header of exchange.php
+# for where it is looked up). If a copy, backup or editor swap file of it ever
+# sits in this directory, refuse to serve it, so a PHP handler failure cannot
+# turn the GitHub App client secret into a plain download. Covers names such
+# as config.php, issuebridge-oauth-config.php, config.example.php,
+# config.php.bak, config.php~, vim's .config.php.swp and emacs's #config.php#.
+#
+# Needs the host to allow `AllowOverride AuthConfig` (or All) for this folder;
+# without it Apache answers 500 for the whole folder. See the README.
+<FilesMatch "(?i)((^|[.#])config|-config|\.example)\.php|((^|[.#])config|-config).*\.(bak|old|orig|save|sw[a-p]|tmp|txt)$|~$">
+    Require all denied
+</FilesMatch>

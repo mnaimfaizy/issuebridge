@@ -43,9 +43,22 @@ Workers Free plan is fine for Sign-in traffic.
 
 ## cPanel PHP (alternative)
 
-1. Upload [`cpanel/exchange.php`](cpanel/exchange.php) to a HTTPS site you control.
-2. Place [`cpanel/config.example.php`](cpanel/config.example.php) beside it as `config.php` (outside public HTML if you can) with real `client_id` / `client_secret`.
+Needs PHP 8.0+ with cURL.
+
+1. Upload [`cpanel/exchange.php`](cpanel/exchange.php) and [`cpanel/.htaccess`](cpanel/.htaccess) to a HTTPS site you control.
+2. Copy [`cpanel/config.example.php`](cpanel/config.example.php), fill in the real `client_id` / `client_secret`, and save it **outside the served web root** — never in the same folder as `exchange.php`. Either:
+   - put it anywhere outside the web root and set the environment variable `ISSUEBRIDGE_OAUTH_CONFIG` to its absolute path (works wherever `exchange.php` lives), or
+   - name it `issuebridge-oauth-config.php` and put it in the folder **above** `exchange.php`. This is only outside the web root when `exchange.php` sits directly in `public_html`. If `exchange.php` is in a subfolder such as `public_html/oauth/`, the folder above is `public_html` itself, which is served: use `ISSUEBRIDGE_OAUTH_CONFIG` instead.
+
+   The exchange answers `server_misconfigured` until it finds one; the full lookup order is in the header of [`exchange.php`](cpanel/exchange.php).
 3. Point `ISSUEBRIDGE_OAUTH_EXCHANGE_URL` at that PHP URL.
+
+**Upgrading an existing deployment:**
+
+- A `config.php` beside `exchange.php` still loads, but is deprecated and logged: move it out of the web root as above.
+- If you followed the older advice to keep the config outside the web root by **editing the `require` path** in `exchange.php`, the new `exchange.php` will not find it, and Sign-in fails with `server_misconfigured`. Before uploading the new script, set `ISSUEBRIDGE_OAUTH_CONFIG` to that file's absolute path, or rename the file to `issuebridge-oauth-config.php` in the folder above `exchange.php`.
+
+**About the `.htaccess`:** on Apache 2.4 it refuses to serve any config file, backup or editor swap copy that ends up beside `exchange.php`, as defence in depth. It is not a substitute for keeping the config outside the web root. It needs the host to allow `AllowOverride AuthConfig` (or `All`) for that folder; on a host that does not, Apache answers 500 for the whole folder, including `exchange.php`. If that happens, remove the `.htaccess` and rely on the config being outside the web root.
 
 No app code changes when switching hosts — only the URL.
 
