@@ -4,10 +4,11 @@
  * Same JSON contract as the Cloudflare Worker — point ISSUEBRIDGE_OAUTH_EXCHANGE_URL here.
  *
  * The config file holds the GitHub App client secret, so keep it OUTSIDE the
- * served web root (see config.example.php). Resolution order:
+ * served web root. This list is the one place the lookup order is written down:
  *   1. ISSUEBRIDGE_OAUTH_CONFIG — an absolute path, set in the host's environment;
  *   2. issuebridge-oauth-config.php in the directory ABOVE this script, which is
- *      outside the web root when this script sits at the top of public_html;
+ *      outside the web root only when this script sits directly in public_html
+ *      (in a subfolder, the directory above is still served: use 1 instead);
  *   3. config.php beside this script — legacy only, logged as deprecated, and
  *      refused over HTTP by the shipped .htaccess on Apache hosts.
  * When none is readable the exchange fails closed with `server_misconfigured`.
@@ -39,19 +40,21 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
  */
 function issuebridge_config_path(): ?string
 {
+    $usable = static fn (string $path): bool => is_file($path) && is_readable($path);
+
     $explicit = getenv('ISSUEBRIDGE_OAUTH_CONFIG');
     if (is_string($explicit) && $explicit !== '') {
         $absolute = str_starts_with($explicit, '/') || preg_match('/^[A-Za-z]:[\\\\\/]/', $explicit) === 1;
-        return $absolute && is_file($explicit) && is_readable($explicit) ? $explicit : null;
+        return $absolute && $usable($explicit) ? $explicit : null;
     }
 
     $outsideWebRoot = dirname(__DIR__) . '/issuebridge-oauth-config.php';
-    if (is_file($outsideWebRoot) && is_readable($outsideWebRoot)) {
+    if ($usable($outsideWebRoot)) {
         return $outsideWebRoot;
     }
 
     $legacy = __DIR__ . '/config.php';
-    if (is_file($legacy) && is_readable($legacy)) {
+    if ($usable($legacy)) {
         error_log('issuebridge-oauth-exchange: config.php beside exchange.php is deprecated; move it outside the web root (see README).');
         return $legacy;
     }
