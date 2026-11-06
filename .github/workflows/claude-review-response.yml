@@ -364,7 +364,7 @@ jobs:
         # before any pull request code ran.
         # Pinned to an immutable commit SHA, matching the third-party action policy
         # enforced for release-windows.yml. Bump deliberately; `@v1` is mutable.
-        uses: anthropics/claude-code-action@239e3a730883eeb5c53db12b0fc9573b3024b126 # v1
+        uses: anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c # v1.0.268 (Claude Code 2.1.318)
         env:
           # Agent mode reads the branch from the environment; on a dispatch the
           # run's own ref is the default branch.
