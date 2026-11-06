@@ -13,6 +13,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   bashEntries,
+  GIT_RULE,
   namedStep,
   runBlock,
   stepsAfter,
@@ -258,7 +259,7 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
     ]) {
       assert.doesNotMatch(
         tools,
-        /Bash\(\s*git\b/,
+        GIT_RULE,
         `${mode} allowlist must grant no git rule`,
       );
     }
@@ -274,9 +275,9 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
       "notify-email.sh must call curl -q so it ignores ~/.curlrc while the key is set",
     );
 
-    const publish = namedStep(
-      yml,
-      "Publish draft Security Advisory (private, always)",
+    // Comments stripped, so a commented-out pin cannot pass on its prose.
+    const publish = stripShellComments(
+      namedStep(yml, "Publish draft Security Advisory (private, always)"),
     );
     const configDir = publish.match(/GH_CONFIG_DIR:\s*(.+)/)?.[1];
     assert.ok(configDir, "publish step must pin GH_CONFIG_DIR");

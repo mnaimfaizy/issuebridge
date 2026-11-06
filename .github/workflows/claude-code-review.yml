@@ -273,8 +273,10 @@ jobs:
           DIFF="$GITHUB_WORKSPACE/review-diff.patch"
           # Both files land in the PR checkout, where the PR may have committed
           # either path as a symlink; a redirect would follow it and write
-          # outside the workspace. Remove whatever is there before writing.
-          rm -f -- "$BRIEF" "$DIFF"
+          # outside the workspace. Remove whatever is there before writing:
+          # `-r` also clears a directory, as the restore step above does, and
+          # removing a symlink never touches its target.
+          rm -rf -- "$BRIEF" "$DIFF"
 
           # The agent holds no git rule (a `Bash(git …:*)` prefix rule admits
           # `--output=<path>`, a write outside the workspace), so what the skill

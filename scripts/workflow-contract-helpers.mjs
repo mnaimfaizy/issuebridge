@@ -144,6 +144,16 @@ export function workflowPermissions(yml) {
 }
 
 /**
+ * An allowlist entry granting git, bare or path-qualified (`Bash(/usr/bin/git …)`).
+ *
+ * One pattern for every "no git rule" assertion, so the suites cannot drift to
+ * different strengths. A `Bash(git …:*)` rule is a command-prefix match with no
+ * flag analysis, so `git diff`/`log`/`show` admit `--output=<path>`, a write
+ * outside the workspace.
+ */
+export const GIT_RULE = /Bash\(\s*(?:\S*\/)?git\b/;
+
+/**
  * Shell code with `#` comments removed, whole-line and trailing alike.
  *
  * Assertions about a control must bind to the code, not to the prose beside it:

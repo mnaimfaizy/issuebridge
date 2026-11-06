@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  GIT_RULE,
   namedStep,
   runBlock,
   stepsAfter,
@@ -42,9 +43,12 @@ function jobBlock(yml, name) {
 // can be pointed at one. They are here because these jobs cannot do their work
 // without them. The contract's job is to make every addition deliberate: deny
 // by default, so a read command added to an allowlist later cannot silently
-// inherit the public channel. No git rule: `git diff`/`log`/`show` accept
-// `--output=<path>`, a write outside the workspace, so the reviewer's brief
-// carries the diff and commit list instead (see the no-git-rule test).
+// inherit the public channel. The reviewer holds no git rule: `git
+// diff`/`log`/`show` accept `--output=<path>`, a write outside the workspace,
+// so its brief carries the diff and commit list instead (see the no-git-rule
+// test). The implementer and responder below keep their git rules: they commit
+// and push, so writing is their job, and their channel is a branch, not a
+// public comment.
 const REVIEWED_BASH_RULES = new Set([
   "Bash(gh pr diff:*)",
   "Bash(gh pr view:*)",
@@ -387,7 +391,8 @@ describe("Claude security audit privilege contract", () => {
 
     assert.ok(prTools.length > 0, "expected a PR_TOOLS allowlist");
     // PR-authored code is untrusted: no git, npm, cargo or find execution.
-    assert.doesNotMatch(prTools, /Bash\((?:git|npm|cargo|find)/);
+    assert.doesNotMatch(prTools, GIT_RULE);
+    assert.doesNotMatch(prTools, /Bash\((?:npm|cargo|find)/);
     assert.match(yml, /if \[ "\$MODE" = "pr" \]/);
   });
 
@@ -423,7 +428,7 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     assert.match(plan, /<untrusted_issue_context>/);
     assert.match(plan, /<\/untrusted_issue_context>/);
     // The planner reads and reports; it never mutates the repo or runs git.
-    assert.doesNotMatch(plan, /Bash\(git/);
+    assert.doesNotMatch(plan, GIT_RULE);
     assert.doesNotMatch(plan, /contents:\s*write/);
 
     const prompt = readFileSync(
@@ -670,19 +675,21 @@ describe("Claude code review contract", () => {
     const review = jobBlock(readWorkflow("claude-code-review.yml"), "review");
     const allowed = review.match(/--allowedTools "([^"]*)"/)?.[1] ?? "";
     assert.ok(allowed.length > 0, "expected an explicit tool allowlist");
-    // Also refuse a path-qualified binary such as `Bash(/usr/bin/git …)`.
-    const gitRule = /Bash\(\s*(?:\S*\/)?git\b/;
-    assert.doesNotMatch(allowed, gitRule);
+    // GIT_RULE also refuses a path-qualified binary (`Bash(/usr/bin/git …)`).
+    assert.doesNotMatch(allowed, GIT_RULE);
     for (const rule of REVIEWED_BASH_RULES) {
-      assert.doesNotMatch(rule, gitRule, `${rule} must not be reviewed`);
+      assert.doesNotMatch(rule, GIT_RULE, `${rule} must not be reviewed`);
     }
   });
 
   it("pre-computes the diff and commit list the reviewer would have run git for", () => {
-    const brief = namedStep(
+    const raw = namedStep(
       readWorkflow("claude-code-review.yml"),
       "Build review brief",
     );
+    // Bind to the code, not the comments beside it, as the rest of this file
+    // does: a commented-out control must fail these assertions.
+    const brief = stripShellComments(raw);
     assert.match(
       brief,
       /git diff "\$BASE_SHA\.\.\.\$HEAD_SHA" > "\$DIFF"/,
@@ -692,7 +699,9 @@ describe("Claude code review contract", () => {
     // Both files are written into the PR checkout, where the PR may have
     // committed either path as a symlink that a redirect would follow out of
     // the workspace. They must be removed before anything is written.
-    const clear = brief.indexOf('rm -f -- "$BRIEF" "$DIFF"');
+    // `-r` so a path committed as a directory is removed too, rather than
+    // failing the step; removing a symlink never touches its target.
+    const clear = brief.indexOf('rm -rf -- "$BRIEF" "$DIFF"');
     assert.ok(clear >= 0, "the brief step must remove both paths first");
     assert.ok(
       clear < brief.indexOf('> "$DIFF"') &&
@@ -700,8 +709,9 @@ describe("Claude code review contract", () => {
       "the paths must be removed before either is written",
     );
     assert.match(brief, /\[ ! -s "\$DIFF" \]/, "an empty diff must fail here");
+    // The raw text is the stricter input for a negative assertion.
     assert.doesNotMatch(
-      brief,
+      raw,
       /Diff command:\s+git diff/,
       "the brief must not tell the agent to run git",
     );
@@ -714,10 +724,14 @@ describe("Claude code review contract", () => {
     // through the action, whose agent runs `gh pr comment` — pins the config.
     const yml = readWorkflow("claude-code-review.yml");
     // Split on every step, whatever key it opens with, and find a token by its
-    // source rather than by the key it is assigned to.
-    const steps = yml.split(/^(?= {6}- [A-Za-z_-]+:)/m).slice(1);
+    // source rather than by the key it is assigned to. Comments are stripped so
+    // a commented-out pin cannot pass and a comment cannot add a phantom step;
+    // the match ignores case because GitHub context lookups do.
+    const steps = stripShellComments(yml)
+      .split(/^(?= {6}- [A-Za-z_-]+:)/m)
+      .slice(1);
     const holding = steps.filter((step) =>
-      /secrets\.GITHUB_TOKEN|github\.token\b/.test(step),
+      /secrets\.GITHUB_TOKEN|github\.token\b/i.test(step),
     );
     const heading = (step) =>
       step.match(/^\s*-?\s*name:\s*(.+)$/m)?.[1] ?? step.split("\n")[0].trim();
