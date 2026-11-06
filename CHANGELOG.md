@@ -4,10 +4,16 @@ All notable changes to Issuebridge are documented here. Release notes are user-f
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-06
+
 ### Fixed
 
 - The Capture popup now opens large enough to show everything it holds: the Testing set repositories, the repository field, Title, Body and the Save Draft / Cancel buttons all fit without a scrollbar. If you make the window smaller than that, only the middle of the popup scrolls — the Hold to talk button and the buttons at the bottom stay where they are instead of scrolling out of view, and a size you resize Capture to is now restored the next time you open it (trimmed to fit your screen). (#205)
 - The repository you pick in Capture now stays picked: switching between title and body, holding to dictate, or clicking back into the Capture window no longer resets it to the default repository. (#197)
+
+### Security
+
+- Issuebridge no longer trusts certificates issued through a set of emSign intermediate certificate authorities whose private keys have become public, closing a way for someone on your network to impersonate GitHub during sign-in and Publish. Updated the bundled TLS trust store (webpki-roots 1.0.11, rustls-webpki 0.103.16, rustls 0.23.46). (#209)
 
 ## [0.4.0] - 2026-10-06
 
