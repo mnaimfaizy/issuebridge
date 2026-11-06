@@ -690,21 +690,35 @@ describe("Claude code review contract", () => {
     const brief = stripShellComments(raw);
     assert.match(
       brief,
-      /git diff "\$BASE_SHA\.\.\.\$HEAD_SHA" > "\$DIFF"/,
-      "the brief step must write the three-dot diff for the agent to Read",
+      /git diff --text --no-ext-diff --no-textconv "\$BASE_SHA\.\.\.\$HEAD_SHA" > "\$DIFF"/,
+      "the brief step must write the three-dot diff, ignoring the PR's .gitattributes",
     );
     assert.match(brief, /git log --oneline "\$BASE_SHA\.\.\$HEAD_SHA"/);
-    // Both files are written into the PR checkout, where the PR may have
-    // committed either path as a symlink that a redirect would follow out of
+    // All three paths are written into the PR checkout, where the PR may have
+    // committed any of them as a symlink that a redirect would follow out of
     // the workspace. They must be removed before anything is written.
     // `-r` so a path committed as a directory is removed too, rather than
     // failing the step; removing a symlink never touches its target.
-    const clear = brief.indexOf('rm -rf -- "$BRIEF" "$DIFF"');
-    assert.ok(clear >= 0, "the brief step must remove both paths first");
+    const clear = brief.indexOf('rm -rf -- "$BRIEF" "$DIFF" "$HEADS"');
+    assert.ok(clear >= 0, "the brief step must remove all three paths first");
     assert.ok(
       clear < brief.indexOf('> "$DIFF"') &&
-        clear < brief.indexOf('} > "$BRIEF"'),
-      "the paths must be removed before either is written",
+        clear < brief.indexOf('} > "$BRIEF"') &&
+        clear < brief.indexOf('mkdir -- "$HEADS"'),
+      "the paths must be removed before any is written",
+    );
+    // Files restored from base before the agent runs: the PR's version is
+    // staged from the object store under numbered names in one flat directory,
+    // so no copy can be named or placed where it loads as instructions.
+    assert.match(brief, /git hash-object --no-filters -- "\$path"/);
+    assert.match(
+      brief,
+      /git cat-file blob "\$blob" > "\$HEADS\/\$staged\.head"/,
+    );
+    assert.match(
+      brief,
+      /review-head-files\//,
+      "the brief must point the agent at the staged PR versions",
     );
     assert.match(brief, /\[ ! -s "\$DIFF" \]/, "an empty diff must fail here");
     // The skill orders git; this sentence is what turns the agent and its
@@ -720,11 +734,12 @@ describe("Claude code review contract", () => {
       "the brief must hand the diff path to the review axes",
     );
     // A commit subject is PR-author text: it must not be able to close the
-    // fence around it, so the fence token is renamed in the printed list.
+    // fence around it in any case or spelling, so every angle bracket is
+    // stripped from the printed list.
     assert.match(
       brief,
-      /printf '%s\\n' "\$\{COMMITS\/\/untrusted_commits\/untrusted-commits\}"/,
-      "the commit list must be printed with its fence token neutralized",
+      /printf '%s\\n' "\$\{COMMITS\/\/\[<>\]\/\}"/,
+      "the commit list must be printed with its angle brackets stripped",
     );
     // The raw text is the stricter input for a negative assertion.
     assert.doesNotMatch(
