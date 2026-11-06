@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  GIT_RULE,
   namedStep,
   runBlock,
   stepsAfter,
@@ -34,20 +35,22 @@ function jobBlock(yml, name) {
 
 // Bash rules are command-prefix rules, not path rules: `Bash(rg:*)` permits that
 // binary with any argument, including absolute paths anywhere the runner user
-// can read. The planner and reviewer jobs both hold a channel that publishes
-// agent-authored text publicly, so their Bash rules are reviewed one by one.
+// can read. The reviewer holds a channel that publishes agent-authored text
+// publicly, so its Bash rules are reviewed one by one. (The planner holds the
+// same channel and no Bash rule at all; its check passes an empty set.)
 //
 // This list is a record of deliberate trust decisions, NOT a set of commands
-// proven unable to read an arbitrary path - `git diff --no-index <path>` and
-// `gh pr comment --body-file <path>` can both be pointed at one. They are here
-// because these jobs cannot do their work without them. The contract's job is
-// to make every addition deliberate: deny by default, so a read command added
-// to an allowlist later cannot silently inherit the public channel.
-const REVIEWED_BASH_RULES = new Set([
-  "Bash(git diff:*)",
-  "Bash(git log:*)",
-  "Bash(git show:*)",
-  "Bash(git rev-parse:*)",
+// proven unable to read an arbitrary path - `gh pr comment --body-file <path>`
+// can be pointed at one. They are here because these jobs cannot do their work
+// without them. The contract's job is to make every addition deliberate: deny
+// by default, so a read command added to an allowlist later cannot silently
+// inherit the public channel. The reviewer holds no git rule: `git
+// diff`/`log`/`show` accept `--output=<path>`, a write outside the workspace,
+// so its brief carries the diff and commit list instead (see the no-git-rule
+// test). The implementer and responder below keep their git rules: they commit
+// and push, so writing is their job, and their channel is a branch, not a
+// public comment.
+const REVIEWED_REVIEWER_BASH_RULES = new Set([
   "Bash(gh pr diff:*)",
   "Bash(gh pr view:*)",
   "Bash(gh pr comment:*)",
@@ -389,7 +392,8 @@ describe("Claude security audit privilege contract", () => {
 
     assert.ok(prTools.length > 0, "expected a PR_TOOLS allowlist");
     // PR-authored code is untrusted: no git, npm, cargo or find execution.
-    assert.doesNotMatch(prTools, /Bash\((?:git|npm|cargo|find)/);
+    assert.doesNotMatch(prTools, GIT_RULE);
+    assert.doesNotMatch(prTools, /Bash\((?:npm|cargo|find)/);
     assert.match(yml, /if \[ "\$MODE" = "pr" \]/);
   });
 
@@ -425,7 +429,7 @@ describe("Claude agent pipeline trust-boundary contract", () => {
     assert.match(plan, /<untrusted_issue_context>/);
     assert.match(plan, /<\/untrusted_issue_context>/);
     // The planner reads and reports; it never mutates the repo or runs git.
-    assert.doesNotMatch(plan, /Bash\(git/);
+    assert.doesNotMatch(plan, GIT_RULE);
     assert.doesNotMatch(plan, /contents:\s*write/);
 
     const prompt = readFileSync(
@@ -654,7 +658,7 @@ describe("Claude code review contract", () => {
     // text, other tools by name — not only the Bash family.
     assert.deepEqual(
       unreviewedEntries(allowed, {
-        reviewedBash: REVIEWED_BASH_RULES,
+        reviewedBash: REVIEWED_REVIEWER_BASH_RULES,
         reviewedTools: REVIEWED_REVIEWER_TOOLS,
       }),
       [],
@@ -662,6 +666,139 @@ describe("Claude code review contract", () => {
     );
     assert.match(allowed, /Bash\(gh pr comment:\*\)/);
     assert.match(allowed, /mcp__github_inline_comment__create_inline_comment/);
+  });
+
+  it("grants the reviewer no git rule, whose --output flag writes outside the workspace", () => {
+    // Why a git grant is a write primitive: see GIT_RULE. This job grants no
+    // write, and its brief carries the diff instead.
+    const review = jobBlock(readWorkflow("claude-code-review.yml"), "review");
+    const allowed = review.match(/--allowedTools "([^"]*)"/)?.[1] ?? "";
+    assert.ok(allowed.length > 0, "expected an explicit tool allowlist");
+    assert.doesNotMatch(allowed, GIT_RULE);
+    for (const rule of REVIEWED_REVIEWER_BASH_RULES) {
+      assert.doesNotMatch(rule, GIT_RULE, `${rule} must not be reviewed`);
+    }
+  });
+
+  it("pre-computes the diff and commit list the reviewer would have run git for", () => {
+    const raw = namedStep(
+      readWorkflow("claude-code-review.yml"),
+      "Build review brief",
+    );
+    // Bind to the code, not the comments beside it, as the rest of this file
+    // does: a commented-out control must fail these assertions.
+    const brief = stripShellComments(raw);
+    assert.match(
+      brief,
+      /git diff --text --no-ext-diff --no-textconv "\$BASE_SHA\.\.\.\$HEAD_SHA" > "\$DIFF"/,
+      "the brief step must write the three-dot diff, ignoring the PR's .gitattributes",
+    );
+    assert.match(brief, /git log --oneline "\$BASE_SHA\.\.\$HEAD_SHA"/);
+    // All three paths are written into the PR checkout, where the PR may have
+    // committed any of them as a symlink that a redirect would follow out of
+    // the workspace. They must be removed before anything is written.
+    // `-r` so a path committed as a directory is removed too, rather than
+    // failing the step; removing a symlink never touches its target.
+    const clear = brief.indexOf('rm -rf -- "$BRIEF" "$DIFF" "$HEADS"');
+    assert.ok(clear >= 0, "the brief step must remove all three paths first");
+    assert.ok(
+      clear < brief.indexOf('> "$DIFF"') &&
+        clear < brief.indexOf('} > "$BRIEF"') &&
+        clear < brief.indexOf('mkdir -- "$HEADS"'),
+      "the paths must be removed before any is written",
+    );
+    // Files restored from base before the agent runs: the PR's version is
+    // staged from the object store under numbered names in one flat directory,
+    // so no copy can be named or placed where it loads as instructions.
+    assert.match(brief, /git hash-object --no-filters -- "\$path"/);
+    assert.match(
+      brief,
+      /git cat-file blob "\$blob" > "\$HEADS\/\$staged\.head"/,
+    );
+    assert.match(
+      brief,
+      /review-head-files\//,
+      "the brief must point the agent at the staged PR versions",
+    );
+    assert.match(brief, /\[ ! -s "\$DIFF" \]/, "an empty diff must fail here");
+    // The skill orders git; this sentence is what turns the agent and its
+    // review axes to the pre-computed diff instead.
+    assert.match(
+      brief,
+      /This session has no git\./,
+      "the brief must tell the agent the session has no git",
+    );
+    assert.match(
+      brief,
+      /pass that[^\n]*\n[^\n]*path to each review axis/,
+      "the brief must hand the diff path to the review axes",
+    );
+    // A commit subject is PR-author text: it must not be able to close the
+    // fence around it in any case or spelling, so every angle bracket is
+    // stripped from the printed list.
+    assert.match(
+      brief,
+      /printf '%s\\n' "\$\{COMMITS\/\/\[<>\]\/\}"/,
+      "the commit list must be printed with its angle brackets stripped",
+    );
+    // The raw text is the stricter input for a negative assertion.
+    assert.doesNotMatch(
+      raw,
+      /Diff command:\s+git diff/,
+      "the brief must not tell the agent to run git",
+    );
+  });
+
+  it("resolves gh config from an empty per-run directory on every step that holds a token", () => {
+    // Defence in depth for the same write: gh reads its config from $HOME, so a
+    // planted hosts.yml or config.yml would otherwise steer a call made with
+    // the job token. Every step here that hands a token to gh — directly, or
+    // through the action, whose agent runs `gh pr comment` — pins the config.
+    const yml = readWorkflow("claude-code-review.yml");
+    // Split on every step, whatever key it opens with, and find a token by its
+    // source rather than by the key it is assigned to. Comments are stripped so
+    // a commented-out pin cannot pass and a comment cannot add a phantom step;
+    // the match ignores case because GitHub context lookups do.
+    // Job headers are split out too, so a token set in a workflow- or job-level
+    // `env:` (inherited by every step, including ones with no pin) is caught
+    // rather than dropped or credited to the step above it.
+    const token = /secrets\.GITHUB_TOKEN|github\.token\b/i;
+    const chunks = stripShellComments(yml).split(
+      /^(?= {6}- [A-Za-z_-]+:| {2}[A-Za-z0-9_-]+:\s*$)/m,
+    );
+    const isStep = (chunk) => /^ {6}- /.test(chunk);
+    for (const header of chunks.filter((chunk) => !isStep(chunk))) {
+      assert.doesNotMatch(
+        header,
+        token,
+        "a workflow- or job-level token is inherited by every step; pin it per step instead",
+      );
+    }
+    const holding = chunks.filter(isStep).filter((step) => token.test(step));
+    const heading = (step) =>
+      step.match(/^\s*-?\s*name:\s*(.+)$/m)?.[1] ?? step.split("\n")[0].trim();
+    assert.deepEqual(
+      holding.map(heading),
+      [
+        "Gate",
+        "Consume trigger label",
+        "Build review brief",
+        "Run code review (Claude Code)",
+        "Fail if the review report was not posted",
+        "Hand off to the Review responder",
+      ],
+      "the token-holding steps changed; review whether each pins GH_CONFIG_DIR",
+    );
+    for (const step of holding) {
+      const name = heading(step);
+      const configDir = step.match(/GH_CONFIG_DIR:\s*(.+)/)?.[1];
+      assert.ok(configDir, `${name} must pin GH_CONFIG_DIR`);
+      assert.match(
+        configDir,
+        /runner\.temp/,
+        `${name}: GH_CONFIG_DIR must resolve outside $HOME`,
+      );
+    }
   });
 
   it("reviews against instructions the PR cannot rewrite", () => {

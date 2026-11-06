@@ -13,6 +13,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   bashEntries,
+  GIT_RULE,
   namedStep,
   runBlock,
   stepsAfter,
@@ -247,10 +248,9 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
   });
 
   it("grants the agent no git rule, whose --output flag writes outside the workspace", () => {
-    // A `Bash(git …:*)` rule is a prefix match with no flag analysis, so it
-    // admits `git log --output=<path>` / `git diff --output=<path>`, an
-    // arbitrary-file write a later credentialed step reads. Full mode audits the
-    // tree, not a diff, so it needs no git.
+    // Why a git grant is a write primitive: see GIT_RULE. Here a later
+    // credentialed step reads the written file. Full mode audits the tree, not
+    // a diff, so it needs no git.
     const { prTools, resolvedFull } = toolAllowlists(yml);
     for (const [mode, tools] of [
       ["pr", prTools],
@@ -258,7 +258,7 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
     ]) {
       assert.doesNotMatch(
         tools,
-        /Bash\(\s*git\b/,
+        GIT_RULE,
         `${mode} allowlist must grant no git rule`,
       );
     }
@@ -274,9 +274,9 @@ describe("security-audit Skill / prompt / workflow contract (#150)", () => {
       "notify-email.sh must call curl -q so it ignores ~/.curlrc while the key is set",
     );
 
-    const publish = namedStep(
-      yml,
-      "Publish draft Security Advisory (private, always)",
+    // Comments stripped, so a commented-out pin cannot pass on its prose.
+    const publish = stripShellComments(
+      namedStep(yml, "Publish draft Security Advisory (private, always)"),
     );
     const configDir = publish.match(/GH_CONFIG_DIR:\s*(.+)/)?.[1];
     assert.ok(configDir, "publish step must pin GH_CONFIG_DIR");

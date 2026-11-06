@@ -4,8 +4,10 @@
  * Deliberately free of policy: what each workflow is allowed to do stays in its
  * own contract file, because each is a separate trust decision. Only mechanics
  * live here — locating a step, extracting its shell, stripping shell comments,
- * splitting an allowlist, reading a tracked symlink — so the two suites cannot
- * drift on how they read the same YAML. The reviewed sets each check against
+ * splitting an allowlist, recognizing a git grant, reading a tracked symlink —
+ * so the two suites cannot drift on how they read the same YAML. Whether a job
+ * may hold git stays each suite's decision; only how a git grant is spotted is
+ * shared. The reviewed sets each check against
  * stay in the suites, because what a job may hold is its own trust decision.
  */
 
@@ -142,6 +144,20 @@ export function workflowPermissions(yml) {
   assert.ok(jobs >= 0, "expected a jobs: block");
   return start < 0 || start > jobs ? "" : yml.slice(start, jobs);
 }
+
+/**
+ * An allowlist entry granting git, bare or path-qualified (`Bash(/usr/bin/git …)`).
+ *
+ * One pattern for every "no git rule" assertion, so the suites cannot drift to
+ * different strengths. A `Bash(git …:*)` rule is a command-prefix match with no
+ * flag analysis, so `git diff`/`log`/`show` admit `--output=<path>`, a write
+ * outside the workspace. This is the single home for that rationale.
+ *
+ * `\b` matches `git` and `git-<sub>` but not a different binary such as `gitk`
+ * or a `git_wrap` wrapper. A wrapper is a new command, so the deny-by-default
+ * reviewed lists hold it instead of this pattern.
+ */
+export const GIT_RULE = /Bash\(\s*(?:\S*\/)?git\b/;
 
 /**
  * Shell code with `#` comments removed, whole-line and trailing alike.
