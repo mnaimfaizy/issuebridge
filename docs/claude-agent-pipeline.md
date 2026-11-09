@@ -223,11 +223,27 @@ without a label, but only after a review that a maintainer did label.
   copy. The staged settings name the staged script by its absolute path, and the hook
   command refuses the read when that script cannot run, so a missing or broken copy blocks
   rather than allows.
-- **Untrusted input is fenced.** Issue bodies, PR diffs, and the plan handed to the Spec
-  axis are wrapped in explicit `<untrusted_issue_context>` / `<untrusted_pr_diff>` /
-  `<untrusted_spec>` markers instructing the model to treat the contents as data, never
-  instructions. The action also scrubs hidden markdown
-  and invisible characters, but that is defense in depth, not the primary control.
+- **Untrusted input is fenced.** Issue bodies, PR diffs, changed-file lists, and the plan
+  handed to the Spec axis are wrapped in explicit `<untrusted_issue_context>` /
+  `<untrusted_pr_diff>` / `<untrusted_changed_files>` / `<untrusted_spec>` markers
+  instructing the model to treat the contents as data, never instructions. The issue
+  title and body, the changed-file list, the commit list and the plan are printed with
+  every angle bracket stripped, so none can close its own fence. A fence is a soft
+  control on the model, not a boundary. The action also scrubs hidden markdown and
+  invisible characters from the issue thread it fetches, but that is defense in depth,
+  and it does not reach a file a workflow step writes.
+- **The approved plan is the executed plan.** A maintainer approves the plan comment as
+  GitHub renders it, while the implementer (`verified-plan.md`) and the reviewer's Spec
+  axis read its raw text. `.github/agent-pipeline/plan-render-check.mjs` refuses a plan
+  holding anything rendering hides or shows differently: HTML and HTML comments other
+  than the leading marker, links, images and reference definitions, character
+  references, math, indented fences, fences whose info string is not a plain language
+  name, and invisible, format or control characters. It refuses rather than strips. The
+  planner job checks the comment before posting it, using a copy staged from the commit
+  before the session starts. The implement job checks before writing `verified-plan.md`.
+  The reviewer drops a refused plan as its spec. Both load the checker with `git show`
+  before their session runs, the reviewer from the pull request base. A contract test
+  holds each consumer.
 - **The action is pinned to a commit SHA**, matching the policy already enforced for
   `release-windows.yml`. `@v1` is mutable. Bumping it is deliberate; a contract test fails
   on an unpinned ref.
