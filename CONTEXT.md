@@ -40,6 +40,18 @@ _Avoid_: Watch list, favorites, pinned repos
 The per-repository set of known GitHub labels (name and color) kept locally and refreshed from upstream when stale. Used in the Inbox to suggest and show the full available set for a Draft’s target repository (assigned names stay distinct). Prefetched for the Testing set and always covered for the open Draft’s target repo. Names match case-insensitively; assigning a catalog hit uses that entry’s canonical name and color. Not the Draft’s assigned label names, and not Remote snapshot labels.
 _Avoid_: Label cache, synced labels, available labels (unqualified), repo labels (unqualified)
 
+**Platform**:
+An operating-system family that Issuebridge officially builds and ships a Release for, each with its own documented known limitations. Windows is the reference Platform ("Windows-first"): it sets the behaviour other Platforms are measured against. Linux is a Platform that starts at Pre-release maturity.
+_Avoid_: OS, target, port (when meaning a supported Platform)
+
+**Hold-to-talk**:
+The reference push-to-talk mode: dictation records while the push-to-talk shortcut is held and stops on release.
+_Avoid_: PTT (unqualified, when the mode matters), push mode
+
+**Toggle-to-talk**:
+The fallback push-to-talk mode used only where the Platform cannot report shortcut release: one press starts dictation, the next press stops it. Shown in the Capture popup when active; never a silent substitute for Hold-to-talk.
+_Avoid_: Latch mode, tap-to-talk, PTT toggle
+
 **Inbox**:
 The main-window list of Drafts the user reviews, edits, labels, and Publishes from.
 _Avoid_: Board, backlog, issue list (when meaning local drafts)

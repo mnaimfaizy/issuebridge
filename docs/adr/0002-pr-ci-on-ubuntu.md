@@ -2,6 +2,8 @@
 
 Issuebridge is Windows-first, but the non-release PR/push quality gate (#24) runs on `ubuntu-latest` only. That gate covers typecheck, Vite build, Node contract tests, `cargo fmt --check`, Clippy (`-D warnings`), and `cargo test` — not Tauri/NSIS packaging or GitHub App secrets. Official Windows + NSIS fidelity stays on the existing `windows-latest` release workflow. Ubuntu is enough for this check set once Tauri’s Linux WebKitGTK `-dev` packages are installed; it avoids a dual-OS matrix for mostly OS-agnostic work and keeps private-repo overage cheaper if the repo ever goes private. Residual risk (`#[cfg(windows)]`, Windows Credential Manager via `keyring`) is accepted and mitigated by the release workflow, with an optional thin Windows `cargo test` job later only if regressions show up.
 
+> **Amended by [0007](./0007-linux-as-second-platform.md):** Linux is now a shipped Platform. This gate is still check-only (no Linux bundling on PRs); the accepted `keyring` residual risk now covers both Credential Manager (Windows) and Secret Service (Linux), and Linux bundle fidelity comes from the release workflow's Linux job.
+
 ## Considered Options
 
 - **`windows-latest` only for PR CI** — rejected for #24; overlaps the release OS without buying NSIS coverage (still out of scope) and is slower without a correctness win for these checks.
